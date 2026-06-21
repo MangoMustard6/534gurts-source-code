@@ -941,9 +941,24 @@ PIPE_EFFECT_NAMES = {
     "realgm4", "invertrgb", "invlum", "volume", "vibrato", "areverse", "vreverse",
     "channelblend", "huehsv", "multipitch", "mp", "multi", "lut",
     "syncaudio", "speed", "ffmpeg", "frei0r",
-    "wave",
+    "wave", "swirl",
     "sierpinskiransomware",
 }
+
+
+def _build_swirl_geq(strength: float, radius: float, xc: float, yc: float, fallout: str) -> str:
+    """Build the FFmpeg geq pixel-displacement filter string for a swirl effect."""
+    power = "" if fallout == "linear" else "^2"
+    atten = (
+        f"(if(lt(hypot(X-W*{xc},Y-H*{yc})+1e-6,min(W,H)*{radius}),"
+        f"1-(hypot(X-W*{xc},Y-H*{yc})+1e-6)/(min(W,H)*{radius}),0){power})"
+    )
+    cos_expr = f"cos((atan2(Y-H*{yc},X-W*{xc}))+({strength}/180*PI)*{atten})"
+    sin_expr = f"sin((atan2(Y-H*{yc},X-W*{xc}))+({strength}/180*PI)*{atten})"
+    return (
+        f"geq='p(W*{xc}+(hypot(X-W*{xc},Y-H*{yc})+1e-6)*{cos_expr},"
+        f"H*{yc}+(hypot(X-W*{xc},Y-H*{yc})+1e-6)*{sin_expr})'"
+    )
 
 def _split_effect_params(value: str) -> list[str]:
     """Split effect parameters using the separators users commonly type.
@@ -1318,6 +1333,50 @@ def _apply_pipe_effects(
                 ok, err = _run_ffmpeg_raw(cmd, timeout=180)
                 if not ok:
                     return False, f"invlum failed: {err}"
+                current = out
+                continue
+
+            # swirl — geq-based rotational pixel displacement
+            if name == "swirl":
+                def _sp(idx, default):
+                    try:
+                        return params[idx] if idx < len(params) else default
+                    except Exception:
+                        return default
+
+                strength = float(_sp(0, 180))
+                radius   = float(_sp(1, 0.5))
+                xc       = float(_sp(2, 0.5))
+                yc       = float(_sp(3, 0.5))
+                fallout  = _sp(4, "quad").lower()
+                if fallout not in ("linear", "quad"):
+                    fallout = "quad"
+                is1to1_raw = str(_sp(5, "false")).lower()
+                is1to1 = is1to1_raw in ("1", "true", "t", "y", "yes", "+", "on")
+
+                geq = _build_swirl_geq(strength, radius, xc, yc, fallout)
+
+                if is1to1:
+                    info = _ffprobe_video_info(current)
+                    w_px, h_px = info.get("width", 0), info.get("height", 0)
+                    if w_px and h_px:
+                        vf = f"format=yuv444p,scale={h_px}:{h_px},{geq},scale={w_px}:{h_px},setsar=1:1,format=yuv420p"
+                    else:
+                        vf = f"format=yuv444p,{geq},scale=iw:ih,format=yuv420p"
+                else:
+                    vf = f"format=yuv444p,{geq},scale=iw:ih,format=yuv420p"
+
+                cmd = [
+                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                    "-i", current,
+                    "-vf", vf,
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                    "-pix_fmt", "yuv420p", "-c:a", "copy",
+                    out,
+                ]
+                ok, err = _run_ffmpeg_raw(cmd, timeout=300)
+                if not ok:
+                    return False, f"swirl failed: {err}"
                 current = out
                 continue
 
@@ -3812,6 +3871,21 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "heavy",
+        "name": "swirl pipe effect  (swirl=<strength>[|radius][|xc][|yc][|fallout][|1:1])",
+        "value": (
+            "Rotational pixel-displacement swirl using FFmpeg geq.\n"
+            "• **strength** — swirl angle in degrees, negative reverses direction (default 180)\n"
+            "• **radius** — swirl radius as fraction of shortest dimension 0–1 (default 0.5)\n"
+            "• **xc / yc** — center point as fractions 0–1 (default 0.5 / 0.5)\n"
+            "• **fallout** — attenuation curve: `linear` or `quad` (default quad)\n"
+            "• **1:1** — `true`/`false` — scale to square before swirl, restore after (default false)\n"
+            "Example (default): `t!ihtx 1 2 - mp4 swirl`\n"
+            "Example (strong, off-center): `t!ihtx 1 2 - mp4 swirl=360|0.4|0.3|0.6|linear`\n"
+            "Example (square mode): `t!ihtx 1 2 - mp4 swirl=180|0.5|0.5|0.5|quad|true`"
+        ),
+    },
+    {
+        "cat": "heavy",
         "name": "shake pipe effect  (shake=<h>|<v>)",
         "value": (
             "Random per-frame pixel displacement shake using geq. Crops output back to original dimensions.\n"
@@ -4099,6 +4173,14 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 # ---------- Update Log ----------
 
 _UPDATELOG: list[dict] = [
+    {
+        "version": "v2.7",
+        "date": "2026-06-21",
+        "heavy": [
+            "**t!ihtx swirl** — New pipe effect: geq-based rotational pixel-displacement swirl. Params: `swirl=<strength>[|radius][|xc][|yc][|linear|quad][|1:1]`. Default 180° with quad falloff. 1:1 mode scales to square before swirl and restores original dims after.",
+        ],
+        "fun": [],
+    },
     {
         "version": "v2.6",
         "date": "2026-06-21",
