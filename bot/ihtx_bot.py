@@ -860,39 +860,60 @@ def get_output_ext(input_ext: str, is_video: bool) -> str:
 def _run_huehsv(
     input_path: str,
     output_path: str,
-    hue: float,
+    hue: float = 0.5,
     sat: float = 1.0,
-    brightness: float = 1.0,
+    lightness: float = 1.0,
+    colorspace: str = "hsl",
+    betterfully: bool = False,
 ) -> tuple[bool, str]:
     """Apply huehsv using ImageMagick haldclut + FFmpeg haldclut filter.
 
     ImageMagick -modulate takes brightness%,saturation%,hue% (100 = unchanged).
-      hue:        user float → hue*200+100  (0.0=unchanged, 0.5=full rotation)
-      sat:        multiplier  → sat*100      (1.0=unchanged, 0.8=less, 1.5=more)
-      brightness: multiplier  → brightness*100 (1.0=unchanged, 1.2=brighter)
+      hue:        user float → hue*200+100   (0.0=unchanged, 0.5=full rotation)
+      sat:        multiplier  → sat*100 (or sat*125 in betterfully mode)
+      lightness:  multiplier  → lightness*100 (1.0=unchanged)
+      colorspace: ImageMagick modulate colorspace (default hsl)
+      betterfully: if True, boosts saturation headroom to 125% and posterizes
+                   the hue channel (round to nearest 1/6 step) for a richer look.
 
-    Pipe usage: huehsv=<hue>|<sat>|<brightness>   e.g. huehsv=0.65|0.8|1.2
+    Pipe usage: huehsv=<hue>|<sat>|<lightness>|<colorspace>|<betterfully>
+    e.g. huehsv=0.65|0.8|1.2|hsl|1
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         hald_path = os.path.join(tmpdir, "hsv.ppm")
-        hue_pct = hue * 200 + 100
-        sat_pct = sat * 100
-        brightness_pct = brightness * 100
-        # Generate hald clut using ImageMagick (-modulate brightness,saturation,hue)
-        cmd = ["magick", "hald:6", "-modulate", f"{brightness_pct},{sat_pct},{hue_pct}", hald_path]
+        hue_pct      = hue * 200 + 100
+        sat_pct      = sat * (125 if betterfully else 100)
+        lightness_pct = lightness * 100
+        modulate_arg = f"{lightness_pct:.6g},{sat_pct:.6g},{hue_pct:.6g}"
+
+        cmd = [
+            "magick", "hald:8",
+            "-define", f"modulate:colorspace={colorspace}",
+            "-modulate", modulate_arg,
+        ]
+        if betterfully:
+            cmd += [
+                "-colorspace", "hsl",
+                "-channel", "r",
+                "-fx", "round(u*6)/6",
+                "+channel",
+                "-colorspace", "srgb",
+            ]
+        cmd.append(hald_path)
+
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
-            return False, f"Haldclut generation failed: {result.stderr}"
+            return False, f"huehsv: ImageMagick failed: {result.stderr}"
 
         # Apply via FFmpeg haldclut filter
         ok, err = _run_ffmpeg_raw([
             "ffmpeg", "-y", "-i", input_path,
-            "-vf", f"movie={hald_path},[in]haldclut,format=rgba",
+            "-vf", f"movie={hald_path},[in]haldclut,format=yuv420p",
             "-pix_fmt", "yuv420p",
             output_path,
         ], timeout=180)
         if not ok:
-            return False, f"FFmpeg haldclut failed: {err}"
+            return False, f"huehsv: FFmpeg haldclut failed: {err}"
 
         return True, ""
 
@@ -1762,14 +1783,14 @@ def _run_ccshue(
         offset — add to every channel (-1…1, default 0)
 
     Generates ccs.ppm via:
-        magick hald:6 [hue] [sat] [gamma] [gain] [offset] ccs.ppm
+        magick hald:8 [hue] [sat] [gamma] [gain] [offset] ccs.ppm
     Then applies:
         ffmpeg -i input -vf "movie=ccs.ppm,[in]haldclut" output
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         hald_path = os.path.join(tmpdir, "ccs.ppm")
 
-        cmd = ["magick", "hald:6"]
+        cmd = ["magick", "hald:8"]
 
         # Hue rotation (YUV-space rotation matrix via -fx)
         if abs(hue) > 0.001:
@@ -2391,18 +2412,22 @@ def _apply_pipe_effects(
                 current = out
                 continue
 
-            # ImageMagick huehsv — params: hue|sat|brightness (all optional after hue)
+            # ImageMagick huehsv — params: hue|sat|lightness|colorspace|betterfully
             if name == "huehsv":
                 def _hf(idx, default):
                     try:
                         return float(params[idx]) if idx < len(params) else default
                     except (ValueError, TypeError):
                         return default
+                _TRUE_VALS = {"1", "true", "t", "y", "yes", "+", "on"}
+                _bf_raw = params[4].strip().lower() if len(params) > 4 else ""
                 ok, err = _run_huehsv(
                     current, out,
                     hue=_hf(0, 0.5),
                     sat=_hf(1, 1.0),
-                    brightness=_hf(2, 1.0),
+                    lightness=_hf(2, 1.0),
+                    colorspace=params[3].strip() if len(params) > 3 and params[3].strip() else "hsl",
+                    betterfully=_bf_raw in _TRUE_VALS,
                 )
                 if not ok:
                     return False, err
@@ -6672,35 +6697,52 @@ async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str =
 
 
 @bot.command(name="huehsv", aliases=["hhsv"])
-async def huehsv_command(ctx: commands.Context, hue: float = 0.5):
-    """Apply hue shift using ImageMagick haldclut + FFmpeg.
+async def huehsv_command(
+    ctx: commands.Context,
+    hue: float = 0.5,
+    sat: float = 1.0,
+    lightness: float = 1.0,
+    colorspace: str = "hsl",
+    betterfully: str = "",
+):
+    """Apply hue/sat/lightness shift using ImageMagick haldclut + FFmpeg.
 
     Usage:
-      roxi huehsv <hue>          — shift hue, default 0.5
-      roxi hhsv <hue>            — alias
+      roxi huehsv <hue> [sat] [lightness] [colorspace] [betterfully]
+      roxi hhsv <hue>   — alias
 
-    Internally: magick hald:6 -modulate 100,100,<hue*200+100> hsv.ppm
-    Then: ffmpeg -vf "movie=hsv.ppm,[in]haldclut,format=rgba" -pix_fmt yuv420p
+    Parameters:
+      hue         — hue rotation (0.0=unchanged, 0.5=full rotation)
+      sat         — saturation multiplier (default 1.0)
+      lightness   — lightness multiplier (default 1.0)
+      colorspace  — ImageMagick modulate colorspace (default hsl)
+      betterfully — 1/true/yes to boost saturation to 125% and posterize hue
+
+    Internally: magick hald:8 -define modulate:colorspace=<cs> -modulate <L>,<S>,<H> [betterfully ops] hsv.ppm
+    Then: ffmpeg -vf "movie=hsv.ppm,[in]haldclut,format=yuv420p" -pix_fmt yuv420p
     """
+    _TRUE_VALS = {"1", "true", "t", "y", "yes", "+", "on"}
+    bf = betterfully.strip().lower() in _TRUE_VALS
+
     # Resolve attachment
     attachment = None
-    if attachment is None:
-        if ctx.message and ctx.message.attachments:
-            attachment = ctx.message.attachments[0]
-        elif ctx.message and ctx.message.reference:
-            try:
-                ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-                if ref.attachments:
-                    attachment = ref.attachments[0]
-            except Exception:
-                pass
+    if ctx.message and ctx.message.attachments:
+        attachment = ctx.message.attachments[0]
+    elif ctx.message and ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref.attachments:
+                attachment = ref.attachments[0]
+        except Exception:
+            pass
 
     if not attachment:
         await ctx.reply(
             "**IHTX HueHSV**\n"
-            "Attach a video or image and use `roxi huehsv <hue>`.\n\n"
-            "Applies hue shift via ImageMagick haldclut.\n"
-            "Example: `roxi huehsv 0.5`\n"
+            "Attach a video or image and use `roxi huehsv <hue> [sat] [lightness] [colorspace] [betterfully]`.\n\n"
+            "Applies hue/sat/lightness shift via ImageMagick haldclut (hald:8).\n"
+            "• `betterfully` — set to `1` for richer hue posterisation + 125% sat headroom\n"
+            "Example: `roxi huehsv 0.5` · `roxi huehsv 0.3 1.2 1.0 hsl 1`\n"
             "Aliases: `roxi hhsv`"
         )
         return
@@ -6717,8 +6759,9 @@ async def huehsv_command(ctx: commands.Context, hue: float = 0.5):
     is_video = suffix in VIDEO_EXTENSIONS
     out_ext = get_output_ext(suffix, is_video)
 
+    bf_label = " betterfully" if bf else ""
     status_msg = await ctx.reply(
-        f"⚙️ Applying **huehsv** (hue={hue})... this may take a moment."
+        f"⚙️ Applying **huehsv** (hue={hue} sat={sat} lightness={lightness} cs={colorspace}{bf_label})… this may take a moment."
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -6733,7 +6776,9 @@ async def huehsv_command(ctx: commands.Context, hue: float = 0.5):
 
         loop = asyncio.get_event_loop()
         ok, err = await loop.run_in_executor(
-            None, _run_huehsv, input_path, output_path, hue
+            None,
+            lambda: _run_huehsv(input_path, output_path, hue=hue, sat=sat,
+                                 lightness=lightness, colorspace=colorspace, betterfully=bf),
         )
 
         if not ok:
@@ -6748,7 +6793,7 @@ async def huehsv_command(ctx: commands.Context, hue: float = 0.5):
         out_filename = f"huehsv_{hue}_{Path(attachment.filename).stem}{out_ext}"
         try:
             await ctx.reply(
-                content=f"✅ **IHTX huehsv** (hue={hue}) applied!",
+                content=f"✅ **IHTX huehsv** (hue={hue} sat={sat} lightness={lightness} cs={colorspace}{bf_label}) applied!",
                 file=discord.File(output_path, filename=out_filename),
             )
             await status_msg.delete()
@@ -7609,7 +7654,7 @@ _HELP_ENTRIES: list[dict] = [
         "name": "Pipe effects (comma-separated)",
         "value": (
             "**Video:** `hflip` `vflip` `negate` `grayscale` `sepia` `rotate=<deg>` "
-            "`huehsv=<val>` `ccshue=hue|sat|gamma|gain|offset` `brightness=<val>` `contrast=<val>` "
+            "`huehsv=hue|sat|lightness|colorspace|betterfully` `ccshue=hue|sat|gamma|gain|offset` `brightness=<val>` `contrast=<val>` "
             "`saturation=<val>` `swapuv` `invlum` `invertrgb=r;g;b` `gm91deform` `randomjitter=<strength>`\n"
             "**Distortion:** `mirror=<deg|preset>` `zoom=<amt>` `ripple=spd|freq|amp|phase` `pan=px|py` `tile=tx|ty` `pinch&punch=str;r;cx;cy` `shake=<h>|<v>` `wave=hSpd|hFreq|hAmp|hPhase|vSpd|vFreq|vAmp|vPhase[|sep][|noclip]`\n"
             "**Scroll:** `scroll=hpos=V` · `scroll=hpos=V;ypos=V` · `scroll=h;v` (continuous) · `scroll=x1:y1:x2:y2[:dur]` (animated pan)\n"
@@ -7879,8 +7924,16 @@ _HELP_ENTRIES: list[dict] = [
     # ── Fun ──
     {
         "cat": "fun",
-        "name": "roxi huehsv <hue>  (aliases: hhsv)",
-        "value": "Apply hue shift via ImageMagick haldclut. Example: `roxi huehsv 0.5`",
+        "name": "roxi huehsv <hue> [sat] [lightness] [colorspace] [betterfully]  (aliases: hhsv)",
+        "value": (
+            "Apply hue/sat/lightness shift via ImageMagick haldclut (hald:8).\n"
+            "• **hue** — rotation (0.0=unchanged, 0.5=full rotation)\n"
+            "• **sat** — saturation multiplier (default 1.0)\n"
+            "• **lightness** — lightness multiplier (default 1.0)\n"
+            "• **colorspace** — modulate colorspace (default `hsl`)\n"
+            "• **betterfully** — `1` for richer posterised hue + 125% sat headroom\n"
+            "Example: `roxi huehsv 0.5` · `roxi huehsv 0.3 1.2 1.0 hsl 1`"
+        ),
     },
     {
         "cat": "fun",
@@ -8238,6 +8291,16 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 # ---------- Update Log ----------
 
 _UPDATELOG: list[dict] = [
+    {
+        "version": "v7.3",
+        "date": "2026-07-02",
+        "heavy": [
+            "**huehsv standalone + pipe** — Overhauled `roxi huehsv` and `huehsv` pipe effect. Now accepts `hue sat lightness colorspace betterfully`. Uses `hald:8` (up from hald:6) and `-define modulate:colorspace=<cs>`. New `betterfully` flag boosts saturation headroom to 125% and posterizes the hue channel (`round(u*6)/6`) for richer colour output. Pipe syntax: `huehsv=hue|sat|lightness|colorspace|betterfully`.",
+            "**ccshue pipe** — Updated to `hald:8` (up from hald:6) for higher-quality colour lookup table.",
+        ],
+        "fun": [],
+        "owner": [],
+    },
     {
         "version": "v7.2",
         "date": "2026-07-02",
