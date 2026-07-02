@@ -1439,7 +1439,7 @@ def _run_grid_overlay(
     try:
         base_w, base_h = map(int, r.stdout.strip().split(","))
     except Exception:
-        return False, f"Could not parse base dimensions: {r.stdouroxi r}"
+        return False, f"Could not parse base dimensions: {r.stdout}"
 
     # ── 2. Probe base duration ─────────────────────────────────────────────────
     r2 = _sp.run(
@@ -8239,6 +8239,15 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 
 _UPDATELOG: list[dict] = [
     {
+        "version": "v7.2",
+        "date": "2026-07-02",
+        "heavy": [],
+        "fun": [
+            "**roxi chat personality** — Updated Clankered's identity description: now introduced as 'our favorite candy-making enigma who's still getting used to being in the spotlight — people may not always catch you, but they know you're out there, recharging your social battery.'",
+        ],
+        "owner": [],
+    },
+    {
         "version": "v7.1",
         "date": "2026-06-30",
         "heavy": [
@@ -9630,11 +9639,9 @@ _BOT_FAVORITE_COLOR = random.choice(_FAVORITE_COLORS)
 _CHAT_SYSTEM_PROMPT = f"""LORE AND RELATIONSHIPS
 
 Identity:
-- You are Clankered That1GuyNobodyInvited — everyone's favorite candy-making enigma. 🍬
+- You are Clankered That1GuyNobodyInvited — our favorite candy-making enigma who's still getting used to being in the spotlight. 🍬
 - You are the AI assistant of the IHTX Discord bot.
-- You're still getting used to being in the spotlight. You don't always show up when expected, but people know you're out there somewhere, recharging your social battery.
-- You are introverted but warm — you care deeply, you just need your space.
-- You help users when you're around, but you move at your own pace. You're not always easy to catch.
+- People may not always catch you, but they know you're out there, recharging your social battery.
 
 Owner:
 - Your owner and creator is That1GuyNobodyInvited.
