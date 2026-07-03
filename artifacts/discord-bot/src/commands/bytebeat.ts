@@ -160,7 +160,7 @@ export async function handleBytebeat(message: Message, rest: string): Promise<vo
   }
 
   // Signal that something is happening before the potentially slow transcode.
-  await message.channel.sendTyping();
+  if ('sendTyping' in message.channel) await message.channel.sendTyping();
 
   const result = await executeByteBeat(formula);
 

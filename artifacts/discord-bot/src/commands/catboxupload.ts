@@ -2,7 +2,7 @@ const ENV_USERHASH = process.env.CATBOX_USERHASH ?? '';
 
 export async function uploadToCatbox(buffer: Buffer, filename: string, userhash?: string): Promise<string> {
   const hash = userhash ?? ENV_USERHASH;
-  const blob = new Blob([buffer]);
+  const blob = new Blob([new Uint8Array(buffer)]);
 
   const form = new FormData();
   form.append('reqtype', 'fileupload');
