@@ -8344,6 +8344,15 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 
 _UPDATELOG: list[dict] = [
     {
+        "version": "v7.8",
+        "date": "2026-07-03",
+        "heavy": [],
+        "fun": [
+            "**Garden ping notifications** — GardenCog now runs a background `tasks.loop` every 20 s. When a planted crop reaches its halfway point (`growth_mins / 2` minutes after planting), the bot pings the player in the channel where they last used a garden command (falls back to DM). The ping includes crop name, plot number, time remaining, and a water reminder if the crop still needs watering. Ping fires exactly once per growth cycle (tracked via `notify_halfway` flag on each plot). `/wait` correctly shifts the halfway timestamp so the ping stays proportional after a time-skip.",
+        ],
+        "owner": [],
+    },
+    {
         "version": "v7.7",
         "date": "2026-07-03",
         "heavy": [],
