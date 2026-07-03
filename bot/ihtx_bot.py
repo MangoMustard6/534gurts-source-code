@@ -8327,6 +8327,15 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 
 _UPDATELOG: list[dict] = [
     {
+        "version": "v8.1",
+        "date": "2026-07-03",
+        "heavy": [
+            "**Garden Game major update** — 3 new fruit tree saplings (Orange 800c/30m, Apple 1500c/45m, Mango 3000c/60m); 3 booster items (Speed Fertilizer 30c, Auto-Waterer 50c, Scarecrow 80c); 3 pets (Farm Dog 300c/auto-scare, Lucky Cat 500c/+15% double-yield, Mole Buddy 750c/−20% grow time); plots reduced to 3 for new players; `/use` command for applying boosters; `/pet equip` command; pest pings now send `<@User>` raw text when no protection active; shop shows all 4 categories.",
+        ],
+        "fun": [],
+        "owner": [],
+    },
+    {
         "version": "v8.0",
         "date": "2026-07-03",
         "heavy": [

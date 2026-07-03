@@ -2,16 +2,18 @@
 GardenCog — Text-based Garden Game for IHTX Bot.
 
 Hybrid commands (slash + th/ prefix):
-  /garden   th/garden   — View your plots
-  /shop     th/shop     — Browse seeds for sale
-  /buy      th/buy      — Buy seeds
-  /inventory th/inventory (alias: /inv, th/inv) — Show seeds & harvested crops
-  /plant    th/plant    — Plant a seed into a plot
-  /water    th/water    — Water a crop before it dies
-  /harvest  th/harvest  — Harvest a ready crop
-  /sell     th/sell     — Sell harvested crops for coins
-  /wait     th/wait     — Fast-forward time so crops can grow
-  /scare    th/scare    — Scare off pests before they eat your crop
+  /garden   th/garden              — View your plots, pets, and active boosters
+  /shop     th/shop                — Browse seeds, saplings, boosters, and pet eggs
+  /buy      th/buy <item> [amt]    — Buy items
+  /inventory th/inventory (inv)   — Show full inventory
+  /plant    th/plant <crop> <plot> — Plant a seed or sapling
+  /water    th/water <plot>        — Water a plot
+  /use      th/use <booster> <plot>— Apply a booster to a plot (scarecrow: no plot arg)
+  /pet      th/pet equip <name>    — Equip a pet (max 1)
+  /harvest  th/harvest <plot>      — Harvest a ready crop/fruit
+  /scare    th/scare               — Scare off pests
+  /sell     th/sell <crop> [amt]   — Sell harvested crops/fruit
+  /wait     th/wait <minutes>      — Fast-forward time
 
 Data: bot/garden_data.json
 """
@@ -29,46 +31,86 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-# ── Crop catalogue ────────────────────────────────────────────────────────────
+# ── Crop catalogue ─────────────────────────────────────────────────────────────
 
 CROPS: dict[str, dict[str, Any]] = {
-    "corn":       {"seed_cost": 10,  "growth_mins": 1,  "sell_price": 15,   "emoji": "🌽"},
-    "pumpkin":    {"seed_cost": 25,  "growth_mins": 3,  "sell_price": 45,   "emoji": "🎃"},
-    "tomato":     {"seed_cost": 50,  "growth_mins": 5,  "sell_price": 95,   "emoji": "🍅"},
-    "blueberry":  {"seed_cost": 100, "growth_mins": 8,  "sell_price": 210,  "emoji": "🫐"},
-    "beans":      {"seed_cost": 200, "growth_mins": 12, "sell_price": 450,  "emoji": "🫘"},
-    "watermelon": {"seed_cost": 500, "growth_mins": 20, "sell_price": 1200, "emoji": "🍉"},
+    "corn":       {"seed_cost": 10,  "growth_mins": 1,  "sell_price": 15,   "emoji": "🌽", "item_type": "crop"},
+    "pumpkin":    {"seed_cost": 25,  "growth_mins": 3,  "sell_price": 45,   "emoji": "🎃", "item_type": "crop"},
+    "tomato":     {"seed_cost": 50,  "growth_mins": 5,  "sell_price": 95,   "emoji": "🍅", "item_type": "crop"},
+    "blueberry":  {"seed_cost": 100, "growth_mins": 8,  "sell_price": 210,  "emoji": "🫐", "item_type": "crop"},
+    "beans":      {"seed_cost": 200, "growth_mins": 12, "sell_price": 450,  "emoji": "🫘", "item_type": "crop"},
+    "watermelon": {"seed_cost": 500, "growth_mins": 20, "sell_price": 1200, "emoji": "🍉", "item_type": "crop"},
 }
 
-NUM_PLOTS       = 5
-EVENT_CHANCE    = 0.15
-WATER_PCT       = 0.50   # must water within this fraction of grow time or crop dies
-WATER_WARN_PCT  = 0.35   # show 💧 warning after this fraction has elapsed
+# ── Fruit tree catalogue ───────────────────────────────────────────────────────
 
-# ── Data model ────────────────────────────────────────────────────────────────
+TREES: dict[str, dict[str, Any]] = {
+    "orange": {"seed_cost": 800,  "growth_mins": 30, "sell_price": 2100, "emoji": "🍊", "item_type": "tree"},
+    "apple":  {"seed_cost": 1500, "growth_mins": 45, "sell_price": 4200, "emoji": "🍎", "item_type": "tree"},
+    "mango":  {"seed_cost": 3000, "growth_mins": 60, "sell_price": 9000, "emoji": "🥭", "item_type": "tree"},
+}
+
+# ── Booster items ──────────────────────────────────────────────────────────────
+
+BOOSTERS: dict[str, dict[str, Any]] = {
+    "speed_fertilizer": {"cost": 30, "emoji": "⚡", "description": "Reduces remaining grow time of a plot by 50%"},
+    "auto_waterer":     {"cost": 50, "emoji": "🚿", "description": "Keeps one plot perfectly watered until harvested"},
+    "scarecrow":        {"cost": 80, "emoji": "🪚", "description": "Protects the entire garden from pests for 3 /wait turns"},
+}
+
+# ── Pets ───────────────────────────────────────────────────────────────────────
+
+PETS: dict[str, dict[str, Any]] = {
+    "farm_dog":   {"cost": 300,  "emoji": "🐕", "description": "100% pest protection — auto-scares all pests"},
+    "lucky_cat":  {"cost": 500,  "emoji": "🐈", "description": "+15% chance to double coin yields on every harvest"},
+    "mole_buddy": {"cost": 750,  "emoji": "🐾", "description": "Reduces all crop/tree growth times by 20%"},
+}
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+
+NUM_PLOTS        = 3       # starting plots for new players
+EVENT_CHANCE     = 0.15
+WATER_PCT        = 0.50    # must water within this fraction of grow time or crop dies
+WATER_WARN_PCT   = 0.35    # show 💧 warning after this fraction elapsed
+LUCKY_CAT_CHANCE = 0.15    # Lucky Cat: chance to double harvest coins
+MOLE_BUDDY_SPEED = 0.80    # Mole Buddy: growth time multiplier (×0.8 = 20% faster)
+
+# ── Data model ─────────────────────────────────────────────────────────────────
 
 _DB_PATH = Path("bot/garden_data.json")
 
 _EMPTY_PLOT: dict[str, Any] = {
-    "crop":             None,
-    "planted_at":       None,
-    "watered":          False,
-    "water_deadline":   None,   # unix ts: must water by here
-    "grow_deadline":    None,   # unix ts: ready at here
-    "state":            "empty",  # empty | growing | ready | dead | infested
-    "golden":           False,
-    "ping_at":          None,   # unix ts: halfway point — ping fires here
-    "notify_halfway":   False,  # True once the halfway ping has been sent
+    "crop":           None,
+    "item_type":      "crop",    # "crop" | "tree"
+    "planted_at":     None,
+    "watered":        False,
+    "auto_watered":   False,     # True when Auto-Waterer is active on this plot
+    "water_deadline": None,
+    "grow_deadline":  None,
+    "state":          "empty",   # empty | growing | ready | dead | infested
+    "golden":         False,
+    "ping_at":        None,
+    "notify_halfway": False,
 }
 
 _DEFAULT_USER: dict[str, Any] = {
-    "coins":             100,
-    "seeds":             {"corn": 2},
-    "harvested":         {},
-    "plots":             None,   # filled in get()
-    "pending_pest":      None,   # 0-based plot index with active crow infestation
-    "notify_channel_id": None,   # last channel the player issued a garden command in
+    "coins":            100,
+    "seeds":            {"corn": 2},
+    "saplings":         {},      # tree saplings
+    "harvested":        {},      # harvested crops/fruits ready to sell
+    "boosters":         {},      # booster items in inventory
+    "pet_eggs":         {},      # unhatched pet eggs
+    "equipped_pet":     None,    # active pet key or None
+    "scarecrow_turns":  0,       # remaining /wait turns of scarecrow protection
+    "plots":            None,    # filled in get()
+    "pending_pest":     None,    # 0-based plot index with active infestation
+    "notify_channel_id": None,
 }
+
+
+def _all_items() -> dict[str, dict]:
+    """Merged lookup table for all plantable/sellable items."""
+    return {**CROPS, **TREES}
 
 
 class GardenDB:
@@ -102,17 +144,25 @@ class GardenDB:
             self._data[key] = u
             self._save()
         u = self._data[key]
-        # Migrate: ensure plots list has correct length
+        # Migrate: ensure plots list has at least NUM_PLOTS entries
         plots = u.setdefault("plots", [])
         while len(plots) < NUM_PLOTS:
             plots.append(copy.deepcopy(_EMPTY_PLOT))
-        # Migrate: ensure each plot has the new ping fields
+        # Migrate: ensure all plot fields exist
         for p in plots:
             p.setdefault("ping_at", None)
             p.setdefault("notify_halfway", False)
+            p.setdefault("item_type", "crop")
+            p.setdefault("auto_watered", False)
+        # Migrate: ensure all user fields exist
         u.setdefault("pending_pest", None)
         u.setdefault("seeds", {"corn": 2})
+        u.setdefault("saplings", {})
         u.setdefault("harvested", {})
+        u.setdefault("boosters", {})
+        u.setdefault("pet_eggs", {})
+        u.setdefault("equipped_pet", None)
+        u.setdefault("scarecrow_turns", 0)
         u.setdefault("coins", 100)
         u.setdefault("notify_channel_id", None)
         return u
@@ -122,17 +172,15 @@ class GardenDB:
         self._save()
 
     def iter_all(self) -> list[tuple[str, dict[str, Any]]]:
-        """Return a snapshot of (uid_str, user_dict) for all known users."""
         return list(self._data.items())
 
     def flush(self) -> None:
-        """Persist current in-memory state without a full external save call."""
         self._save()
 
 
 _db = GardenDB()
 
-# ── Pure helpers ──────────────────────────────────────────────────────────────
+# ── Pure helpers ───────────────────────────────────────────────────────────────
 
 def _now() -> float:
     return time.time()
@@ -151,11 +199,58 @@ def _fmt_time(secs: float) -> str:
     return f"{m}m {s}s" if s else f"{m}m"
 
 
-def _resolve_crop(name: str) -> str | None:
+def _item_info(name: str) -> dict:
+    """Look up item in CROPS or TREES."""
+    return CROPS.get(name) or TREES.get(name) or {}
+
+
+def _resolve_plantable(name: str) -> tuple[str, str] | None:
+    """Returns (key, 'crop'|'tree') or None."""
     n = name.lower().strip()
-    for crop in CROPS:
-        if n == crop or (crop.startswith(n) and len(n) >= 2):
-            return crop
+    for key in CROPS:
+        if n == key or (key.startswith(n) and len(n) >= 2):
+            return (key, "crop")
+    for key in TREES:
+        if n == key or (key.startswith(n) and len(n) >= 2):
+            return (key, "tree")
+    return None
+
+
+def _resolve_sellable(name: str) -> str | None:
+    """Returns item key from CROPS or TREES, or None."""
+    result = _resolve_plantable(name)
+    return result[0] if result else None
+
+
+def _resolve_booster(name: str) -> str | None:
+    n = name.lower().strip().replace(" ", "_").replace("-", "_")
+    aliases: dict[str, str] = {
+        "speed": "speed_fertilizer", "sf": "speed_fertilizer",
+        "fertilizer": "speed_fertilizer", "fert": "speed_fertilizer",
+        "auto": "auto_waterer", "aw": "auto_waterer",
+        "waterer": "auto_waterer", "autowaterer": "auto_waterer",
+        "scarecrow": "scarecrow", "sc": "scarecrow", "crow": "scarecrow",
+    }
+    if n in aliases:
+        return aliases[n]
+    for b in BOOSTERS:
+        if n == b or b.startswith(n):
+            return b
+    return None
+
+
+def _resolve_pet(name: str) -> str | None:
+    n = name.lower().strip().replace(" ", "_").replace("-", "_")
+    aliases: dict[str, str] = {
+        "dog": "farm_dog", "farmdog": "farm_dog", "farm": "farm_dog",
+        "cat": "lucky_cat", "luckycat": "lucky_cat", "lucky": "lucky_cat",
+        "mole": "mole_buddy", "molebuddy": "mole_buddy", "buddy": "mole_buddy",
+    }
+    if n in aliases:
+        return aliases[n]
+    for p in PETS:
+        if n == p or p.startswith(n):
+            return p
     return None
 
 
@@ -165,7 +260,9 @@ def _effective_state(plot: dict) -> str:
     if stored in ("empty", "dead", "infested"):
         return stored
     now = _now()
-    if not plot.get("watered") and plot.get("water_deadline") and now > plot["water_deadline"]:
+    # Auto-watered plots never die from lack of water
+    if (not plot.get("watered") and not plot.get("auto_watered")
+            and plot.get("water_deadline") and now > plot["water_deadline"]):
         return "dead"
     if plot.get("grow_deadline") and now >= plot["grow_deadline"]:
         return "ready"
@@ -173,7 +270,6 @@ def _effective_state(plot: dict) -> str:
 
 
 def _sync_state(plot: dict) -> None:
-    """Persist computed state back into the plot dict."""
     plot["state"] = _effective_state(plot)
 
 
@@ -183,18 +279,21 @@ def _plot_line(idx: int, plot: dict) -> str:
     n = idx + 1
     if state == "empty":
         return f"**Plot {n}:** 🌱 Empty"
+
     crop = plot.get("crop") or "???"
-    info = CROPS.get(crop, {})
+    info = _item_info(crop)
     em   = info.get("emoji", "🌿")
-    name = crop.capitalize()
+    label = crop.capitalize()
+    is_tree = plot.get("item_type") == "tree"
+    type_tag = " 🌳" if is_tree else ""
 
     if state == "dead":
-        return f"**Plot {n}:** 💀 Dead (was {em} {name})"
+        return f"**Plot {n}:** 💀 Dead (was {em} {label})"
     if state == "infested":
-        return f"**Plot {n}:** 🐦 Infested! ({em} {name}) — use `/scare` / `th/scare` NOW!"
+        return f"**Plot {n}:** 🐦 **Infested!** ({em} {label}) — `/scare` or `th/scare` NOW!"
     if state == "ready":
         golden_tag = " ✨ **Golden!**" if plot.get("golden") else ""
-        return f"**Plot {n}:** {em} {name} ✅ Ready to Harvest!{golden_tag}"
+        return f"**Plot {n}:** {em} {label}{type_tag} ✅ Ready to Harvest!{golden_tag}"
 
     # growing
     now       = _now()
@@ -204,38 +303,73 @@ def _plot_line(idx: int, plot: dict) -> str:
     pct       = min(100.0, elapsed / max(1, total_s) * 100)
     bar       = _progress_bar(pct)
 
-    water_warn = ""
-    if not plot.get("watered"):
+    water_tag = ""
+    if plot.get("auto_watered"):
+        water_tag = " 🚿 Auto-Watered"
+    elif not plot.get("watered"):
         wdl = plot.get("water_deadline") or 0
         since_plant = _now() - (plot.get("planted_at") or _now())
         if since_plant / max(1, total_s) >= WATER_WARN_PCT:
             water_left = max(0, wdl - _now())
-            water_warn = f" 💧 Needs Water! ({_fmt_time(water_left)} left to water)"
+            water_tag = f" 💧 **Needs Water!** ({_fmt_time(water_left)} left)"
         else:
-            water_warn = " 💧 Unwatered"
+            water_tag = " 💧 Unwatered"
 
-    return f"**Plot {n}:** {em} {name} [{_fmt_time(grow_left)} left] {bar}{water_warn}"
+    return f"**Plot {n}:** {em} {label}{type_tag} [{_fmt_time(grow_left)} left] {bar}{water_tag}"
 
 
 def _shop_lines() -> list[str]:
-    rows = []
-    rows.append("```")
-    rows.append(f"{'Crop':<12} {'Seed':>6} {'Grow':>6} {'Yield':>7}  Emoji")
-    rows.append("─" * 44)
-    for crop, d in CROPS.items():
-        rows.append(
-            f"{crop.capitalize():<12} {d['seed_cost']:>5}c {d['growth_mins']:>5}m "
+    lines: list[str] = []
+
+    lines.append("**🌾 Seeds (Standard Plots)**")
+    lines.append("```")
+    lines.append(f"{'Crop':<12} {'Cost':>6} {'Grow':>6} {'Yield':>7}  Emoji")
+    lines.append("─" * 46)
+    for key, d in CROPS.items():
+        lines.append(
+            f"{key.capitalize():<12} {d['seed_cost']:>5}c {d['growth_mins']:>5}m "
             f"{d['sell_price']:>6}c  {d['emoji']}"
         )
-    rows.append("```")
-    return rows
+    lines.append("```")
+
+    lines.append("**🌳 Fruit Tree Saplings (High-Yield)**")
+    lines.append("```")
+    lines.append(f"{'Tree':<12} {'Cost':>6} {'Grow':>6} {'Yield':>7}  Emoji")
+    lines.append("─" * 46)
+    for key, d in TREES.items():
+        lines.append(
+            f"{key.capitalize():<12} {d['seed_cost']:>5}c {d['growth_mins']:>5}m "
+            f"{d['sell_price']:>6}c  {d['emoji']}"
+        )
+    lines.append("```")
+
+    lines.append("**⚡ Booster Items (Single-Use)**")
+    lines.append("```")
+    for key, d in BOOSTERS.items():
+        display = key.replace("_", " ").title()
+        lines.append(f"{d['emoji']} {display:<22} {d['cost']:>4}c — {d['description']}")
+    lines.append("```")
+
+    lines.append("**🥚 Pet Eggs (Permanent Passive Buffs)**")
+    lines.append("```")
+    for key, d in PETS.items():
+        display = key.replace("_", " ").title() + " Egg"
+        lines.append(f"{d['emoji']} {display:<26} {d['cost']:>4}c — {d['description']}")
+    lines.append("```")
+
+    lines.append("Use `th/buy <item>` or `/buy <item>` to purchase. Max 1 pet equipped.")
+    return lines
 
 
-# ── Random events ─────────────────────────────────────────────────────────────
+# ── Random events ──────────────────────────────────────────────────────────────
 
-def _roll_event(user: dict) -> str | None:
+def _roll_event(user: dict, uid: int) -> tuple[str | None, str | None]:
+    """Roll a random event. Returns (display_msg, ping_msg).
+    ping_msg is set when a pest occurs with no protection and must be sent
+    as literal text so Discord delivers the notification ping."""
     if random.random() > EVENT_CHANCE:
-        return None
+        return None, None
+
     events = ["good_weather", "pest", "golden"]
     event  = random.choice(events)
 
@@ -246,19 +380,52 @@ def _roll_event(user: dict) -> str | None:
                     plot["grow_deadline"]  = max(_now(), plot["grow_deadline"]  - 60)
                 if plot.get("water_deadline"):
                     plot["water_deadline"] = max(_now(), plot["water_deadline"] - 60)
-        return "☀️ **Good Weather!** All crops grew 1 minute faster!"
+        return "☀️ **Good Weather!** All crops grew 1 minute faster!", None
 
     if event == "pest":
         growing = [i for i, p in enumerate(user["plots"]) if _effective_state(p) == "growing"]
         if not growing:
-            return None
-        idx = random.choice(growing)
+            return None, None
+        idx  = random.choice(growing)
+        plot = user["plots"][idx]
+        crop = plot.get("crop") or "crop"
+        info = _item_info(crop)
+        em   = info.get("emoji", "🌿")
+        is_tree = plot.get("item_type") == "tree"
+        pest_name = "Fruit Flies" if is_tree else "Crows"
+
+        # Farm Dog auto-scares
+        if user.get("equipped_pet") == "farm_dog":
+            return (
+                f"🐕 **Farm Dog** chased away {pest_name} from Plot {idx + 1}! Your {em} is safe! 🐾",
+                None,
+            )
+
+        # Scarecrow protection
+        sc_turns = user.get("scarecrow_turns", 0)
+        if sc_turns > 0:
+            user["scarecrow_turns"] = sc_turns - 1
+            remaining = user["scarecrow_turns"]
+            return (
+                f"🪚 **Scarecrow** kept {pest_name} away from Plot {idx + 1}! "
+                f"({remaining} turn{'s' if remaining != 1 else ''} remaining)",
+                None,
+            )
+
+        # No protection — set infested and send ping
         user["plots"][idx]["state"] = "infested"
         user["pending_pest"] = idx
-        return (
-            f"🐦 **Pest Infestation!** Crows landed on Plot {idx + 1}! "
-            f"Use `/scare` or `th/scare` NOW or the crop is lost!"
+        pest_msg = (
+            f"🐦 **Pest Infestation!** {pest_name} have attacked Plot {idx + 1}! "
+            f"Use `/scare` or `th/scare` NOW or your {em} {crop.capitalize()} will be destroyed!"
         )
+        ping_msg = (
+            f"🚨 **PING!** <@{uid}> **PEST ALERT!** 🚨 "
+            f"{pest_name} have infested Plot {idx + 1}! "
+            f"You must run `/scare` or `th/scare` on your very next turn, "
+            f"or your crop will be eaten and completely destroyed!"
+        )
+        return pest_msg, ping_msg
 
     if event == "golden":
         candidates = [
@@ -266,16 +433,15 @@ def _roll_event(user: dict) -> str | None:
             if _effective_state(p) in ("growing", "ready")
         ]
         if not candidates:
-            return None
+            return None, None
         idx = random.choice(candidates)
         user["plots"][idx]["golden"] = True
-        return f"✨ **Golden Harvest!** Plot {idx + 1} will yield double coins on harvest!"
+        return f"✨ **Golden Harvest!** Plot {idx + 1} will yield double coins on harvest!", None
 
-    return None
+    return None, None
 
 
 def _consume_pest(user: dict, scared: bool) -> str | None:
-    """Resolve a pending pest. Returns outcome message or None."""
     pest_idx = user.get("pending_pest")
     if pest_idx is None:
         return None
@@ -284,14 +450,14 @@ def _consume_pest(user: dict, scared: bool) -> str | None:
     if scared:
         if plot.get("state") == "infested":
             plot["state"] = "growing"
-        return f"👏 You scared the crows away from Plot {pest_idx + 1}! Crop saved!"
+        return f"👏 You scared the pests away from Plot {pest_idx + 1}! Crop saved!"
     else:
         crop_name = (plot.get("crop") or "crop").capitalize()
         plot["state"] = "dead"
-        return f"💀 The crows devoured your **{crop_name}** in Plot {pest_idx + 1}! (You didn't scare them in time)"
+        return f"💀 The pests destroyed your **{crop_name}** in Plot {pest_idx + 1}!"
 
 
-# ── Context-aware reply helper ────────────────────────────────────────────────
+# ── Context-aware reply helper ─────────────────────────────────────────────────
 
 async def _send(
     ctx: commands.Context,
@@ -300,29 +466,36 @@ async def _send(
     lines: list[str],
     color: int = 0x57F287,
     extra: str | None = None,
+    ping_msg: str | None = None,
 ) -> None:
-    """Send an embed for slash, plain text for prefix."""
+    """Send an embed for slash, plain text for prefix.
+    ping_msg is sent as raw content so Discord actually delivers the mention ping."""
     body = "\n".join(lines)
     if extra:
         body += f"\n\n{extra}"
     if ctx.interaction:
         embed = discord.Embed(title=title, description=body, color=color)
         embed.set_footer(text=f"🌻 Garden Game • {ctx.author.display_name}")
-        await ctx.send(embed=embed)
+        if ping_msg:
+            await ctx.send(content=ping_msg, embed=embed)
+        else:
+            await ctx.send(embed=embed)
     else:
-        await ctx.reply(f"**{title}**\n{body}", mention_author=False)
+        content = f"**{title}**\n{body}"
+        if ping_msg:
+            content = f"{ping_msg}\n{content}"
+        await ctx.reply(content, mention_author=False)
 
 
 async def _send_error(ctx: commands.Context, msg: str) -> None:
-    prefix = ctx.prefix or "th/"
     if ctx.interaction:
         embed = discord.Embed(description=f"⚠️ {msg}", color=0xED4245)
         await ctx.send(embed=embed, ephemeral=True)
     else:
-        await ctx.reply(f"⚠️ Context Error: {msg}", mention_author=False)
+        await ctx.reply(f"⚠️ {msg}", mention_author=False)
 
 
-# ── Cog ───────────────────────────────────────────────────────────────────────
+# ── Cog ────────────────────────────────────────────────────────────────────────
 
 class GardenCog(commands.Cog, name="Garden"):
     """Text-based garden game."""
@@ -334,11 +507,10 @@ class GardenCog(commands.Cog, name="Garden"):
     def cog_unload(self) -> None:
         self._ping_loop.cancel()
 
-    # ── Background halfway-ping loop ─────────────────────────────────────────
+    # ── Background halfway-ping loop ──────────────────────────────────────────
 
     @tasks.loop(seconds=20)
     async def _ping_loop(self) -> None:
-        """Every 20 s: scan all plots and ping users whose crop just hit the halfway mark."""
         now     = _now()
         changed = False
 
@@ -356,13 +528,12 @@ class GardenCog(commands.Cog, name="Garden"):
 
                 state = _effective_state(plot)
                 if state != "growing":
-                    # Already done/dead — mark notified so we never revisit
                     plot["notify_halfway"] = True
                     user_dirty = True
                     continue
 
                 crop      = plot.get("crop") or "crop"
-                info      = CROPS.get(crop, {})
+                info      = _item_info(crop)
                 em        = info.get("emoji", "🌿")
                 grow_left = max(0.0, (plot.get("grow_deadline") or now) - now)
 
@@ -371,14 +542,13 @@ class GardenCog(commands.Cog, name="Garden"):
                     f"in **Plot {i + 1}** is halfway through growing!\n"
                     f"⏱ Ready in about **{_fmt_time(grow_left)}**."
                 )
-                if not plot.get("watered"):
+                if not plot.get("watered") and not plot.get("auto_watered"):
                     msg += (
                         f"\n💧 **It still needs water!** "
                         f"Run `th/water {i + 1}` or `/water {i + 1}` before it dies."
                     )
 
                 sent = False
-                # Try the last-used channel first (mention in-server)
                 if channel_id:
                     try:
                         ch = self.bot.get_channel(channel_id)
@@ -389,7 +559,6 @@ class GardenCog(commands.Cog, name="Garden"):
                     except Exception:
                         pass
 
-                # Fall back to DM
                 if not sent:
                     try:
                         u_obj = self.bot.get_user(uid_int) or await self.bot.fetch_user(uid_int)
@@ -412,7 +581,7 @@ class GardenCog(commands.Cog, name="Garden"):
     async def _before_ping_loop(self) -> None:
         await self.bot.wait_until_ready()
 
-    # ── Internal helpers ─────────────────────────────────────────────────────
+    # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _load(self, uid: int) -> dict[str, Any]:
         return _db.get(uid)
@@ -421,26 +590,22 @@ class GardenCog(commands.Cog, name="Garden"):
         _db.save(uid, user)
 
     def _record_channel(self, user: dict, ctx: commands.Context) -> None:
-        """Store the channel this command came from so the ping loop knows where to ping."""
         if hasattr(ctx, "channel") and ctx.channel:
             user["notify_channel_id"] = ctx.channel.id
 
-    def _pre_action(self, user: dict) -> str | None:
-        """Called before active (state-changing) actions only.
-        Passive commands (/garden, /shop, /inventory) must NOT call this —
-        those should never trigger pest-loss so the player can inspect state first.
-        Returns pest-loss message if the crop was eaten, or None.
-        """
-        return _consume_pest(user, scared=False)
+    def _pre_action(self, user: dict, uid: int) -> tuple[str | None, str | None]:
+        """Resolve any pending pest before a state-changing action.
+        Returns (loss_msg, None) — pests already resolved don't trigger a new ping."""
+        loss = _consume_pest(user, scared=False)
+        return loss, None
 
-    # ── /garden ──────────────────────────────────────────────────────────────
+    # ── /garden ───────────────────────────────────────────────────────────────
 
     @commands.hybrid_command(name="garden", description="View the current state of your garden plots.")
     async def garden(self, ctx: commands.Context) -> None:
         uid  = ctx.author.id
         user = self._load(uid)
         self._record_channel(user, ctx)
-        # Passive command — do NOT consume pending pest here; player must see state first.
 
         pest_idx = user.get("pending_pest")
         lines = []
@@ -450,155 +615,276 @@ class GardenCog(commands.Cog, name="Garden"):
         lines.append("")
         lines.append(f"💰 **Coins:** {user['coins']:,}")
 
+        # Active pet
+        pet_key = user.get("equipped_pet")
+        if pet_key and pet_key in PETS:
+            pd = PETS[pet_key]
+            lines.append(f"{pd['emoji']} **Pet:** {pet_key.replace('_',' ').title()} — {pd['description']}")
+
+        # Scarecrow turns
+        sc = user.get("scarecrow_turns", 0)
+        if sc > 0:
+            lines.append(f"🪚 **Scarecrow:** {sc} turn{'s' if sc != 1 else ''} of protection remaining")
+
         extra = None
         if pest_idx is not None:
-            extra = f"🐦 **Pest Alert!** Crows are on Plot {pest_idx + 1}! Use `/scare` or `th/scare` now, or your crop will be lost on your next action!"
+            extra = (
+                f"🐦 **Pest Alert!** Pests are on Plot {pest_idx + 1}! "
+                f"Use `/scare` or `th/scare` now — next action will destroy the crop!"
+            )
 
         self._save(uid, user)
         await _send(ctx, title="🌻 Your Garden", lines=lines, extra=extra)
 
     # ── /shop ─────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(name="shop", description="Browse seeds available for purchase.")
+    @commands.hybrid_command(name="shop", description="Browse seeds, saplings, boosters, and pet eggs.")
     async def shop(self, ctx: commands.Context) -> None:
-        # Passive command — no pest check, but still record channel for ping routing.
         uid  = ctx.author.id
         user = self._load(uid)
         self._record_channel(user, ctx)
         self._save(uid, user)
-
         lines = _shop_lines()
-        lines += [
-            "",
-            "Use `/buy <crop>` or `th/buy <crop>` to purchase seeds.",
-        ]
-        await _send(ctx, title="🏪 Seed Shop", lines=lines, color=0xFEE75C)
+        await _send(ctx, title="🏪 Garden Shop", lines=lines, color=0xFEE75C)
 
     # ── /buy ──────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(name="buy", description="Buy seeds from the shop.")
-    @app_commands.describe(crop="Crop seed to buy", amount="How many to buy (default 1)")
-    async def buy(self, ctx: commands.Context, crop: str, amount: int = 1) -> None:
+    @commands.hybrid_command(name="buy", description="Buy seeds, saplings, boosters, or pet eggs.")
+    @app_commands.describe(item="Item to buy", amount="How many to buy (default 1)")
+    async def buy(self, ctx: commands.Context, item: str, amount: int = 1) -> None:
         prefix = ctx.prefix or "th/"
-        crop_key = _resolve_crop(crop)
-        if not crop_key:
-            await _send_error(ctx,
-                f"Unknown crop `{crop}`. "
-                f"Correct usage: `{prefix}buy <crop> [amount]` or `/buy [crop] [amount]`\n"
-                f"Available: {', '.join(CROPS)}"
-            )
-            return
         if amount < 1:
             await _send_error(ctx, "Amount must be at least 1.")
             return
 
-        uid   = ctx.author.id
-        user  = self._load(uid)
+        uid  = ctx.author.id
+        user = self._load(uid)
         self._record_channel(user, ctx)
-        pest_loss = self._pre_action(user)
+        pest_loss, _ = self._pre_action(user, uid)
 
-        info       = CROPS[crop_key]
-        total_cost = info["seed_cost"] * amount
-        if user["coins"] < total_cost:
-            await _send_error(ctx,
-                f"Not enough coins! Need **{total_cost:,}** but you have **{user['coins']:,}**."
-            )
+        n = item.lower().strip()
+
+        # ── Crops ──
+        plantable = _resolve_plantable(n)
+        if plantable:
+            key, kind = plantable
+            info = _item_info(key)
+            cost_each = info["seed_cost"]
+            total_cost = cost_each * amount
+            if user["coins"] < total_cost:
+                await _send_error(ctx, f"Need **{total_cost:,}c** — you have **{user['coins']:,}c**.")
+                self._save(uid, user)
+                return
+            user["coins"] -= total_cost
+            if kind == "crop":
+                seeds = user.setdefault("seeds", {})
+                seeds[key] = seeds.get(key, 0) + amount
+                inv_count = seeds[key]
+                label = f"{info['emoji']} {key.capitalize()} Seed{'s' if amount > 1 else ''}"
+            else:
+                saps = user.setdefault("saplings", {})
+                saps[key] = saps.get(key, 0) + amount
+                inv_count = saps[key]
+                label = f"{info['emoji']} {key.capitalize()} Sapling{'s' if amount > 1 else ''}"
+            event_msg, ping_msg = _roll_event(user, uid)
             self._save(uid, user)
+            lines = [
+                f"Bought **{amount}x {label}** for **{total_cost:,}c**.",
+                f"💰 Remaining: **{user['coins']:,}c** | Inventory: **{inv_count}**",
+            ]
+            if pest_loss:
+                lines.append(f"\n{pest_loss}")
+            await _send(ctx, title="🛒 Purchased!", lines=lines, extra=event_msg, ping_msg=ping_msg)
             return
 
-        user["coins"] -= total_cost
-        seeds = user.setdefault("seeds", {})
-        seeds[crop_key] = seeds.get(crop_key, 0) + amount
+        # ── Boosters ──
+        booster_key = _resolve_booster(n)
+        if booster_key:
+            info = BOOSTERS[booster_key]
+            total_cost = info["cost"] * amount
+            if user["coins"] < total_cost:
+                await _send_error(ctx, f"Need **{total_cost:,}c** — you have **{user['coins']:,}c**.")
+                self._save(uid, user)
+                return
+            user["coins"] -= total_cost
+            bst = user.setdefault("boosters", {})
+            bst[booster_key] = bst.get(booster_key, 0) + amount
+            label = f"{info['emoji']} {booster_key.replace('_',' ').title()}"
+            event_msg, ping_msg = _roll_event(user, uid)
+            self._save(uid, user)
+            lines = [
+                f"Bought **{amount}x {label}** for **{total_cost:,}c**.",
+                f"💰 Remaining: **{user['coins']:,}c** | In bag: **{bst[booster_key]}**",
+                f"Use it with `{prefix}use {booster_key.replace('_',' ')} <plot>` or `/use`.",
+            ]
+            if pest_loss:
+                lines.append(f"\n{pest_loss}")
+            await _send(ctx, title="🛒 Purchased!", lines=lines, extra=event_msg, ping_msg=ping_msg)
+            return
 
-        event_msg = _roll_event(user)
+        # ── Pet eggs ──
+        pet_key = _resolve_pet(n)
+        if pet_key:
+            info = PETS[pet_key]
+            total_cost = info["cost"] * amount
+            if user["coins"] < total_cost:
+                await _send_error(ctx, f"Need **{total_cost:,}c** — you have **{user['coins']:,}c**.")
+                self._save(uid, user)
+                return
+            user["coins"] -= total_cost
+            eggs = user.setdefault("pet_eggs", {})
+            eggs[pet_key] = eggs.get(pet_key, 0) + amount
+            label = f"{info['emoji']} {pet_key.replace('_',' ').title()} Egg"
+            event_msg, ping_msg = _roll_event(user, uid)
+            self._save(uid, user)
+            lines = [
+                f"Bought **{amount}x {label}** for **{total_cost:,}c**!",
+                f"💰 Remaining: **{user['coins']:,}c**",
+                f"Equip it with `{prefix}pet equip {pet_key.replace('_',' ')}` or `/pet`.",
+            ]
+            if pest_loss:
+                lines.append(f"\n{pest_loss}")
+            await _send(ctx, title="🛒 Purchased!", lines=lines, extra=event_msg, ping_msg=ping_msg)
+            return
+
+        all_names = list(CROPS) + list(TREES) + list(BOOSTERS) + list(PETS)
+        await _send_error(ctx,
+            f"Unknown item `{item}`. "
+            f"See `{prefix}shop` for available items."
+        )
         self._save(uid, user)
-
-        em = info["emoji"]
-        lines = [
-            f"Bought **{amount}x {em} {crop_key.capitalize()} Seed{'s' if amount > 1 else ''}** for **{total_cost:,} coins**.",
-            f"💰 Remaining coins: **{user['coins']:,}**",
-            f"🌱 {crop_key.capitalize()} seeds in inventory: **{seeds[crop_key]}**",
-        ]
-        if pest_loss:
-            lines.append(f"\n{pest_loss}")
-        await _send(ctx, title="🛒 Purchase Complete", lines=lines, extra=event_msg)
 
     # ── /inventory (/inv) ─────────────────────────────────────────────────────
 
-    @commands.hybrid_command(name="inventory", aliases=["inv"], description="Show your seeds and harvested crops.")
+    @commands.hybrid_command(name="inventory", aliases=["inv"], description="Show your full inventory.")
     async def inventory(self, ctx: commands.Context) -> None:
-        # Passive command — no pest check.
         uid  = ctx.author.id
         user = self._load(uid)
         self._record_channel(user, ctx)
 
         seeds     = user.get("seeds", {})
+        saplings  = user.get("saplings", {})
         harvested = user.get("harvested", {})
+        boosters  = user.get("boosters", {})
+        pet_eggs  = user.get("pet_eggs", {})
+        pet_key   = user.get("equipped_pet")
 
         lines = [f"💰 **Coins:** {user['coins']:,}", ""]
+
         lines.append("**🌱 Seeds:**")
         if seeds:
-            for crop, qty in seeds.items():
-                em = CROPS.get(crop, {}).get("emoji", "🌿")
-                lines.append(f"  {em} {crop.capitalize()}: **{qty}**")
+            for key, qty in seeds.items():
+                em = CROPS.get(key, {}).get("emoji", "🌿")
+                lines.append(f"  {em} {key.capitalize()} Seed: **{qty}**")
         else:
             lines.append("  *(none)*")
 
         lines.append("")
-        lines.append("**🧺 Harvested Crops:**")
-        if harvested:
-            for crop, qty in harvested.items():
-                em    = CROPS.get(crop, {}).get("emoji", "🌿")
-                price = CROPS.get(crop, {}).get("sell_price", 0)
-                lines.append(f"  {em} {crop.capitalize()}: **{qty}** (worth {price * qty:,} coins)")
+        lines.append("**🌳 Saplings:**")
+        if saplings:
+            for key, qty in saplings.items():
+                em = TREES.get(key, {}).get("emoji", "🌿")
+                lines.append(f"  {em} {key.capitalize()} Sapling: **{qty}**")
         else:
             lines.append("  *(none)*")
 
+        lines.append("")
+        lines.append("**🧺 Harvested (ready to sell):**")
+        if harvested:
+            for key, qty in harvested.items():
+                info = _item_info(key)
+                em   = info.get("emoji", "🌿")
+                price = info.get("sell_price", 0)
+                lines.append(f"  {em} {key.capitalize()}: **{qty}** (≈ {price * qty:,}c)")
+        else:
+            lines.append("  *(none)*")
+
+        lines.append("")
+        lines.append("**⚡ Boosters:**")
+        if boosters:
+            for key, qty in boosters.items():
+                em = BOOSTERS.get(key, {}).get("emoji", "⚡")
+                lines.append(f"  {em} {key.replace('_',' ').title()}: **{qty}**")
+        else:
+            lines.append("  *(none)*")
+
+        lines.append("")
+        lines.append("**🥚 Pet Eggs:**")
+        if pet_eggs:
+            for key, qty in pet_eggs.items():
+                em = PETS.get(key, {}).get("emoji", "🥚")
+                lines.append(f"  {em} {key.replace('_',' ').title()} Egg: **{qty}**")
+        else:
+            lines.append("  *(none)*")
+
+        lines.append("")
+        lines.append("**🐾 Equipped Pet:**")
+        if pet_key and pet_key in PETS:
+            pd = PETS[pet_key]
+            lines.append(f"  {pd['emoji']} {pet_key.replace('_',' ').title()} — {pd['description']}")
+        else:
+            lines.append("  *(none — use `th/pet equip <name>` to equip)*")
+
+        sc = user.get("scarecrow_turns", 0)
+        if sc > 0:
+            lines.append(f"\n🪚 **Scarecrow:** {sc} turn{'s' if sc != 1 else ''} of garden protection active")
+
         extra = None
         if user.get("pending_pest") is not None:
-            extra = f"🐦 Pest alert active! Use `/scare` or `th/scare` before your next action!"
+            extra = "🐦 **Pest alert active!** Use `/scare` or `th/scare` before your next action!"
 
         self._save(uid, user)
         await _send(ctx, title="🎒 Inventory", lines=lines, extra=extra)
 
     # ── /plant ────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(name="plant", description="Plant a seed into a specific plot.")
-    @app_commands.describe(crop="Crop to plant", plot="Plot number (1–5)")
+    @commands.hybrid_command(name="plant", description="Plant a seed or sapling into a specific plot.")
+    @app_commands.describe(crop="Crop or tree to plant", plot="Plot number")
     async def plant(self, ctx: commands.Context, crop: str = "", plot: str = "") -> None:
         prefix = ctx.prefix or "th/"
         if not crop or not plot:
             await _send_error(ctx,
-                f"Missing arguments. "
-                f"Correct usage: `{prefix}plant <crop> <plot_number>` or `/plant [crop] [plot]`"
+                f"Usage: `{prefix}plant <crop/tree> <plot>` or `/plant [crop] [plot]`"
             )
             return
 
-        crop_key = _resolve_crop(crop)
-        if not crop_key:
-            await _send_error(ctx, f"Unknown crop `{crop}`. Available: {', '.join(CROPS)}")
+        plantable = _resolve_plantable(crop)
+        if not plantable:
+            await _send_error(ctx,
+                f"Unknown item `{crop}`. "
+                f"Crops: {', '.join(CROPS)} | Trees: {', '.join(TREES)}"
+            )
             return
+        crop_key, kind = plantable
 
         try:
             plot_num = int(plot)
         except ValueError:
-            await _send_error(ctx, f"`{plot}` is not a valid plot number. Use 1–{NUM_PLOTS}.")
+            await _send_error(ctx, f"`{plot}` is not a valid plot number.")
             return
 
-        if not (1 <= plot_num <= NUM_PLOTS):
-            await _send_error(ctx, f"Plot number must be between 1 and {NUM_PLOTS}.")
+        num_plots = len(self._load(ctx.author.id)["plots"])
+        if not (1 <= plot_num <= num_plots):
+            await _send_error(ctx, f"Plot number must be between 1 and {num_plots}.")
             return
 
         uid  = ctx.author.id
         user = self._load(uid)
         self._record_channel(user, ctx)
-        pest_loss = self._pre_action(user)
+        pest_loss, _ = self._pre_action(user, uid)
 
-        seeds = user.get("seeds", {})
-        if seeds.get(crop_key, 0) < 1:
+        # Check inventory
+        if kind == "crop":
+            inv = user.get("seeds", {})
+            inv_label = "Corn Seed" if crop_key == "corn" else f"{crop_key.capitalize()} Seed"
+        else:
+            inv = user.get("saplings", {})
+            inv_label = f"{crop_key.capitalize()} Sapling"
+
+        if inv.get(crop_key, 0) < 1:
             await _send_error(ctx,
-                f"You don't have any **{crop_key.capitalize()} Seeds**. "
-                f"Buy some with `{prefix}buy {crop_key}`."
+                f"You don't have any **{inv_label}**. "
+                f"Buy one with `{prefix}buy {crop_key}`."
             )
             self._save(uid, user)
             return
@@ -609,71 +895,80 @@ class GardenCog(commands.Cog, name="Garden"):
 
         if cur_state not in ("empty", "dead"):
             await _send_error(ctx,
-                f"Plot {plot_num} is not empty (state: **{cur_state}**). "
-                f"Harvest or clear it first."
+                f"Plot {plot_num} is not empty (state: **{cur_state}**). Harvest or clear it first."
             )
             self._save(uid, user)
             return
 
-        # Plant
-        seeds[crop_key] -= 1
-        if seeds[crop_key] <= 0:
-            del seeds[crop_key]
+        # Consume seed/sapling
+        inv[crop_key] -= 1
+        if inv[crop_key] <= 0:
+            del inv[crop_key]
 
-        now          = _now()
-        grow_secs    = CROPS[crop_key]["growth_mins"] * 60
-        water_secs   = grow_secs * WATER_PCT
+        now        = _now()
+        info       = _item_info(crop_key)
+        grow_secs  = info["growth_mins"] * 60
+
+        # Mole Buddy speed bonus
+        if user.get("equipped_pet") == "mole_buddy":
+            grow_secs = grow_secs * MOLE_BUDDY_SPEED
+
+        water_secs = grow_secs * WATER_PCT
 
         user["plots"][plot_idx] = {
-            "crop":             crop_key,
-            "planted_at":       now,
-            "watered":          False,
-            "water_deadline":   now + water_secs,
-            "grow_deadline":    now + grow_secs,
-            "state":            "growing",
-            "golden":           False,
-            "ping_at":          now + grow_secs / 2,   # halfway ping fires here
-            "notify_halfway":   False,
+            "crop":           crop_key,
+            "item_type":      kind,
+            "planted_at":     now,
+            "watered":        False,
+            "auto_watered":   False,
+            "water_deadline": now + water_secs,
+            "grow_deadline":  now + grow_secs,
+            "state":          "growing",
+            "golden":         False,
+            "ping_at":        now + grow_secs / 2,
+            "notify_halfway": False,
         }
 
-        event_msg = _roll_event(user)
+        event_msg, ping_msg = _roll_event(user, uid)
         self._save(uid, user)
 
-        em   = CROPS[crop_key]["emoji"]
-        info = CROPS[crop_key]
+        em       = info["emoji"]
+        type_tag = " Sapling" if kind == "tree" else " Seed"
+        mole_tag = " *(Mole Buddy: 20% faster!)*" if user.get("equipped_pet") == "mole_buddy" else ""
         lines = [
-            f"Planted **{em} {crop_key.capitalize()}** in Plot {plot_num}!",
+            f"Planted **{em} {crop_key.capitalize()}{type_tag}** in Plot {plot_num}!{mole_tag}",
             f"⏱ Ready in **{_fmt_time(grow_secs)}**.",
             f"💧 Water it within **{_fmt_time(water_secs)}** or it dies.",
         ]
         if pest_loss:
             lines.append(f"\n{pest_loss}")
-        await _send(ctx, title="🌱 Planted!", lines=lines, color=0x57F287, extra=event_msg)
+        await _send(ctx, title="🌱 Planted!", lines=lines, color=0x57F287, extra=event_msg, ping_msg=ping_msg)
 
     # ── /water ────────────────────────────────────────────────────────────────
 
     @commands.hybrid_command(name="water", description="Water a crop to keep it alive.")
-    @app_commands.describe(plot="Plot number to water (1–5)")
+    @app_commands.describe(plot="Plot number to water")
     async def water(self, ctx: commands.Context, plot: str = "") -> None:
         prefix = ctx.prefix or "th/"
         if not plot:
-            await _send_error(ctx,
-                f"Correct usage: `{prefix}water <plot_number>` or `/water [plot]`"
-            )
+            await _send_error(ctx, f"Usage: `{prefix}water <plot>` or `/water [plot]`")
             return
         try:
             plot_num = int(plot)
         except ValueError:
-            await _send_error(ctx, f"`{plot}` is not a valid plot number. Use 1–{NUM_PLOTS}.")
-            return
-        if not (1 <= plot_num <= NUM_PLOTS):
-            await _send_error(ctx, f"Plot number must be between 1 and {NUM_PLOTS}.")
+            await _send_error(ctx, f"`{plot}` is not a valid plot number.")
             return
 
         uid  = ctx.author.id
         user = self._load(uid)
         self._record_channel(user, ctx)
-        pest_loss = self._pre_action(user)
+
+        num_plots = len(user["plots"])
+        if not (1 <= plot_num <= num_plots):
+            await _send_error(ctx, f"Plot number must be between 1 and {num_plots}.")
+            return
+
+        pest_loss, _ = self._pre_action(user, uid)
 
         plot_idx  = plot_num - 1
         plot_data = user["plots"][plot_idx]
@@ -684,17 +979,19 @@ class GardenCog(commands.Cog, name="Garden"):
             self._save(uid, user)
             return
         if state == "dead":
-            await _send_error(ctx, f"Plot {plot_num} is already dead. Clear it and replant.")
+            await _send_error(ctx, f"Plot {plot_num} is dead. Clear and replant.")
             self._save(uid, user)
             return
         if state == "ready":
-            await _send_error(ctx, f"Plot {plot_num} is ready to harvest — no need to water!")
+            await _send_error(ctx, f"Plot {plot_num} is ready to harvest — no watering needed!")
             self._save(uid, user)
             return
         if state == "infested":
-            await _send_error(ctx,
-                f"Plot {plot_num} is infested with crows! Scare them first with `{prefix}scare`."
-            )
+            await _send_error(ctx, f"Plot {plot_num} is infested! Scare them first with `{prefix}scare`.")
+            self._save(uid, user)
+            return
+        if plot_data.get("auto_watered"):
+            await _send_error(ctx, f"Plot {plot_num} has an Auto-Waterer — it's always watered! 🚿")
             self._save(uid, user)
             return
         if plot_data.get("watered"):
@@ -703,44 +1000,210 @@ class GardenCog(commands.Cog, name="Garden"):
             return
 
         plot_data["watered"] = True
-        event_msg = _roll_event(user)
+        event_msg, ping_msg = _roll_event(user, uid)
         self._save(uid, user)
 
-        crop = plot_data["crop"]
-        em   = CROPS.get(crop, {}).get("emoji", "🌿")
+        crop      = plot_data["crop"]
+        em        = _item_info(crop).get("emoji", "🌿")
         grow_left = max(0, plot_data["grow_deadline"] - _now())
         lines = [
             f"Watered **{em} {crop.capitalize()}** in Plot {plot_num}! 💧",
-            f"Ready in **{_fmt_time(grow_left)}**.",
+            f"⏱ Ready in **{_fmt_time(grow_left)}**.",
         ]
         if pest_loss:
             lines.append(f"\n{pest_loss}")
-        await _send(ctx, title="💧 Watered!", lines=lines, extra=event_msg)
+        await _send(ctx, title="💧 Watered!", lines=lines, extra=event_msg, ping_msg=ping_msg)
 
-    # ── /harvest ──────────────────────────────────────────────────────────────
+    # ── /use ──────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(name="harvest", description="Harvest a fully grown crop.")
-    @app_commands.describe(plot="Plot number to harvest (1–5)")
-    async def harvest(self, ctx: commands.Context, plot: str = "") -> None:
+    @commands.hybrid_command(name="use", description="Apply a booster item to a plot.")
+    @app_commands.describe(booster="Booster to use (speed_fertilizer, auto_waterer, scarecrow)", plot="Plot number (not needed for scarecrow)")
+    async def use(self, ctx: commands.Context, booster: str = "", plot: str = "") -> None:
         prefix = ctx.prefix or "th/"
-        if not plot:
+        if not booster:
             await _send_error(ctx,
-                f"Correct usage: `{prefix}harvest <plot_number>` or `/harvest [plot]`"
+                f"Usage: `{prefix}use <booster> [plot]` or `/use [booster] [plot]`\n"
+                f"Boosters: `speed_fertilizer`, `auto_waterer`, `scarecrow`"
             )
             return
-        try:
-            plot_num = int(plot)
-        except ValueError:
-            await _send_error(ctx, f"`{plot}` is not a valid plot number. Use 1–{NUM_PLOTS}.")
-            return
-        if not (1 <= plot_num <= NUM_PLOTS):
-            await _send_error(ctx, f"Plot number must be between 1 and {NUM_PLOTS}.")
+
+        booster_key = _resolve_booster(booster)
+        if not booster_key:
+            await _send_error(ctx,
+                f"Unknown booster `{booster}`. Valid: `speed_fertilizer`, `auto_waterer`, `scarecrow`."
+            )
             return
 
         uid  = ctx.author.id
         user = self._load(uid)
         self._record_channel(user, ctx)
-        pest_loss = self._pre_action(user)
+        pest_loss, _ = self._pre_action(user, uid)
+
+        bst = user.setdefault("boosters", {})
+        if bst.get(booster_key, 0) < 1:
+            bname = booster_key.replace("_", " ").title()
+            await _send_error(ctx,
+                f"You don't have any **{bname}**. Buy one with `{prefix}buy {booster_key.replace('_',' ')}`."
+            )
+            self._save(uid, user)
+            return
+
+        # ── Scarecrow: whole-garden, no plot arg needed ──
+        if booster_key == "scarecrow":
+            bst[booster_key] -= 1
+            if bst[booster_key] <= 0:
+                del bst[booster_key]
+            user["scarecrow_turns"] = user.get("scarecrow_turns", 0) + 3
+            event_msg, ping_msg = _roll_event(user, uid)
+            self._save(uid, user)
+            lines = [
+                "🪚 **Scarecrow deployed!** Your garden is protected from pests for **3 /wait turns**.",
+                f"Active turns: **{user['scarecrow_turns']}**",
+            ]
+            if pest_loss:
+                lines.append(f"\n{pest_loss}")
+            await _send(ctx, title="🪚 Scarecrow Placed!", lines=lines, color=0x5865F2, extra=event_msg, ping_msg=ping_msg)
+            return
+
+        # ── Plot-targeted boosters ──
+        if not plot:
+            await _send_error(ctx, f"`{booster_key.replace('_',' ').title()}` requires a plot number.")
+            return
+        try:
+            plot_num = int(plot)
+        except ValueError:
+            await _send_error(ctx, f"`{plot}` is not a valid plot number.")
+            return
+
+        num_plots = len(user["plots"])
+        if not (1 <= plot_num <= num_plots):
+            await _send_error(ctx, f"Plot number must be between 1 and {num_plots}.")
+            return
+
+        plot_idx  = plot_num - 1
+        plot_data = user["plots"][plot_idx]
+        state     = _effective_state(plot_data)
+
+        if state not in ("growing", "infested"):
+            await _send_error(ctx, f"Plot {plot_num} must be actively growing to apply a booster.")
+            self._save(uid, user)
+            return
+
+        bst[booster_key] -= 1
+        if bst[booster_key] <= 0:
+            del bst[booster_key]
+
+        if booster_key == "speed_fertilizer":
+            now        = _now()
+            grow_left  = max(0, plot_data["grow_deadline"] - now)
+            cut        = grow_left * 0.50
+            plot_data["grow_deadline"]  -= cut
+            if plot_data.get("water_deadline"):
+                plot_data["water_deadline"] = min(plot_data["water_deadline"], plot_data["grow_deadline"])
+            if plot_data.get("ping_at"):
+                plot_data["ping_at"] -= cut / 2
+            crop      = plot_data["crop"]
+            em        = _item_info(crop).get("emoji", "🌿")
+            new_left  = max(0, plot_data["grow_deadline"] - now)
+            event_msg, ping_msg = _roll_event(user, uid)
+            self._save(uid, user)
+            lines = [
+                f"⚡ **Speed Fertilizer applied** to Plot {plot_num}!",
+                f"Remaining grow time cut by 50% — {em} {crop.capitalize()} ready in **{_fmt_time(new_left)}**!",
+            ]
+            if pest_loss:
+                lines.append(f"\n{pest_loss}")
+            await _send(ctx, title="⚡ Fertilized!", lines=lines, color=0xFEE75C, extra=event_msg, ping_msg=ping_msg)
+
+        elif booster_key == "auto_waterer":
+            plot_data["auto_watered"] = True
+            plot_data["watered"]      = True   # counts as watered too
+            crop = plot_data["crop"]
+            em   = _item_info(crop).get("emoji", "🌿")
+            event_msg, ping_msg = _roll_event(user, uid)
+            self._save(uid, user)
+            lines = [
+                f"🚿 **Auto-Waterer installed** on Plot {plot_num}!",
+                f"{em} {crop.capitalize()} will stay perfectly watered until harvested.",
+            ]
+            if pest_loss:
+                lines.append(f"\n{pest_loss}")
+            await _send(ctx, title="🚿 Auto-Waterer Installed!", lines=lines, color=0x3498DB, extra=event_msg, ping_msg=ping_msg)
+
+    # ── /pet ──────────────────────────────────────────────────────────────────
+
+    @commands.hybrid_command(name="pet", description="Manage your pets. Usage: th/pet equip <pet_name>")
+    @app_commands.describe(action="Action to perform: equip", pet_name="Pet name to equip")
+    async def pet(self, ctx: commands.Context, action: str = "", pet_name: str = "") -> None:
+        prefix = ctx.prefix or "th/"
+        if action.lower() != "equip" or not pet_name:
+            await _send_error(ctx,
+                f"Usage: `{prefix}pet equip <pet_name>` or `/pet equip <name>`\n"
+                f"Available pets: `farm_dog`, `lucky_cat`, `mole_buddy`"
+            )
+            return
+
+        pet_key = _resolve_pet(pet_name)
+        if not pet_key:
+            await _send_error(ctx,
+                f"Unknown pet `{pet_name}`. Valid: `farm_dog`, `lucky_cat`, `mole_buddy`."
+            )
+            return
+
+        uid  = ctx.author.id
+        user = self._load(uid)
+        self._record_channel(user, ctx)
+
+        eggs = user.setdefault("pet_eggs", {})
+        if eggs.get(pet_key, 0) < 1:
+            pd = PETS[pet_key]
+            await _send_error(ctx,
+                f"You don't own a **{pd['emoji']} {pet_key.replace('_',' ').title()} Egg**. "
+                f"Buy one with `{prefix}buy {pet_key.replace('_',' ')}`."
+            )
+            self._save(uid, user)
+            return
+
+        # Hatch the egg and equip
+        eggs[pet_key] -= 1
+        if eggs[pet_key] <= 0:
+            del eggs[pet_key]
+        user["equipped_pet"] = pet_key
+
+        pd = PETS[pet_key]
+        self._save(uid, user)
+        lines = [
+            f"{pd['emoji']} **{pet_key.replace('_',' ').title()}** is now your active companion!",
+            f"Passive: {pd['description']}",
+            f"*(You can only have 1 pet equipped at a time)*",
+        ]
+        await _send(ctx, title=f"{pd['emoji']} Pet Equipped!", lines=lines, color=0xE91E63)
+
+    # ── /harvest ──────────────────────────────────────────────────────────────
+
+    @commands.hybrid_command(name="harvest", description="Harvest a fully grown crop or fruit.")
+    @app_commands.describe(plot="Plot number to harvest")
+    async def harvest(self, ctx: commands.Context, plot: str = "") -> None:
+        prefix = ctx.prefix or "th/"
+        if not plot:
+            await _send_error(ctx, f"Usage: `{prefix}harvest <plot>` or `/harvest [plot]`")
+            return
+        try:
+            plot_num = int(plot)
+        except ValueError:
+            await _send_error(ctx, f"`{plot}` is not a valid plot number.")
+            return
+
+        uid  = ctx.author.id
+        user = self._load(uid)
+        self._record_channel(user, ctx)
+
+        num_plots = len(user["plots"])
+        if not (1 <= plot_num <= num_plots):
+            await _send_error(ctx, f"Plot number must be between 1 and {num_plots}.")
+            return
+
+        pest_loss, _ = self._pre_action(user, uid)
 
         plot_idx  = plot_num - 1
         plot_data = user["plots"][plot_idx]
@@ -749,84 +1212,97 @@ class GardenCog(commands.Cog, name="Garden"):
         if state != "ready":
             msgs = {
                 "empty":    "Plot is empty — nothing to harvest.",
-                "growing":  f"Crop isn't ready yet! Use `{prefix}garden` to see time remaining.",
+                "growing":  f"Crop isn't ready yet! Use `{prefix}garden` to check progress.",
                 "dead":     "The crop is dead. Clear the plot and replant.",
-                "infested": f"Crows are on this plot! Use `{prefix}scare` first.",
+                "infested": f"Pests are on this plot! Use `{prefix}scare` first.",
             }
             await _send_error(ctx, msgs.get(state, f"Plot {plot_num} is not ready."))
             self._save(uid, user)
             return
 
         crop   = plot_data["crop"]
-        info   = CROPS.get(crop, {})
+        info   = _item_info(crop)
         em     = info.get("emoji", "🌿")
         golden = plot_data.get("golden", False)
 
         user["plots"][plot_idx] = copy.deepcopy(_EMPTY_PLOT)
 
         if golden:
-            # Golden Harvest: pay out double coins immediately — no inventory step.
             gold_coins = info.get("sell_price", 0) * 2
             user["coins"] += gold_coins
-            event_msg = _roll_event(user)
+            event_msg, ping_msg = _roll_event(user, uid)
             self._save(uid, user)
             lines = [
                 f"✨ **Golden Harvest!** Harvested **{em} {crop.capitalize()}** from Plot {plot_num}!",
-                f"💰 Instantly earned **{gold_coins:,} coins** (2× value) — no selling needed!",
-                f"New balance: **{user['coins']:,} coins**.",
+                f"💰 Instantly earned **{gold_coins:,}c** (2× value)!",
+                f"New balance: **{user['coins']:,}c**",
             ]
             if pest_loss:
                 lines.append(f"\n{pest_loss}")
-            await _send(ctx, title="✨ Golden Harvest!", lines=lines, color=0xFFD700, extra=event_msg)
+            await _send(ctx, title="✨ Golden Harvest!", lines=lines, color=0xFFD700, extra=event_msg, ping_msg=ping_msg)
         else:
-            # Normal harvest: add to inventory to sell later.
-            harvested = user.setdefault("harvested", {})
-            harvested[crop] = harvested.get(crop, 0) + 1
+            harvested  = user.setdefault("harvested", {})
             sell_price = info.get("sell_price", 0)
-            event_msg = _roll_event(user)
-            self._save(uid, user)
-            lines = [
-                f"Harvested **{em} {crop.capitalize()}** from Plot {plot_num}!",
-                f"Added to inventory: **1x {em} {crop.capitalize()}**.",
-                f"💰 Sell it with `{prefix}sell {crop}` for **{sell_price:,} coins**.",
-            ]
-            if pest_loss:
-                lines.append(f"\n{pest_loss}")
-            await _send(ctx, title="🧺 Harvested!", lines=lines, color=0xFEE75C, extra=event_msg)
+
+            # Lucky Cat: 15% chance to double
+            lucky_bonus = (
+                user.get("equipped_pet") == "lucky_cat"
+                and random.random() < LUCKY_CAT_CHANCE
+            )
+            if lucky_bonus:
+                lucky_coins = sell_price * 2
+                user["coins"] += lucky_coins
+                event_msg, ping_msg = _roll_event(user, uid)
+                self._save(uid, user)
+                lines = [
+                    f"🐈 **Lucky Cat bonus!** Harvested **{em} {crop.capitalize()}** from Plot {plot_num}!",
+                    f"💰 Lucky double yield — earned **{lucky_coins:,}c** instantly!",
+                    f"New balance: **{user['coins']:,}c**",
+                ]
+                if pest_loss:
+                    lines.append(f"\n{pest_loss}")
+                await _send(ctx, title="🐈 Lucky Harvest!", lines=lines, color=0xFFD700, extra=event_msg, ping_msg=ping_msg)
+            else:
+                harvested[crop] = harvested.get(crop, 0) + 1
+                event_msg, ping_msg = _roll_event(user, uid)
+                self._save(uid, user)
+                lines = [
+                    f"Harvested **{em} {crop.capitalize()}** from Plot {plot_num}!",
+                    f"Added to inventory — sell with `{prefix}sell {crop}` for **{sell_price:,}c**.",
+                ]
+                if pest_loss:
+                    lines.append(f"\n{pest_loss}")
+                await _send(ctx, title="🧺 Harvested!", lines=lines, color=0xFEE75C, extra=event_msg, ping_msg=ping_msg)
 
     # ── /sell ─────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(name="sell", description="Sell harvested crops for coins.")
-    @app_commands.describe(crop="Crop to sell", amount="Amount to sell (default: all)")
+    @commands.hybrid_command(name="sell", description="Sell harvested crops or fruits for coins.")
+    @app_commands.describe(crop="Crop/fruit to sell", amount="Amount to sell (default: all)")
     async def sell(self, ctx: commands.Context, crop: str = "", amount: Optional[str] = None) -> None:
         prefix = ctx.prefix or "th/"
         if not crop:
-            await _send_error(ctx,
-                f"Correct usage: `{prefix}sell <crop> [amount]` or `/sell [crop] [amount]`"
-            )
+            await _send_error(ctx, f"Usage: `{prefix}sell <crop/fruit> [amount]` or `/sell [crop] [amount]`")
             return
 
-        crop_key = _resolve_crop(crop)
+        crop_key = _resolve_sellable(crop)
         if not crop_key:
-            await _send_error(ctx, f"Unknown crop `{crop}`. Available: {', '.join(CROPS)}")
+            await _send_error(ctx, f"Unknown item `{crop}`. Available: {', '.join({**CROPS, **TREES})}")
             return
 
         uid  = ctx.author.id
         user = self._load(uid)
         self._record_channel(user, ctx)
-        pest_loss = self._pre_action(user)
+        pest_loss, _ = self._pre_action(user, uid)
 
         harvested = user.setdefault("harvested", {})
         owned     = harvested.get(crop_key, 0)
         if owned == 0:
             await _send_error(ctx,
-                f"You have no harvested **{crop_key.capitalize()}** to sell. "
-                f"Grow and harvest some first!"
+                f"You have no harvested **{crop_key.capitalize()}** to sell. Grow and harvest some first!"
             )
             self._save(uid, user)
             return
 
-        # Parse amount
         if amount is None or amount.lower() == "all":
             qty = owned
         else:
@@ -841,34 +1317,31 @@ class GardenCog(commands.Cog, name="Garden"):
                 self._save(uid, user)
                 return
             if qty > owned:
-                await _send_error(ctx,
-                    f"You only have **{owned}x {crop_key.capitalize()}** but tried to sell {qty}."
-                )
+                await _send_error(ctx, f"You only have **{owned}x {crop_key.capitalize()}** — can't sell {qty}.")
                 self._save(uid, user)
                 return
 
-        info       = CROPS[crop_key]
-        total_gain = info["sell_price"] * qty
+        info       = _item_info(crop_key)
+        total_gain = info.get("sell_price", 0) * qty
         user["coins"] += total_gain
         harvested[crop_key] = owned - qty
         if harvested[crop_key] <= 0:
             del harvested[crop_key]
 
-        event_msg = _roll_event(user)
+        em = info.get("emoji", "🌿")
+        event_msg, ping_msg = _roll_event(user, uid)
         self._save(uid, user)
-
-        em = info["emoji"]
         lines = [
-            f"Sold **{qty}x {em} {crop_key.capitalize()}** for **{total_gain:,} coins**!",
-            f"💰 New balance: **{user['coins']:,} coins**.",
+            f"Sold **{qty}x {em} {crop_key.capitalize()}** for **{total_gain:,}c**!",
+            f"💰 New balance: **{user['coins']:,}c**.",
         ]
         if pest_loss:
             lines.append(f"\n{pest_loss}")
-        await _send(ctx, title="💰 Sold!", lines=lines, color=0x57F287, extra=event_msg)
+        await _send(ctx, title="💰 Sold!", lines=lines, color=0x57F287, extra=event_msg, ping_msg=ping_msg)
 
     # ── /wait ─────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(name="wait", description="Simulate time passing so your crops can grow.")
+    @commands.hybrid_command(name="wait", description="Simulate time passing so crops can grow.")
     @app_commands.describe(minutes="Minutes to fast-forward (max 60)")
     async def wait(self, ctx: commands.Context, minutes: float = 1.0) -> None:
         if minutes <= 0:
@@ -880,31 +1353,43 @@ class GardenCog(commands.Cog, name="Garden"):
         uid  = ctx.author.id
         user = self._load(uid)
         self._record_channel(user, ctx)
-        pest_loss = self._pre_action(user)
+        pest_loss, _ = self._pre_action(user, uid)
 
         for plot in user["plots"]:
             if plot.get("grow_deadline"):
                 plot["grow_deadline"]  -= skip
             if plot.get("water_deadline"):
                 plot["water_deadline"] -= skip
-            # Shift the halfway ping too so it stays relative to the new timeline
             if plot.get("ping_at"):
                 plot["ping_at"] -= skip
 
-        event_msg = _roll_event(user)
+        # Decrement scarecrow turns
+        sc = user.get("scarecrow_turns", 0)
+        if sc > 0:
+            user["scarecrow_turns"] = max(0, sc - 1)
+
+        event_msg, ping_msg = _roll_event(user, uid)
         self._save(uid, user)
+
+        sc_after = user.get("scarecrow_turns", 0)
+        sc_note  = ""
+        if sc > 0:
+            if sc_after == 0:
+                sc_note = "\n🪚 Scarecrow protection has **expired**."
+            else:
+                sc_note = f"\n🪚 Scarecrow: **{sc_after} turn{'s' if sc_after != 1 else ''}** of protection remaining."
 
         lines = [
             f"⏩ Fast-forwarded **{minutes:.1f} minute{'s' if minutes != 1 else ''}**.",
-            "Use `th/garden` or `/garden` to check your plot status.",
+            f"Use `th/garden` or `/garden` to check your plots.{sc_note}",
         ]
         if pest_loss:
             lines.append(f"\n{pest_loss}")
-        await _send(ctx, title="⏩ Time Skip", lines=lines, color=0x5865F2, extra=event_msg)
+        await _send(ctx, title="⏩ Time Skip", lines=lines, color=0x5865F2, extra=event_msg, ping_msg=ping_msg)
 
     # ── /scare ────────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(name="scare", description="Scare off crows from an infested plot!")
+    @commands.hybrid_command(name="scare", description="Scare off pests from your garden!")
     async def scare(self, ctx: commands.Context) -> None:
         uid  = ctx.author.id
         user = self._load(uid)
@@ -912,23 +1397,24 @@ class GardenCog(commands.Cog, name="Garden"):
 
         pest_idx = user.get("pending_pest")
         if pest_idx is None:
-            lines = ["No crows to scare right now! Your garden is safe. 🕊️"]
+            lines = ["No pests to scare right now! Your garden is safe. 🕊️"]
             self._save(uid, user)
             await _send(ctx, title="🕊️ All Clear", lines=lines)
             return
 
-        result = _consume_pest(user, scared=True)
-        event_msg = _roll_event(user)
+        result    = _consume_pest(user, scared=True)
+        event_msg, ping_msg = _roll_event(user, uid)
         self._save(uid, user)
 
-        lines = [result or "Crows scared off!"]
-        await _send(ctx, title="👏 Crows Scared!", lines=lines, color=0x57F287, extra=event_msg)
+        lines = [result or "Pests scared off!"]
+        await _send(ctx, title="👏 Pests Scared!", lines=lines, color=0x57F287, extra=event_msg, ping_msg=ping_msg)
 
     # ── Error handlers ────────────────────────────────────────────────────────
 
     @buy.error
     @plant.error
     @water.error
+    @use.error
     @harvest.error
     @sell.error
     @wait.error
@@ -937,35 +1423,30 @@ class GardenCog(commands.Cog, name="Garden"):
             prefix = ctx.prefix or "th/"
             cmd    = ctx.command.name if ctx.command else "command"
             await _send_error(ctx,
-                f"Invalid arguments. "
-                f"Correct usage: `{prefix}{cmd}` or `/{cmd}` — "
-                f"use `{prefix}garden` to view your garden."
+                f"Invalid arguments for `{prefix}{cmd}`. Use `{prefix}shop` to see what's available."
             )
         else:
             raise error
 
 
-# ── Welcome embed helper ──────────────────────────────────────────────────────
+# ── Welcome embed helper ───────────────────────────────────────────────────────
 
 async def send_welcome(channel: discord.abc.Messageable, user: discord.User | discord.Member) -> None:
-    """Send the new-player welcome card."""
     embed = discord.Embed(
         title="🌻 Welcome to the Garden Game!",
         description=(
-            f"Hey {user.mention}! You've been given a fresh plot of land. "
-            f"Time to grow something amazing.\n\n"
-            f"**Your Starting Profile:**\n"
-            f"💰 Coins: **100**\n"
-            f"🌽 Corn Seeds: **2**\n"
-            f"🌱 Plots: **5 empty**\n\n"
+            f"Hey {user.mention}! Your farm is ready. Time to grow something amazing!\n\n"
+            f"**Starting Profile:**\n"
+            f"💰 Coins: **100** | 🌽 Corn Seeds: **2** | 🌱 Plots: **3 empty**\n\n"
             f"**Quick Start:**\n"
-            f"1. Plant your seeds → `/plant corn 1` or `th/plant corn 1`\n"
-            f"2. Water before they die → `/water 1` or `th/water 1`\n"
-            f"3. Check progress → `/garden` or `th/garden`\n"
-            f"4. Harvest when ready → `/harvest 1` or `th/harvest 1`\n"
-            f"5. Sell for coins → `/sell corn` or `th/sell corn`\n\n"
-            f"💡 **Both `/commands` and `th/commands` work identically!**\n"
-            f"Run `/shop` or `th/shop` to see all available crops."
+            f"1. `/plant corn 1` or `th/plant corn 1` — plant your first seed\n"
+            f"2. `/water 1` or `th/water 1` — water it within 30 s or it dies\n"
+            f"3. `/wait 1` or `th/wait 1` — skip time to grow\n"
+            f"4. `/harvest 1` or `th/harvest 1` — collect your crop\n"
+            f"5. `/sell corn` or `th/sell corn` — cash in\n\n"
+            f"**New: Trees 🌳 · Boosters ⚡ · Pets 🐾**\n"
+            f"Run `/shop` or `th/shop` to see everything available!\n\n"
+            f"💡 Both `/commands` and `th/commands` work identically!"
         ),
         color=0x57F287,
     )
@@ -973,7 +1454,7 @@ async def send_welcome(channel: discord.abc.Messageable, user: discord.User | di
     await channel.send(embed=embed)
 
 
-# ── Cog setup ─────────────────────────────────────────────────────────────────
+# ── Cog setup ──────────────────────────────────────────────────────────────────
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(GardenCog(bot))

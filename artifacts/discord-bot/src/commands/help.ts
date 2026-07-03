@@ -100,12 +100,8 @@ export async function handleHelp(message: Message, ownerId: string): Promise<voi
           ].join('\n'),
         },
         {
-          name: '🎛️ TypeScript: t!realgmajor4',
-          value: [
-            `\`${PREFIX}realgmajor4\` *realgm4 rgm4* — Solarization curve · dual-layer audio mix · volume doubled`,
-            `Attach or reply-to a video file. No additional arguments needed.`,
-            `Video: \`curves=all=0/0 0.5/1 1/0\` (cross-curve solarize). Audio: original (pitch=1) mixed with pitched copy (×1.335 ≈ +5 st, quality mode), volume×2.`,
-          ].join('\n'),
+          name: '🎛️ TypeScript: realgmajor4',
+          value: `\`${PREFIX}realgmajor4\` *realgm4 rgm4* — Solarization curve + dual rubberband audio mix (×1.335) + vol×2. Attach or reply-to a video.`,
         },
         {
           name: '🎮 Games  *(both bots)*',
