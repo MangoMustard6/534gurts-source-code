@@ -5013,6 +5013,14 @@ async def on_ready():
             print("EconomyCog loaded.")
         except Exception as _econ_exc:
             print(f"Warning: EconomyCog failed to load — {_econ_exc}")
+    # Load garden game cog (once)
+    if "Garden" not in bot.cogs:
+        try:
+            from bot.garden_cog import setup as _garden_setup
+            await _garden_setup(bot)
+            print("GardenCog loaded.")
+        except Exception as _garden_exc:
+            print(f"Warning: GardenCog failed to load — {_garden_exc}")
     # Slash command sync is triggered manually via th/sync (owner only).
     # Automatic on_ready sync is intentionally omitted: discord.py's event
     # loop swallows exceptions from on_ready before our try/except can
@@ -8335,6 +8343,15 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 # ---------- Update Log ----------
 
 _UPDATELOG: list[dict] = [
+    {
+        "version": "v7.7",
+        "date": "2026-07-03",
+        "heavy": [],
+        "fun": [
+            "**Garden Game** — New text-based garden game via GardenCog. Hybrid commands (slash + th/ prefix): `/garden` `/shop` `/buy` `/inventory` (`/inv`) `/plant` `/water` `/harvest` `/sell` `/wait` `/scare`. 6 crops (Corn→Watermelon), 5 plots, coin economy, water deadline mechanic, 15% random events (Good Weather / Pest Infestation / Golden Harvest). Starter pack: 100 coins + 2x Corn Seeds. Data stored in bot/garden_data.json.",
+        ],
+        "owner": [],
+    },
     {
         "version": "v7.6",
         "date": "2026-07-03",
