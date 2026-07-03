@@ -1429,6 +1429,56 @@ class GardenCog(commands.Cog, name="Garden"):
             raise error
 
 
+# ── /leaderboard ─────────────────────────────────────────────────────────────
+
+    @commands.hybrid_command(name="leaderboard", aliases=["lb", "top"], description="Show the top garden earners.")
+    async def leaderboard(self, ctx: commands.Context) -> None:
+        uid  = ctx.author.id
+        user = self._load(uid)
+        self._record_channel(user, ctx)
+        self._save(uid, user)
+
+        all_users = _db.iter_all()
+
+        rows: list[tuple[int, int, str]] = []
+        for uid_str, udata in all_users:
+            coins    = udata.get("coins", 0)
+            earned   = coins
+            # Add value of harvested items not yet sold
+            for key, qty in udata.get("harvested", {}).items():
+                earned += _item_info(key).get("sell_price", 0) * qty
+            rows.append((earned, int(uid_str), uid_str))
+
+        rows.sort(reverse=True)
+        top = rows[:10]
+
+        medals = ["🥇", "🥈", "🥉"]
+        lines  = []
+        for rank, (wealth, entry_uid, uid_str) in enumerate(top, 1):
+            medal = medals[rank - 1] if rank <= 3 else f"**#{rank}**"
+            # Try to get a display name from the bot cache
+            member = ctx.guild.get_member(entry_uid) if ctx.guild else None
+            if member:
+                name = member.display_name
+            else:
+                user_obj = self.bot.get_user(entry_uid)
+                name = user_obj.display_name if user_obj else f"Player {uid_str[-4:]}"
+            you = " ← you" if entry_uid == ctx.author.id else ""
+            lines.append(f"{medal} **{name}** — {wealth:,}c{you}")
+
+        if not lines:
+            lines.append("No players yet — be the first to start farming!")
+
+        # Show caller's rank if not in top 10
+        caller_rank = next((i + 1 for i, (_, u, _) in enumerate(rows) if u == ctx.author.id), None)
+        extra = None
+        if caller_rank and caller_rank > 10:
+            caller_wealth = rows[caller_rank - 1][0]
+            extra = f"Your rank: **#{caller_rank}** — {caller_wealth:,}c"
+
+        await _send(ctx, title="🏆 Garden Leaderboard", lines=lines, color=0xFFD700, extra=extra)
+
+
 # ── Welcome embed helper ───────────────────────────────────────────────────────
 
 async def send_welcome(channel: discord.abc.Messageable, user: discord.User | discord.Member) -> None:

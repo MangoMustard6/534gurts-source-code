@@ -422,30 +422,8 @@ def _save_autoreply2_no_mention():
 
 _load_autoreply2_no_mention()
 
-# Warnings
-WARNINGS_FILE = Path("bot/warnings.json")
-warnings_data: dict[int, list[dict]] = {}
 
 
-def _load_warnings():
-    global warnings_data
-    try:
-        if WARNINGS_FILE.exists():
-            with WARNINGS_FILE.open() as f:
-                warnings_data = {int(k): v for k, v in json.load(f).items()}
-        else:
-            warnings_data = {}
-    except Exception:
-        warnings_data = {}
-
-
-def _save_warnings():
-    WARNINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with WARNINGS_FILE.open("w") as f:
-        json.dump({str(k): v for k, v in warnings_data.items()}, f, indent=2)
-
-
-_load_warnings()
 
 # Tags (custom presets)
 TAGS_FILE = Path("bot/tags.json")
@@ -8327,6 +8305,16 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 
 _UPDATELOG: list[dict] = [
     {
+        "version": "v8.2",
+        "date": "2026-07-03",
+        "heavy": [
+            "**Removed moderation commands** — ban, unban, kick, timeout/mute, untimeout/unmute, purge/clear, slowmode, warn, warnings, clearwarn all removed from the bot along with their data helpers and warnings.json store.",
+            "**Garden leaderboard** — `/leaderboard` (`th/leaderboard`, aliases: `lb`, `top`) ranks all players by coins + unsold harvest value; top 10 with medals, shows caller's rank below top 10.",
+        ],
+        "fun": [],
+        "owner": [],
+    },
+    {
         "version": "v8.1",
         "date": "2026-07-03",
         "heavy": [
@@ -9576,66 +9564,6 @@ async def removear2mentions(ctx: commands.Context, user: discord.Member):
         await ctx.reply(f"✅ Autoreply2 will no longer ping {user.mention} when replying.")
 
 
-# ---------- Warnings ----------
-
-@bot.command(name="warn")
-@commands.check(_is_owner)
-async def warn(ctx: commands.Context, user: discord.Member, *, reason: str = "No reason given."):
-    """Owner-only: warn a user and track their warning count."""
-    uid = user.id
-    entry = {"reason": reason, "timestamp": time.time(), "mod_id": ctx.author.id}
-    warnings_data.setdefault(uid, []).append(entry)
-    _save_warnings()
-    count = len(warnings_data[uid])
-    embed = discord.Embed(
-        title="⚠️ Warning Issued",
-        color=discord.Color.orange(),
-    )
-    embed.add_field(name="User", value=user.mention, inline=True)
-    embed.add_field(name="Warnings", value=f"{count}", inline=True)
-    embed.add_field(name="Reason", value=reason, inline=False)
-    embed.set_footer(text=f"Warned by {ctx.author.display_name}")
-    await ctx.reply(embed=embed)
-    try:
-        await user.send(f"⚠️ You have been warned in **{ctx.guild.name}**.\n**Reason:** {reason}\n**Total warnings:** {count}")
-    except discord.HTTPException:
-        pass
-
-
-@bot.command(name="warnings", aliases=["warncount", "warnlist"])
-@commands.check(_is_owner)
-async def warnings_cmd(ctx: commands.Context, user: discord.Member):
-    """Owner-only: view all warnings for a user."""
-    uid = user.id
-    user_warns = warnings_data.get(uid, [])
-    if not user_warns:
-        await ctx.reply(f"{user.mention} has no warnings.")
-        return
-    embed = discord.Embed(
-        title=f"⚠️ Warnings for {user.display_name}",
-        color=discord.Color.orange(),
-    )
-    for i, w in enumerate(user_warns, 1):
-        ts = int(w.get("timestamp", 0))
-        embed.add_field(
-            name=f"#{i} — <t:{ts}:R>",
-            value=w.get("reason", "No reason"),
-            inline=False,
-        )
-    embed.set_footer(text=f"Total: {len(user_warns)} warning(s)")
-    await ctx.reply(embed=embed)
-
-
-@bot.command(name="clearwarn", aliases=["clearwarnings", "unwarn"])
-@commands.check(_is_owner)
-async def clearwarn(ctx: commands.Context, user: discord.Member):
-    """Owner-only: clear all warnings for a user."""
-    uid = user.id
-    count = len(warnings_data.pop(uid, []))
-    _save_warnings()
-    await ctx.reply(f"✅ Cleared **{count}** warning(s) for {user.mention}.")
-
-
 # ---------- Owner: activity control ----------
 
 @bot.command(name="setactivity", aliases=["activity", "presence"])
@@ -10358,246 +10286,6 @@ async def resetlimit_error(ctx: commands.Context, error: commands.CommandError):
         await ctx.reply("❌ Only bot owners and Level 15 moderators can reset usage limits.")
     elif isinstance(error, commands.BadArgument):
         await ctx.reply("❌ Couldn't find that user. Try mentioning them or using their user ID.")
-    else:
-        await ctx.reply(f"❌ Error: {error}")
-
-
-# ---------- Moderation commands (owner-only) ----------
-
-def _mod_embed(title: str, description: str, color: discord.Color, moderator: discord.Member) -> discord.Embed:
-    embed = discord.Embed(title=title, description=description, color=color)
-    embed.set_footer(text=f"Moderator: {moderator} ({moderator.id})")
-    return embed
-
-
-@bot.command(name="ban")
-@commands.check(_is_owner)
-@commands.guild_only()
-async def mod_ban(ctx: commands.Context, user: discord.User, *, reason: str = "No reason provided."):
-    """[Owner] Ban a user from this server."""
-    try:
-        await ctx.guild.ban(user, reason=f"[IHTX Mod] {reason} — by {ctx.author}", delete_message_days=0)
-        await ctx.reply(embed=_mod_embed(
-            "🔨 User Banned",
-            f"**{user}** (`{user.id}`) has been banned.\n**Reason:** {reason}",
-            discord.Color.red(), ctx.author,
-        ))
-    except discord.Forbidden:
-        await ctx.reply("❌ I don't have permission to ban that user.")
-    except discord.HTTPException as e:
-        await ctx.reply(f"❌ Ban failed: {e}")
-
-
-@mod_ban.error
-async def mod_ban_error(ctx: commands.Context, error: commands.CommandError):
-    if isinstance(error, commands.CheckFailure):
-        await ctx.reply("❌ Only bot owners can use moderation commands.")
-    elif isinstance(error, (commands.BadArgument, commands.UserNotFound)):
-        await ctx.reply("❌ User not found. Provide a mention, username, or user ID.")
-    elif isinstance(error, commands.NoPrivateMessage):
-        await ctx.reply("❌ This command can only be used in a server.")
-    else:
-        await ctx.reply(f"❌ Error: {error}")
-
-
-@bot.command(name="unban")
-@commands.check(_is_owner)
-@commands.guild_only()
-async def mod_unban(ctx: commands.Context, user_id: int, *, reason: str = "No reason provided."):
-    """[Owner] Unban a user by their ID."""
-    try:
-        user = await bot.fetch_user(user_id)
-        await ctx.guild.unban(user, reason=f"[IHTX Mod] {reason} — by {ctx.author}")
-        await ctx.reply(embed=_mod_embed(
-            "✅ User Unbanned",
-            f"**{user}** (`{user.id}`) has been unbanned.\n**Reason:** {reason}",
-            discord.Color.green(), ctx.author,
-        ))
-    except discord.NotFound:
-        await ctx.reply("❌ That user ID wasn't found or isn't banned on this server.")
-    except discord.Forbidden:
-        await ctx.reply("❌ I don't have permission to unban.")
-    except discord.HTTPException as e:
-        await ctx.reply(f"❌ Unban failed: {e}")
-
-
-@mod_unban.error
-async def mod_unban_error(ctx: commands.Context, error: commands.CommandError):
-    if isinstance(error, commands.CheckFailure):
-        await ctx.reply("❌ Only bot owners can use moderation commands.")
-    elif isinstance(error, commands.BadArgument):
-        await ctx.reply("❌ Invalid user ID — must be a numeric Discord user ID.")
-    elif isinstance(error, commands.NoPrivateMessage):
-        await ctx.reply("❌ This command can only be used in a server.")
-    else:
-        await ctx.reply(f"❌ Error: {error}")
-
-
-@bot.command(name="kick")
-@commands.check(_is_owner)
-@commands.guild_only()
-async def mod_kick(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided."):
-    """[Owner] Kick a member from this server."""
-    if member.id == ctx.author.id:
-        await ctx.reply("❌ You can't kick yourself.")
-        return
-    try:
-        await member.kick(reason=f"[IHTX Mod] {reason} — by {ctx.author}")
-        await ctx.reply(embed=_mod_embed(
-            "👢 User Kicked",
-            f"**{member}** (`{member.id}`) has been kicked.\n**Reason:** {reason}",
-            discord.Color.orange(), ctx.author,
-        ))
-    except discord.Forbidden:
-        await ctx.reply("❌ I don't have permission to kick that member.")
-    except discord.HTTPException as e:
-        await ctx.reply(f"❌ Kick failed: {e}")
-
-
-@mod_kick.error
-async def mod_kick_error(ctx: commands.Context, error: commands.CommandError):
-    if isinstance(error, commands.CheckFailure):
-        await ctx.reply("❌ Only bot owners can use moderation commands.")
-    elif isinstance(error, (commands.BadArgument, commands.MemberNotFound)):
-        await ctx.reply("❌ Member not found. They must be in this server.")
-    elif isinstance(error, commands.NoPrivateMessage):
-        await ctx.reply("❌ This command can only be used in a server.")
-    else:
-        await ctx.reply(f"❌ Error: {error}")
-
-
-@bot.command(name="timeout", aliases=["mute"])
-@commands.check(_is_owner)
-@commands.guild_only()
-async def mod_timeout(ctx: commands.Context, member: discord.Member, duration: int, *, reason: str = "No reason provided."):
-    """[Owner] Timeout (mute) a member for <duration> minutes (max 40320 = 28 days)."""
-    import datetime
-    if member.id == ctx.author.id:
-        await ctx.reply("❌ You can't timeout yourself.")
-        return
-    duration = max(1, min(duration, 40320))
-    until = discord.utils.utcnow() + datetime.timedelta(minutes=duration)
-    try:
-        await member.timeout(until, reason=f"[IHTX Mod] {reason} — by {ctx.author}")
-        await ctx.reply(embed=_mod_embed(
-            "🔇 Member Timed Out",
-            f"**{member}** (`{member.id}`) has been timed out for **{duration} min**.\n**Reason:** {reason}",
-            discord.Color.yellow(), ctx.author,
-        ))
-    except discord.Forbidden:
-        await ctx.reply("❌ I don't have permission to timeout that member.")
-    except discord.HTTPException as e:
-        await ctx.reply(f"❌ Timeout failed: {e}")
-
-
-@mod_timeout.error
-async def mod_timeout_error(ctx: commands.Context, error: commands.CommandError):
-    if isinstance(error, commands.CheckFailure):
-        await ctx.reply("❌ Only bot owners can use moderation commands.")
-    elif isinstance(error, (commands.BadArgument, commands.MemberNotFound)):
-        await ctx.reply("❌ Member not found or invalid duration. Usage: `th/timeout @user <minutes> [reason]`")
-    elif isinstance(error, commands.NoPrivateMessage):
-        await ctx.reply("❌ This command can only be used in a server.")
-    else:
-        await ctx.reply(f"❌ Error: {error}")
-
-
-@bot.command(name="untimeout", aliases=["unmute"])
-@commands.check(_is_owner)
-@commands.guild_only()
-async def mod_untimeout(ctx: commands.Context, member: discord.Member, *, reason: str = "No reason provided."):
-    """[Owner] Remove an active timeout from a member."""
-    try:
-        await member.timeout(None, reason=f"[IHTX Mod] {reason} — by {ctx.author}")
-        await ctx.reply(embed=_mod_embed(
-            "🔊 Timeout Removed",
-            f"**{member}** (`{member.id}`) has been un-timed-out.\n**Reason:** {reason}",
-            discord.Color.green(), ctx.author,
-        ))
-    except discord.Forbidden:
-        await ctx.reply("❌ I don't have permission to remove that timeout.")
-    except discord.HTTPException as e:
-        await ctx.reply(f"❌ Untimeout failed: {e}")
-
-
-@mod_untimeout.error
-async def mod_untimeout_error(ctx: commands.Context, error: commands.CommandError):
-    if isinstance(error, commands.CheckFailure):
-        await ctx.reply("❌ Only bot owners can use moderation commands.")
-    elif isinstance(error, (commands.BadArgument, commands.MemberNotFound)):
-        await ctx.reply("❌ Member not found. They must be in this server.")
-    elif isinstance(error, commands.NoPrivateMessage):
-        await ctx.reply("❌ This command can only be used in a server.")
-    else:
-        await ctx.reply(f"❌ Error: {error}")
-
-
-@bot.command(name="purge", aliases=["clear"])
-@commands.check(_is_owner)
-@commands.guild_only()
-async def mod_purge(ctx: commands.Context, count: int, member: discord.Member = None):
-    """[Owner] Delete the last <count> messages (2–100) in this channel, optionally filtered to <member>."""
-    count = max(2, min(count, 100))
-    await ctx.message.delete()
-    check = (lambda m: m.author == member) if member else None
-    try:
-        deleted = await ctx.channel.purge(limit=count, check=check)
-        confirm = await ctx.send(embed=discord.Embed(
-            description=f"🗑️ Deleted **{len(deleted)}** message(s)" + (f" from **{member}**" if member else "") + ".",
-            color=discord.Color.blurple(),
-        ))
-        await asyncio.sleep(5)
-        await confirm.delete()
-    except discord.Forbidden:
-        await ctx.send("❌ I don't have permission to delete messages here.")
-    except discord.HTTPException as e:
-        await ctx.send(f"❌ Purge failed: {e}")
-
-
-@mod_purge.error
-async def mod_purge_error(ctx: commands.Context, error: commands.CommandError):
-    if isinstance(error, commands.CheckFailure):
-        await ctx.reply("❌ Only bot owners can use moderation commands.")
-    elif isinstance(error, commands.BadArgument):
-        await ctx.reply("❌ Invalid arguments. Usage: `th/purge <count> [@user]`")
-    elif isinstance(error, commands.NoPrivateMessage):
-        await ctx.reply("❌ This command can only be used in a server.")
-    else:
-        await ctx.reply(f"❌ Error: {error}")
-
-
-@bot.command(name="slowmode")
-@commands.check(_is_owner)
-@commands.guild_only()
-async def mod_slowmode(ctx: commands.Context, seconds: int = 0):
-    """[Owner] Set slowmode for this channel. 0 = disable. Max 21600 (6 hours)."""
-    seconds = max(0, min(seconds, 21600))
-    try:
-        await ctx.channel.edit(slowmode_delay=seconds)
-        if seconds == 0:
-            await ctx.reply(embed=discord.Embed(
-                description="⏩ Slowmode **disabled** in this channel.",
-                color=discord.Color.green(),
-            ))
-        else:
-            await ctx.reply(embed=discord.Embed(
-                description=f"🐢 Slowmode set to **{seconds}s** in this channel.",
-                color=discord.Color.blurple(),
-            ))
-    except discord.Forbidden:
-        await ctx.reply("❌ I don't have permission to edit this channel.")
-    except discord.HTTPException as e:
-        await ctx.reply(f"❌ Slowmode change failed: {e}")
-
-
-@mod_slowmode.error
-async def mod_slowmode_error(ctx: commands.Context, error: commands.CommandError):
-    if isinstance(error, commands.CheckFailure):
-        await ctx.reply("❌ Only bot owners can use moderation commands.")
-    elif isinstance(error, commands.BadArgument):
-        await ctx.reply("❌ Invalid seconds value. Usage: `th/slowmode <0–21600>`")
-    elif isinstance(error, commands.NoPrivateMessage):
-        await ctx.reply("❌ This command can only be used in a server.")
     else:
         await ctx.reply(f"❌ Error: {error}")
 
