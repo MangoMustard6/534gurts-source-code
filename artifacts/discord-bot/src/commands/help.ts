@@ -102,9 +102,9 @@ export async function handleHelp(message: Message, ownerId: string): Promise<voi
         {
           name: '🎛️ TypeScript: t!realgmajor4',
           value: [
-            `\`${PREFIX}realgmajor4\` *realgm4 rgm4* — RGB invert + pitch-shifted overlay + doubled volume`,
+            `\`${PREFIX}realgmajor4\` *realgm4 rgm4* — Solarization curve · dual-layer audio mix · volume doubled`,
             `Attach or reply-to a video file. No additional arguments needed.`,
-            `Uses rubberband for pitch shifting (+5 semitones) with consistency mode.`,
+            `Video: \`curves=all=0/0 0.5/1 1/0\` (cross-curve solarize). Audio: original (pitch=1) mixed with pitched copy (×1.335 ≈ +5 st, quality mode), volume×2.`,
           ].join('\n'),
         },
         {

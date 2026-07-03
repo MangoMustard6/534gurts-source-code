@@ -116,39 +116,29 @@ export async function applyRealGMajor4(
   outputPath: string,
   timeout?: number,
 ): Promise<void> {
-  // Pitch ratio for +5 semitones: 2^(5/12)
-  const pitchRatio = 2 ** (5 / 12);
-
-  const { width, height } = await getVideoDimensions(inputPath);
-  if (width === 0 || height === 0) {
-    throw new Error('Could not read input video dimensions.');
-  }
-
-  // Complex filter graph:
-  // [0] = original input
-  // Split into two branches:
-  //   Branch A: RGB invert → [base] (video) + [aud0] (audio)
-  //   Branch B: RGB invert + rubberband pitch +5st → [over] (video) + [aud1] (audio)
-  // Overlay [over] on [base] → [vout]
-  // Mix [aud0] + [aud1] with volume 2 → [aout]
+  // Pipeline (reference: processAudioVideoMix):
+  //   Video  — curves=all=0/0 0.5/1 1/0  (cross-curve solarization)
+  //   Audio  — input 0 at pitch=1 (identity) mixed with input 1 at pitch=1.335
+  //             (≈ +5 semitones via frequency ratio), then volume×2
+  //
+  // The same file is fed as both inputs so the pitched copy is derived from
+  // the original without a separate pre-process step.
   const fc = [
-    // Video: split source into two branches
-    `[0:v]split=2[va][vb];`,
-    // Branch A: RGB invert (curves)
-    `[va]curves=r='0/1 1/0':g='0/1 1/0':b='0/1 1/0',format=yuv420p[base];`,
-    // Branch B: RGB invert (same curves)
-    `[vb]curves=r='0/1 1/0':g='0/1 1/0':b='0/1 1/0',format=yuv420p[over];`,
-    // Overlay: pitch-shifted inverted copy on top of inverted base
-    `[base][over]overlay=0:0:format=auto[vout];`,
-    // Audio: split, pitch-shift one branch, mix both, double volume
-    `[0:a]asplit=2[aud0][aud1];`,
-    `[aud1]rubberband=pitch=${pitchRatio.toFixed(6)}:window=short:transients=mixed:detector=soft:channels=together:pitchq=consistency[pitched];`,
-    `[aud0][pitched]amix=inputs=2:duration=first:dropout_transition=0,volume=2[aout]`,
-  ].join('');
+    // Video: solarization cross-curve on all channels
+    `[0:v]curves=all='0/0 0.5/1 1/0'[vout]`,
+    // Audio branch 0: identity (pitch=1)
+    `[0:a]rubberband=pitch=1[aud0]`,
+    // Audio branch 1: pitch shifted up by ×1.335 (≈ +5 st), quality mode
+    `[1:a]rubberband=pitch=1.335:window=long:pitchq=quality[aud1]`,
+    // Mix both branches and double volume
+    `[aud0][aud1]amix=inputs=2:duration=longest[mixed]`,
+    `[mixed]volume=2[aout]`,
+  ].join(';');
 
   await spawnAsync('ffmpeg', [
     '-y',
     '-i', inputPath,
+    '-i', inputPath,   // second input — source for the pitched audio layer
     '-filter_complex', fc,
     '-map', '[vout]',
     '-map', '[aout]',
@@ -156,9 +146,7 @@ export async function applyRealGMajor4(
     '-preset', 'fast',
     '-crf', '23',
     '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac',
-    '-b:a', '128k',
-    '-movflags', '+faststart',
+    '-c:a', 'pcm_s16le',
     outputPath,
   ], { timeout: timeout || PROCESS_TIMEOUTS.REALGM4_MS });
 }

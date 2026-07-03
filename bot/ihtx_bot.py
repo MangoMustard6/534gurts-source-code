@@ -8327,9 +8327,10 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 
 _UPDATELOG: list[dict] = [
     {
-        "version": "v7.9",
+        "version": "v8.0",
         "date": "2026-07-03",
         "heavy": [
+            "**realgmajor4 rework** — video filter changed from per-channel RGB invert (`curves=r/g/b=0/1 1/0`) to cross-curve solarization (`curves=all=0/0 0.5/1 1/0`). Audio now uses dual-input rubberband mix: pitch=1 (identity) + pitch=1.335 (≈+5 st, window=long, pitchq=quality), amix, volume×2. Output audio codec changed to pcm_s16le.",
             "**mp2 remux: `-c:v copy`** — video stream is now stream-copied instead of re-encoded with libx264, making mp2 faster and lossless for the video track.",
             "**mp2 remux: unified `-map 0:v?`** — removed the separate ffprobe video-detection branch; `-map 0:v?` handles both video and audio-only inputs in one FFmpeg call.",
         ],

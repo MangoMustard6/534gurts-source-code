@@ -8,8 +8,8 @@ import { applyRealGMajor4 } from '../effects.js';
 import { _upload_to_catbox } from '../utils/catbox.js';
 
 const USAGE =
-  '**Usage:** `t!realgmajor4` *(aliases: realgm4, rgm4)* — attach or reply-to a video file\n' +
-  'Applies RGB inversion, overlays a pitch-shifted (+5 semitones) copy, and doubles the audio volume.';
+  '**Usage:** `th/realgmajor4` *(aliases: realgm4, rgm4)* — attach or reply-to a video file\n' +
+  'Applies a solarization curve (`curves=all=0/0 0.5/1 1/0`), mixes original audio with a pitch-shifted copy (×1.335 ≈ +5 st), and doubles the volume.';
 
 const SUPPORTED_VIDEO_EXTS = new Set(['mp4', 'mov', 'mkv', 'webm', 'avi']);
 
@@ -97,7 +97,7 @@ export async function handleRealGMajor4(message: Message): Promise<void> {
     }
 
     await status.edit({
-      content: `✅ Real G-Major 4 — RGB inverted · +5 semitone pitch overlay · Volume doubled\n-# Took ${elapsed} seconds.`,
+      content: `✅ Real G-Major 4 — Solarization curve · pitch mix ×1.335 · Volume doubled\n-# Took ${elapsed} seconds.`,
       files: [{ attachment: outputPath, name: path.basename(outputPath) }],
     });
   } catch (err) {
