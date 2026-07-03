@@ -1,7 +1,7 @@
 """
 IHTX Bot — I Hate The X FFmpeg Discord Bot
 
-Full implementation with preset effects, custom effect chaining (roxi ihtx),
+Full implementation with preset effects, custom effect chaining (th/ihtx),
 and the preview1280 TV-simulator montage command.
 
 Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp,
@@ -471,21 +471,36 @@ def _save_tags():
 
 _load_tags()
 
+# Load bot config
+_BOT_CONFIG_PATH = Path(__file__).parent / "config.json"
+_bot_config = {}
+if _BOT_CONFIG_PATH.exists():
+    try:
+        with open(_BOT_CONFIG_PATH, "r", encoding="utf-8") as f:
+            _bot_config = json.load(f)
+    except Exception as e:
+        print(f"Warning: could not load config.json: {e}")
+
+_BOT_PREFIX = _bot_config.get("bot_prefix") or _bot_config.get("BOT_PREFIX") or "th/"
+if not isinstance(_BOT_PREFIX, str) or not _BOT_PREFIX:
+    print(f"Warning: invalid bot_prefix ({_BOT_PREFIX!r}), falling back to 'th/'")
+    _BOT_PREFIX = "th/"
+
 # Intents and bot
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="roxi ", intents=intents)
+bot = commands.Bot(command_prefix=_BOT_PREFIX, intents=intents)
 
 # Maps user message id → list of bot reply message ids.
 # Used to delete old responses when the user edits their command.
 _response_map: dict[int, list[int]] = {}
 _RESPONSE_MAP_MAX = 2000  # cap to prevent unbounded growth
 
-# roxi undo tracking: channel_id → last bot message id
+# th/undo tracking: channel_id → last bot message id
 _last_bot_msg: dict[int, int] = {}
 _LAST_BOT_MSG_MAX = 500
 
-# Stores the last roxi ihtx export per user for roxi lexg re-use.
+# Stores the last th/ihtx export per user for th/lexg re-use.
 _last_exports: dict[int, dict] = {}
 
 # Runtime stats
@@ -591,7 +606,7 @@ HELP_TEXT = """\
 **I Hate The X — IHTX Bot**
 One command, pipe-style syntax:
 
-`roxi ihtx effect=value,effect=value,...`
+`th/ihtx effect=value,effect=value,...`
 
 (Full help included in repository's README/help text.)
 """
@@ -1282,7 +1297,7 @@ def _run_autotune(
         return True, f"autotune: {dominant_hz:.1f} Hz → {correction_st:+.2f} st correction"
 
 
-# ---------- Reference-based autotune (roxi autotune / roxi autotoon) ----------
+# ---------- Reference-based autotune (th/autotune / th/autotoon) ----------
 
 def _pitch_detect_wav_stdlib(wav_path: str, min_hz: float = 80.0, max_hz: float = 1200.0) -> float | None:
     """Autocorrelation pitch detector — pure Python stdlib, no numpy required."""
@@ -1428,7 +1443,7 @@ def _run_autotune_reference(
         return True, f"{base_hz:.1f} Hz → {ref_hz:.1f} Hz ({shift_st:+.2f} st)"
 
 
-# ---------- Grid overlay (roxi addsource) ----------
+# ---------- Grid overlay (th/addsource) ----------
 
 def _run_grid_overlay(
     base_path: str,
@@ -4987,11 +5002,11 @@ async def on_ready():
             print("EconomyCog loaded.")
         except Exception as _econ_exc:
             print(f"Warning: EconomyCog failed to load — {_econ_exc}")
-    # Slash command sync is triggered manually via roxi sync (owner only).
+    # Slash command sync is triggered manually via th/sync (owner only).
     # Automatic on_ready sync is intentionally omitted: discord.py's event
     # loop swallows exceptions from on_ready before our try/except can
     # print them, making silent failures impossible to debug here.
-    print("Bot ready. Run roxi syncslash to register slash (/) commands.")
+    print("Bot ready. Run th/syncslash to register slash (/) commands.")
 
 
 
@@ -5071,13 +5086,13 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
     Optionally runs a pipe-effect chain on the final concatenated output.
 
     Usage:
-      roxi invlum <powers> [duration] [PIPE: effect;effect]
+      th/invlum <powers> [duration] [PIPE: effect;effect]
 
     Examples:
-      roxi invlum 4
-      roxi invlum 3 2.0
-      roxi invlum 5 1.5 PIPE: negate;multipitch=-4|5
-      roxi invlum 4 1.0 PIPE: huehsv=0.3;multipitch=-7|0|7
+      th/invlum 4
+      th/invlum 3 2.0
+      th/invlum 5 1.5 PIPE: negate;multipitch=-4|5
+      th/invlum 4 1.0 PIPE: huehsv=0.3;multipitch=-7|0|7
     """
     pipe_raw = ""
     pipe_effects: list[tuple[str, list[str]]] = []
@@ -5103,7 +5118,7 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
     if powers < 1:
         await ctx.reply(
             "❌ Powers must be at least 1.\n"
-            "**Usage:** `roxi invlum <powers> [duration] [PIPE: effect;effect]`"
+            "**Usage:** `th/invlum <powers> [duration] [PIPE: effect;effect]`"
         )
         return
 
@@ -5120,7 +5135,7 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
                 pass
 
     if not attachment:
-        await ctx.reply("❌ Attach a video.\n**Usage:** `roxi invlum <powers> [duration] [PIPE: effect;effect]`")
+        await ctx.reply("❌ Attach a video.\n**Usage:** `th/invlum <powers> [duration] [PIPE: effect;effect]`")
         return
 
     if attachment.size > MAX_FILE_SIZE:
@@ -5195,7 +5210,7 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
 async def preview1280_command(ctx: commands.Context, start: float = 1.85, duration: float = 0.85):
     """Create a 12-segment TV-simulator preview montage from an attached video.
 
-    Usage: roxi preview1280 [start_offset] [segment_duration]
+    Usage: th/preview1280 [start_offset] [segment_duration]
     Default: start=1.85, duration=0.85
     """
     attachment = None
@@ -5214,11 +5229,11 @@ async def preview1280_command(ctx: commands.Context, start: float = 1.85, durati
     if not attachment:
         await ctx.reply(
             "**IHTX Preview1280**\n"
-            "Attach a video and use `roxi preview1280 [start] [duration]`.\n\n"
+            "Attach a video and use `th/preview1280 [start] [duration]`.\n\n"
             "Creates a 12-segment TV-simulator montage with hue shifts, "
             "displacement mapping, and pitch variations.\n\n"
             "Defaults: start=1.85s, duration=0.85s per segment.\n"
-            "Example: `roxi preview1280 2.0 1.0`"
+            "Example: `th/preview1280 2.0 1.0`"
         )
         return
 
@@ -5291,8 +5306,8 @@ async def oppositep1280_command(ctx: commands.Context, start: float = 1.85, dura
     """Create a 12-segment inverse TV-simulator montage from an attached video.
 
     The *opposite* of preview1280: all hue shifts are negated and all pitch
-    shifts are inverted. Usage: roxi oppositep1280 [start_offset] [segment_duration]
-    Aliases: roxi op1280, roxi opposite, roxi opposite1280
+    shifts are inverted. Usage: th/oppositep1280 [start_offset] [segment_duration]
+    Aliases: th/op1280, th/opposite, th/opposite1280
     Default: start=1.85, duration=0.85
     """
     attachment = None
@@ -5309,12 +5324,12 @@ async def oppositep1280_command(ctx: commands.Context, start: float = 1.85, dura
     if not attachment:
         await ctx.reply(
             "**IHTX OppositeP1280**\n"
-            "Attach a video and use `roxi oppositep1280 [start] [duration]`.\n\n"
+            "Attach a video and use `th/oppositep1280 [start] [duration]`.\n\n"
             "Creates a 12-segment TV-simulator montage with **inverse** hue shifts "
             "and **negated** pitch variations compared to preview1280.\n\n"
             "Defaults: start=1.85s, duration=0.85s per segment.\n"
-            "Aliases: `roxi op1280`, `roxi opposite`, `roxi opposite1280`\n"
-            "Example: `roxi op1280 2.0 1.0`"
+            "Aliases: `th/op1280`, `th/opposite`, `th/opposite1280`\n"
+            "Example: `th/op1280 2.0 1.0`"
         )
         return
 
@@ -5390,8 +5405,8 @@ async def oppositep1280_command(ctx: commands.Context, start: float = 1.85, dura
 async def preview1280_640x360resize_command(ctx: commands.Context, start: float = 1.85, duration: float = 0.85):
     """Same 12-segment TV-simulator montage as preview1280 but output is locked to 640x360.
 
-    Usage: roxi preview1280with640x360resize [start_offset] [segment_duration]
-    Aliases: roxi p1280ff!3, roxi p1280w16:9r
+    Usage: th/preview1280with640x360resize [start_offset] [segment_duration]
+    Aliases: th/p1280ff!3, th/p1280w16:9r
     Default: start=1.85, duration=0.85
     """
     attachment = None
@@ -5408,12 +5423,12 @@ async def preview1280_640x360resize_command(ctx: commands.Context, start: float 
     if not attachment:
         await ctx.reply(
             "**IHTX Preview1280 (640×360 output)**\n"
-            "Attach a video and use `roxi preview1280with640x360resize [start] [duration]`.\n\n"
-            "Same 12-segment TV-simulator montage pipeline as `roxi preview1280`, "
+            "Attach a video and use `th/preview1280with640x360resize [start] [duration]`.\n\n"
+            "Same 12-segment TV-simulator montage pipeline as `th/preview1280`, "
             "but the final output is always rescaled to **640×360** regardless of input resolution.\n\n"
             "Defaults: start=1.85s, duration=0.85s per segment.\n"
-            "Aliases: `roxi p1280ff!3`, `roxi p1280w16:9r`\n"
-            "Example: `roxi p1280w16:9r 2.0 1.0`"
+            "Aliases: `th/p1280ff!3`, `th/p1280w16:9r`\n"
+            "Example: `th/p1280w16:9r 2.0 1.0`"
         )
         return
 
@@ -5493,25 +5508,25 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
     """Apply multi-voice pitch shifting using Rubber Band R3 (-3 engine).
 
     Usage:
-      roxi multipitch -7;12;19          — semicolon-separated semitone values (primary)
-      roxi multipitch -7|12|19          — pipe-separated also accepted
-      roxi mp -7;12;19                  — alias
-      roxi multi -7;12;19               — alias
+      th/multipitch -7;12;19          — semicolon-separated semitone values (primary)
+      th/multipitch -7|12|19          — pipe-separated also accepted
+      th/mp -7;12;19                  — alias
+      th/multi -7;12;19               — alias
 
     Each value creates a separately pitched voice; all voices are mixed together.
     Supports negative and positive semitone values.
     Works on video and audio files. Video stream is preserved unchanged.
 
-    Example: roxi multipitch -7;12;19
+    Example: th/multipitch -7;12;19
     """
     if not args:
         await ctx.reply(
             "**IHTX Multipitch** — Rubber Band R3\n"
             "Attach a video or audio file and provide semicolon-separated semitone values.\n\n"
             "Each value creates a pitched voice; all voices are mixed together.\n\n"
-            f"Example: `roxi multipitch -7;12;19`\n"
-            f"Pipe syntax also works: `roxi multipitch -7|12|19`\n"
-            f"Aliases: `roxi mp`, `roxi multi`\n"
+            f"Example: `th/multipitch -7;12;19`\n"
+            f"Pipe syntax also works: `th/multipitch -7|12|19`\n"
+            f"Aliases: `th/mp`, `th/multi`\n"
             f"Max pitches: {_MULTIPITCH_MAX}"
         )
         return
@@ -5526,7 +5541,7 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
         pitch_values = [raw] if raw else []
 
     if not pitch_values:
-        await ctx.reply("No pitch values provided. Example: `roxi multipitch -7;12;19`")
+        await ctx.reply("No pitch values provided. Example: `th/multipitch -7;12;19`")
         return
 
     if len(pitch_values) > _MULTIPITCH_MAX:
@@ -5560,7 +5575,7 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
     if not attachment:
         await ctx.reply(
             "Attach a video or audio file and provide pitch values.\n"
-            "Example: `roxi multipitch -7;12;19`"
+            "Example: `th/multipitch -7;12;19`"
         )
         return
 
@@ -5623,24 +5638,24 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
     """Apply multi-voice pitch shifting using SoundTouch soundstretch.
 
     Usage:
-      roxi ssmp -7;12;19          — semicolon-separated semitone values
-      roxi ssmp -7|12|19          — pipe-separated also accepted
-      roxi soundstretchmultipitch -3;5   — full name
+      th/ssmp -7;12;19          — semicolon-separated semitone values
+      th/ssmp -7|12|19          — pipe-separated also accepted
+      th/soundstretchmultipitch -3;5   — full name
 
     Each value creates a separately pitched voice via soundstretch;
     all voices are mixed together with FFmpeg amix (normalize=0).
     Works on video and audio files. Video stream is preserved unchanged.
     Uses the SoundTouch algorithm (different character from Rubber Band).
 
-    Example: roxi ssmp -7;12;19
+    Example: th/ssmp -7;12;19
     """
     if not args:
         await ctx.reply(
             "**IHTX SoundStretch Multipitch** — SoundTouch algorithm\n"
             "Attach a video or audio file and provide semicolon-separated semitone values.\n\n"
             "Each value creates a pitched voice via soundstretch; all voices are mixed together.\n\n"
-            "Example: `roxi ssmp -7;12;19`\n"
-            "Pipe syntax also works: `roxi ssmp -7|12|19`\n"
+            "Example: `th/ssmp -7;12;19`\n"
+            "Pipe syntax also works: `th/ssmp -7|12|19`\n"
             f"Max pitches: {_MULTIPITCH_MAX}"
         )
         return
@@ -5654,7 +5669,7 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
         pitch_values = [raw] if raw else []
 
     if not pitch_values:
-        await ctx.reply("No pitch values provided. Example: `roxi ssmp -7;12;19`")
+        await ctx.reply("No pitch values provided. Example: `th/ssmp -7;12;19`")
         return
 
     if len(pitch_values) > _MULTIPITCH_MAX:
@@ -5684,7 +5699,7 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
     if not attachment:
         await ctx.reply(
             "Attach a video or audio file and provide pitch values.\n"
-            "Example: `roxi ssmp -7;12;19`"
+            "Example: `th/ssmp -7;12;19`"
         )
         return
 
@@ -5742,7 +5757,7 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
             await status_msg.edit(content=f"❌ Failed to upload result: {e}")
 
 
-# ---------- roxi ffmpeg — raw FFmpeg command ----------
+# ---------- th/ffmpeg — raw FFmpeg command ----------
 
 @bot.command(name="ffmpeg")
 async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
@@ -5751,19 +5766,19 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
     Args go between -i <input> and <output>. Output filename matches input.
 
     Usage:
-      roxi ffmpeg -vf negate
-      roxi ffmpeg -vf hue=h=180 -c:a copy
-      roxi ffmpeg -af volume=2.0
+      th/ffmpeg -vf negate
+      th/ffmpeg -vf hue=h=180 -c:a copy
+      th/ffmpeg -af volume=2.0
     """
     if not args:
         await ctx.reply(
-            "**roxi ffmpeg** — Run raw FFmpeg on an attachment.\n"
+            "**th/ffmpeg** — Run raw FFmpeg on an attachment.\n"
             "Args are inserted between `-i <input>` and `<output>`.\n\n"
-            "**Usage:** `roxi ffmpeg <ffmpeg args>`\n"
+            "**Usage:** `th/ffmpeg <ffmpeg args>`\n"
             "**Examples:**\n"
-            "`roxi ffmpeg -vf negate`\n"
-            "`roxi ffmpeg -vf hue=h=180 -c:a copy`\n"
-            "`roxi ffmpeg -af volume=2.0`"
+            "`th/ffmpeg -vf negate`\n"
+            "`th/ffmpeg -vf hue=h=180 -c:a copy`\n"
+            "`th/ffmpeg -af volume=2.0`"
         )
         return
 
@@ -5780,7 +5795,7 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
                 pass
 
     if not attachment:
-        await ctx.reply("❌ Attach a file to use `roxi ffmpeg`.")
+        await ctx.reply("❌ Attach a file to use `th/ffmpeg`.")
         return
 
     if attachment.size > MAX_FILE_SIZE:
@@ -5849,7 +5864,7 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Upload failed: {e}")
 
 
-# ---------- roxi ffmpegprocess — FFmpeg with ffprobe metadata inspection ----------
+# ---------- th/ffmpegprocess — FFmpeg with ffprobe metadata inspection ----------
 
 async def _run_ffprobe_field(args: list) -> str:
     """Run a single ffprobe query and return stripped stdout, or 'N/A' on failure."""
@@ -5905,19 +5920,19 @@ async def ffmpeg_process_command(ctx: commands.Context, *, args: str = ""):
     Args go between -i <input> and <output>. Output filename matches input.
 
     Usage:
-      roxi ffmpegprocess -vf scale=1280:-1 -c:v libx264 -crf 23
-      roxi ffmpegprocess -vf negate
-      roxi ffmpegprocess -af volume=2.0
+      th/ffmpegprocess -vf scale=1280:-1 -c:v libx264 -crf 23
+      th/ffmpegprocess -vf negate
+      th/ffmpegprocess -af volume=2.0
     """
     if not args:
         await ctx.reply(
-            "**roxi ffmpegprocess** — Run FFmpeg on an attachment with ffprobe metadata inspection.\n"
+            "**th/ffmpegprocess** — Run FFmpeg on an attachment with ffprobe metadata inspection.\n"
             "Args are inserted between `-i <input>` and `<output>`.\n\n"
-            "**Usage:** `roxi ffmpegprocess <ffmpeg args>`  *(alias: fmp)*\n"
+            "**Usage:** `th/ffmpegprocess <ffmpeg args>`  *(alias: fmp)*\n"
             "**Examples:**\n"
-            "`roxi ffmpegprocess -vf scale=1280:-1 -c:v libx264 -crf 23`\n"
-            "`roxi ffmpegprocess -vf negate`\n"
-            "`roxi ffmpegprocess -af volume=2.0`"
+            "`th/ffmpegprocess -vf scale=1280:-1 -c:v libx264 -crf 23`\n"
+            "`th/ffmpegprocess -vf negate`\n"
+            "`th/ffmpegprocess -af volume=2.0`"
         )
         return
 
@@ -5933,7 +5948,7 @@ async def ffmpeg_process_command(ctx: commands.Context, *, args: str = ""):
             pass
 
     if not attachment:
-        await ctx.reply("❌ Attach a file to use `roxi ffmpegprocess`.")
+        await ctx.reply("❌ Attach a file to use `th/ffmpegprocess`.")
         return
 
     if attachment.size > MAX_FILE_SIZE:
@@ -6024,7 +6039,7 @@ async def ffmpeg_process_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Upload failed: {e}")
 
 
-# ---------- roxi trim — precise media trimmer ----------
+# ---------- th/trim — precise media trimmer ----------
 
 _TRIM_SUPPORTED_EXTS = {
     ".mp4", ".mov", ".webm", ".gif", ".mkv",
@@ -6064,12 +6079,12 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
     """Trim media from <start> to <end> with up to 10 decimal places of precision.
 
     Usage:
-      roxi trim <start> <end>
-      roxi trim 5 15
-      roxi trim 0.5 3.75
-      roxi trim 1.2345678901 9.8765432109
-      roxi trim 00:01:30.5 00:02:45.25
-      roxi trim 1:30 2:45
+      th/trim <start> <end>
+      th/trim 5 15
+      th/trim 0.5 3.75
+      th/trim 1.2345678901 9.8765432109
+      th/trim 00:01:30.5 00:02:45.25
+      th/trim 1:30 2:45
 
     Media from: attachment on this message, replied-to message, or a URL in args.
     Supported: mp4, mov, webm, gif, mkv, mp3, wav, flac, ogg, m4a.
@@ -6088,8 +6103,8 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
 
     if len(ts_tokens) < 2:
         await ctx.reply(
-            "❌ Usage: `roxi trim <start> <end>`\n"
-            "Examples: `roxi trim 5 15` · `roxi trim 0.5 3.75` · `roxi trim 00:01:30 00:02:45`\n"
+            "❌ Usage: `th/trim <start> <end>`\n"
+            "Examples: `th/trim 5 15` · `th/trim 0.5 3.75` · `th/trim 00:01:30 00:02:45`\n"
             "Attach, reply to, or include a media URL."
         )
         return
@@ -6250,15 +6265,15 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Failed to upload result: {exc}")
 
 
-# ---------- roxi autotune / roxi autotoon — reference-based pitch correction ----------
+# ---------- th/autotune / th/autotoon — reference-based pitch correction ----------
 
 @bot.command(name="autotune", aliases=["autotoon"])
 async def autotune_command(ctx: commands.Context, *, args: str = ""):
     """Pitch-correct a video/audio to match a reference track.
 
     Usage:
-      roxi autotune <YouTube URL or search query>
-      roxi autotoon <YouTube URL or search query>
+      th/autotune <YouTube URL or search query>
+      th/autotoon <YouTube URL or search query>
 
     Attach or reply to the media you want to autotune.
     The argument is the reference (URL or search terms).
@@ -6280,7 +6295,7 @@ async def autotune_command(ctx: commands.Context, *, args: str = ""):
 
     if not ref_query:
         await ctx.reply(
-            "❌ Usage: `roxi autotune <YouTube URL or search query>`\n"
+            "❌ Usage: `th/autotune <YouTube URL or search query>`\n"
             "Attach or reply to the video/audio you want to autotune.\n"
             "The argument is the reference track (URL or search terms).\n"
             "Optional flag: `--strength 0.0-1.0` (default 1.0)"
@@ -6376,14 +6391,14 @@ async def autotune_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Upload failed: {exc}")
 
 
-# ---------- roxi addsource — grid-cell video overlay ----------
+# ---------- th/addsource — grid-cell video overlay ----------
 
 @bot.command(name="addsource")
 async def addsource_command(ctx: commands.Context, *, args: str = ""):
     """Overlay a secondary video onto a specific grid cell of a base video.
 
     Usage:
-      roxi addsource <overlay_url> <grid> <pos> [--base-audio]
+      th/addsource <overlay_url> <grid> <pos> [--base-audio]
 
     Arguments:
       overlay_url   URL of the video to place in the cell
@@ -6394,8 +6409,8 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
     Base video: attach to the message or reply to a message containing one.
 
     Examples:
-      roxi addsource https://example.com/clip.mp4 2x2 3
-      roxi addsource https://example.com/clip.mp4 3x3 5 --base-audio
+      th/addsource https://example.com/clip.mp4 2x2 3
+      th/addsource https://example.com/clip.mp4 3x3 5 --base-audio
     """
     import re as _re
 
@@ -6417,8 +6432,8 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
 
     if not overlay_url or not grid_str or not pos_str:
         await ctx.reply(
-            "❌ Usage: `roxi addsource <overlay_url> <grid> <pos>`\n"
-            "Example: `roxi addsource https://... 2x2 3`\n"
+            "❌ Usage: `th/addsource <overlay_url> <grid> <pos>`\n"
+            "Example: `th/addsource https://... 2x2 3`\n"
             "Attach or reply to the base video.\n"
             "Optional flag: `--base-audio` to keep base audio instead of overlay."
         )
@@ -6526,7 +6541,7 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Upload failed: `{exc}`")
 
 
-# ---------- roxi mirror — mirror presets via FFmpeg split/crop/flip/stack ----------
+# ---------- th/mirror — mirror presets via FFmpeg split/crop/flip/stack ----------
 
 # Each preset is (vf_filter, description)
 # Native FFmpeg: split the frame, crop each half, flip one, stack back.
@@ -6561,13 +6576,13 @@ async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str =
     """Mirror media along an axis.
 
     Usage:
-      roxi mirror <preset>
+      th/mirror <preset>
       Presets: left (l), right (r), top (t), bottom (b)
 
     Examples:
-      roxi mirror left
-      roxi mirror r
-      roxi mirror top
+      th/mirror left
+      th/mirror r
+      th/mirror top
 
     Media from: attachment, replied-to message, or a URL in the preset/args.
     """
@@ -6708,8 +6723,8 @@ async def huehsv_command(
     """Apply hue/sat/lightness shift using ImageMagick haldclut + FFmpeg.
 
     Usage:
-      roxi huehsv <hue> [sat] [lightness] [colorspace] [betterfully]
-      roxi hhsv <hue>   — alias
+      th/huehsv <hue> [sat] [lightness] [colorspace] [betterfully]
+      th/hhsv <hue>   — alias
 
     Parameters:
       hue         — hue rotation (0.0=unchanged, 0.5=full rotation)
@@ -6739,11 +6754,11 @@ async def huehsv_command(
     if not attachment:
         await ctx.reply(
             "**IHTX HueHSV**\n"
-            "Attach a video or image and use `roxi huehsv <hue> [sat] [lightness] [colorspace] [betterfully]`.\n\n"
+            "Attach a video or image and use `th/huehsv <hue> [sat] [lightness] [colorspace] [betterfully]`.\n\n"
             "Applies hue/sat/lightness shift via ImageMagick haldclut (hald:8).\n"
             "• `betterfully` — set to `1` for richer hue posterisation + 125% sat headroom\n"
-            "Example: `roxi huehsv 0.5` · `roxi huehsv 0.3 1.2 1.0 hsl 1`\n"
-            "Aliases: `roxi hhsv`"
+            "Example: `th/huehsv 0.5` · `th/huehsv 0.3 1.2 1.0 hsl 1`\n"
+            "Aliases: `th/hhsv`"
         )
         return
 
@@ -6806,7 +6821,7 @@ async def png2lut_cmd(ctx: commands.Context, *, args: str = ""):
     """Convert a tiled LUT PNG to a .cube file.
 
     Usage:
-      roxi png2lut [lut_size] [output_name]
+      th/png2lut [lut_size] [output_name]
 
     Attach a tiled LUT PNG (e.g. 512×512 for a 64-size LUT).
     lut_size defaults to 64. output_name sets the .cube filename stem.
@@ -6841,9 +6856,9 @@ async def png2lut_cmd(ctx: commands.Context, *, args: str = ""):
 
     if not attachment:
         await ctx.reply(
-            "**roxi png2lut** — Convert a tiled LUT PNG → .cube file\n"
-            "Attach the LUT PNG and run `roxi png2lut [lut_size] [output_name]`.\n"
-            "Default lut_size is 64. Example: `roxi png2lut 33 my_lut`"
+            "**th/png2lut** — Convert a tiled LUT PNG → .cube file\n"
+            "Attach the LUT PNG and run `th/png2lut [lut_size] [output_name]`.\n"
+            "Default lut_size is 64. Example: `th/png2lut 33 my_lut`"
         )
         return
 
@@ -6923,7 +6938,7 @@ async def lut2png_cmd(ctx: commands.Context, cube_url: str = ""):
     """Apply a .cube LUT file to an image or video via FFmpeg lut3d.
 
     Usage:
-      roxi lut2png [cube_url]
+      th/lut2png [cube_url]
 
     Attach the media to process. Provide the .cube file as a second
     attachment OR pass its URL as the first argument.
@@ -6946,10 +6961,10 @@ async def lut2png_cmd(ctx: commands.Context, cube_url: str = ""):
 
     if not media_att:
         await ctx.reply(
-            "**roxi lut2png** — Apply a .cube LUT to image/video via FFmpeg\n"
+            "**th/lut2png** — Apply a .cube LUT to image/video via FFmpeg\n"
             "Attach the media + the .cube file (two attachments), or attach\n"
             "media and pass the .cube URL as an argument.\n"
-            "Example: `roxi lut2png https://example.com/my.cube`"
+            "Example: `th/lut2png https://example.com/my.cube`"
         )
         return
 
@@ -7038,10 +7053,10 @@ async def syncaudio_command(ctx: commands.Context, mode: str = ""):
     Alt mode: adjusts audio speed to match video.
 
     Usage:
-      roxi syncaudio         — adjust video speed to match audio
-      roxi syncaudio alt     — adjust audio speed to match video
-      roxi sa                — alias
-      roxi sync alt          — alias
+      th/syncaudio         — adjust video speed to match audio
+      th/syncaudio alt     — adjust audio speed to match video
+      th/sa                — alias
+      th/sync alt          — alias
     """
     alt_mode = mode.lower().strip() == "alt"
 
@@ -7063,15 +7078,15 @@ async def syncaudio_command(ctx: commands.Context, mode: str = ""):
         mode_desc = "adjusts **video speed** to match audio" if not alt_mode else "adjusts **audio speed** to match video"
         await ctx.reply(
             "**IHTX Syncaudio**\n"
-            f"Attach a video and use `roxi syncaudio [alt]`.\n\n"
+            f"Attach a video and use `th/syncaudio [alt]`.\n\n"
             f"Default: {mode_desc}\n"
             "Alt mode (`alt`): adjusts the other stream instead.\n\n"
             "Examples:\n"
             "```\n"
-            "roxi syncaudio         — video speed → match audio\n"
-            "roxi syncaudio alt     — audio speed → match video\n"
+            "th/syncaudio         — video speed → match audio\n"
+            "th/syncaudio alt     — audio speed → match video\n"
             "```\n"
-            "Aliases: `roxi sa`, `roxi sync`"
+            "Aliases: `th/sa`, `th/sync`"
         )
         return
 
@@ -7129,7 +7144,7 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
     """Apply a swirl/vortex distortion to an attached video or image.
 
     Usage:
-      roxi swirl <strength> [radius] [xc] [yc] [fallout] [is1to1]
+      th/swirl <strength> [radius] [xc] [yc] [fallout] [is1to1]
 
     Parameters (space- or pipe-separated):
       strength  — swirl angle in degrees (can be negative). Required.
@@ -7140,9 +7155,9 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
       is1to1    — true/false, scale to square before swirl (default true)
 
     Examples:
-      roxi swirl 180
-      roxi swirl 360 0.5 0.5 0.5 quad false
-      roxi swirl -90 0.3 0.25 0.75 linear
+      th/swirl 180
+      th/swirl 360 0.5 0.5 0.5 quad false
+      th/swirl -90 0.3 0.25 0.75 linear
     """
     tokens = re.split(r"[|\s]+", args.strip()) if args.strip() else []
 
@@ -7157,13 +7172,13 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
 
     if not tokens:
         await ctx.reply(
-            "**roxi swirl** — vortex/swirl distortion\n"
+            "**th/swirl** — vortex/swirl distortion\n"
             "Attach a video or image and provide `strength` (degrees).\n\n"
-            "**Usage:** `roxi swirl <strength> [radius] [xc] [yc] [fallout] [is1to1]`\n"
-            "**Examples:** `roxi swirl 180` · `roxi swirl 360 0.5 0.5 0.5 quad` · `roxi swirl -90 0.3 0.25 0.75 linear`\n"
-            "**As pipe effect:** `roxi ihtx 1 5 - mp4 swirl=180`\n"
+            "**Usage:** `th/swirl <strength> [radius] [xc] [yc] [fallout] [is1to1]`\n"
+            "**Examples:** `th/swirl 180` · `th/swirl 360 0.5 0.5 0.5 quad` · `th/swirl -90 0.3 0.25 0.75 linear`\n"
+            "**As pipe effect:** `th/ihtx 1 5 - mp4 swirl=180`\n"
             "Full pipe syntax: `swirl=strength;radius;xc;yc;fallout;is1to1`\n"
-            "Alias: `roxi vortex`"
+            "Alias: `th/vortex`"
         )
         return
 
@@ -7191,8 +7206,8 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
 
     if not attachment:
         await ctx.reply(
-            "❌ Attach a video or image to use `roxi swirl`.\n"
-            "**Usage:** `roxi swirl <strength> [radius] [xc] [yc] [fallout] [is1to1]`"
+            "❌ Attach a video or image to use `th/swirl`.\n"
+            "**Usage:** `th/swirl <strength> [radius] [xc] [yc] [fallout] [is1to1]`"
         )
         return
 
@@ -7245,7 +7260,7 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
         out_filename = f"swirl_{Path(attachment.filename).stem}{out_suffix}"
         try:
             embed = discord.Embed(
-                title="IHTX Bot — roxi swirl",
+                title="IHTX Bot — th/swirl",
                 description=(
                     f"strength={strength}° · radius={radius} · center=({xc},{yc}) · "
                     f"fallout={fallout} · 1:1={is1to1}"
@@ -7265,7 +7280,7 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
     """Apply a TV/CRT simulator effect to an attached video.
 
     Usage:
-      roxi tvsim <line_sync> [detail_zoom] [vertical_sync] [phosphorescence] [interlacing] [scan_phasing] [aperture_grill] [static]
+      th/tvsim <line_sync> [detail_zoom] [vertical_sync] [phosphorescence] [interlacing] [scan_phasing] [aperture_grill] [static]
 
     Parameters (all separated by spaces or pipes):
       line_sync       — 0-1, displacement strength (0=max CRT warp, 1=no warp). Required.
@@ -7278,9 +7293,9 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
       static          — TV static noise strength 0-1 (default 0 = off)
 
     Examples:
-      roxi tvsim 0.5
-      roxi tvsim 0.3 1 1 0.4 0.5 0 0.6 0
-      roxi tvsim 0.5 1 1 0 0 0 0 1
+      th/tvsim 0.5
+      th/tvsim 0.3 1 1 0.4 0.5 0 0.6 0
+      th/tvsim 0.5 1 1 0 0 0 0 1
     """
     # Parse params
     tokens = re.split(r"[|\s]+", args.strip()) if args.strip() else []
@@ -7293,13 +7308,13 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
 
     if not tokens:
         await ctx.reply(
-            "**roxi tvsim** — CRT/TV simulator effect\n"
+            "**th/tvsim** — CRT/TV simulator effect\n"
             "Attach a video and provide `line_sync` (0–1, required).\n\n"
-            "**Usage:** `roxi tvsim <line_sync> [detail_zoom] [vert_sync] [phosphor] [interlace] [scan_phase] [aperture_grill] [static]`\n"
-            "**Example:** `roxi tvsim 0.5`\n"
-            "**Full example:** `roxi tvsim 0.3 1 1 0.4 0.5 0 0.6 0`\n"
-            "**As pipe effect:** `roxi ihtx 1 5 - mp4 tvsim=0.5`\n"
-            "Aliases: `roxi tv` `roxi tvsimulator`"
+            "**Usage:** `th/tvsim <line_sync> [detail_zoom] [vert_sync] [phosphor] [interlace] [scan_phase] [aperture_grill] [static]`\n"
+            "**Example:** `th/tvsim 0.5`\n"
+            "**Full example:** `th/tvsim 0.3 1 1 0.4 0.5 0 0.6 0`\n"
+            "**As pipe effect:** `th/ihtx 1 5 - mp4 tvsim=0.5`\n"
+            "Aliases: `th/tv` `th/tvsimulator`"
         )
         return
 
@@ -7330,8 +7345,8 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
 
     if not attachment:
         await ctx.reply(
-            "❌ Attach a video to use `roxi tvsim`.\n"
-            "**Usage:** `roxi tvsim <line_sync> [detail_zoom] [vertical_sync] [phosphorescence] [interlacing] [scan_phasing]`"
+            "❌ Attach a video to use `th/tvsim`.\n"
+            "**Usage:** `th/tvsim <line_sync> [detail_zoom] [vertical_sync] [phosphorescence] [interlacing] [scan_phasing]`"
         )
         return
 
@@ -7341,7 +7356,7 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
 
     suffix = Path(attachment.filename).suffix.lower()
     if suffix not in VIDEO_EXTENSIONS:
-        await ctx.reply(f"❌ `roxi tvsim` requires a video file. Got `{suffix}`.")
+        await ctx.reply(f"❌ `th/tvsim` requires a video file. Got `{suffix}`.")
         return
 
     param_str = f"line_sync={line_sync}"
@@ -7384,7 +7399,7 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
         out_filename = f"tvsim_{Path(attachment.filename).stem}.mp4"
         try:
             embed = discord.Embed(
-                title="IHTX Bot — roxi tvsim",
+                title="IHTX Bot — th/tvsim",
                 description=(
                     f"line_sync={line_sync} · zoom={detail_zoom} · vert={vertical_sync} · "
                     f"phosphor={phosphorescence} · interlace={interlacing} · scan={scan_phasing} · "
@@ -7408,8 +7423,8 @@ async def folkvalley_command(ctx: commands.Context):
     (HSV value shift), and overlays a decorative image scaled to fit the frame.
 
     Usage:
-      roxi folkvalley
-      roxi fv
+      th/folkvalley
+      th/fv
 
     No parameters — the effect is fixed.
     """
@@ -7426,11 +7441,11 @@ async def folkvalley_command(ctx: commands.Context):
 
     if not attachment:
         await ctx.reply(
-            "**roxi folkvalley** — dreamy aesthetic effect\n"
+            "**th/folkvalley** — dreamy aesthetic effect\n"
             "Attaches folkvalley music, boosts brightness, and adds a decorative overlay.\n\n"
-            "**Usage:** `roxi folkvalley` (attach a video)\n"
-            "**As pipe effect:** `roxi ihtx 1 5 - mp4 folkvalley`\n"
-            "Aliases: `roxi fv` `roxi folk`"
+            "**Usage:** `th/folkvalley` (attach a video)\n"
+            "**As pipe effect:** `th/ihtx 1 5 - mp4 folkvalley`\n"
+            "Aliases: `th/fv` `th/folk`"
         )
         return
 
@@ -7440,7 +7455,7 @@ async def folkvalley_command(ctx: commands.Context):
 
     suffix = Path(attachment.filename).suffix.lower()
     if suffix not in VIDEO_EXTENSIONS:
-        await ctx.reply(f"❌ `roxi folkvalley` requires a video file. Got `{suffix}`.")
+        await ctx.reply(f"❌ `th/folkvalley` requires a video file. Got `{suffix}`.")
         return
 
     status_msg = await ctx.reply("⏳ Applying folkvalley effect…")
@@ -7476,7 +7491,7 @@ async def folkvalley_command(ctx: commands.Context):
         out_filename = f"folkvalley_{Path(attachment.filename).stem}.mp4"
         try:
             embed = discord.Embed(
-                title="IHTX Bot — roxi folkvalley",
+                title="IHTX Bot — th/folkvalley",
                 description="Music replacement · brightness boost (HSV V+100) · decorative overlay",
                 color=0x7c9e6e,
             )
@@ -7493,9 +7508,9 @@ async def vocoder_command(ctx: commands.Context, *, args: str = ""):
     """FFT phase vocoder — shape a carrier sound with your video's voice envelope.
 
     Usage:
-      roxi vocoder <carrier_url>                        — ilvocodex mode (default)
-      roxi vocoder <mode> <carrier_url>                 — specify mode
-      roxi vocoder <mode> <bandwidth> <carrier_url>     — mode + custom band count
+      th/vocoder <carrier_url>                        — ilvocodex mode (default)
+      th/vocoder <mode> <carrier_url>                 — specify mode
+      th/vocoder <mode> <bandwidth> <carrier_url>     — mode + custom band count
 
     Modes: ilvocodex | orangevocoder | 4ormulator | audacity
     carrier_url: direct link to any audio file (mp3, wav, ogg…)
@@ -7506,17 +7521,17 @@ async def vocoder_command(ctx: commands.Context, *, args: str = ""):
 
     if not parts:
         lines = [
-            "**roxi vocoder** — FFT phase vocoder",
+            "**th/vocoder** — FFT phase vocoder",
             "Shape a carrier sound (synth, pad, instrument) with the frequency envelope of your video's audio.",
             "",
             "**Usage:**",
-            "`roxi vocoder <carrier_url>` — ilvocodex mode",
-            "`roxi vocoder <mode> <carrier_url>` — specify mode",
-            "`roxi vocoder <mode> <bandwidth> <carrier_url>` — mode + band count",
+            "`th/vocoder <carrier_url>` — ilvocodex mode",
+            "`th/vocoder <mode> <carrier_url>` — specify mode",
+            "`th/vocoder <mode> <bandwidth> <carrier_url>` — mode + band count",
             "",
             f"**Modes:** `{'` · `'.join(_VOCODER_PROFILES)}`",
-            "**Alias:** `roxi vocode`",
-            "**As pipe effect:** `roxi ihtx 1 5 - mp4 vocoder=ilvocodex;https://url`",
+            "**Alias:** `th/vocode`",
+            "**As pipe effect:** `th/ihtx 1 5 - mp4 vocoder=ilvocodex;https://url`",
             "Mode shortcuts: `ilvocodex=url` `orangevocoder=url` `4ormulator=url` `audacity=url`",
         ]
         await ctx.reply("\n".join(lines))
@@ -7539,7 +7554,7 @@ async def vocoder_command(ctx: commands.Context, *, args: str = ""):
     carrier_url = parts[0] if parts else ""
 
     if not carrier_url:
-        await ctx.reply("❌ Provide a carrier audio URL. Example: `roxi vocoder ilvocodex https://example.com/pad.mp3`")
+        await ctx.reply("❌ Provide a carrier audio URL. Example: `th/vocoder ilvocodex https://example.com/pad.mp3`")
         return
 
     attachment = None
@@ -7597,7 +7612,7 @@ async def vocoder_command(ctx: commands.Context, *, args: str = ""):
         out_filename = f"vocoder_{Path(attachment.filename).stem}.mp4"
         try:
             embed = discord.Embed(
-                title="IHTX Bot — roxi vocoder",
+                title="IHTX Bot — th/vocoder",
                 description=f"Mode: `{mode}` · Bands: `{bw_display}` · Python FFT phase vocoder",
                 color=0x9B59B6,
             )
@@ -7620,7 +7635,7 @@ async def presets_command(ctx: commands.Context):
     )
     embed.add_field(
         name="Usage",
-        value="Attach a video or image and run:\n`roxi ihtx [preset]`\n\nDefault preset: `chaos`",
+        value="Attach a video or image and run:\n`th/ihtx [preset]`\n\nDefault preset: `chaos`",
         inline=False,
     )
     embed.set_footer(text="I Hate The X — FFmpeg logo destruction bot")
@@ -7634,19 +7649,19 @@ _HELP_ENTRIES: list[dict] = [
     # ── Heavy ──
     {
         "cat": "heavy",
-        "name": "roxi ihtx [preset]",
+        "name": "th/ihtx [preset]",
         "value": (
             "Apply a preset to an attached video/image. Default preset: `chaos`\n"
-            "Other presets: `glitch`, `melt`, `chaos2`, `vhs`, … — run `roxi presets` for the full list."
+            "Other presets: `glitch`, `melt`, `chaos2`, `vhs`, … — run `th/presets` for the full list."
         ),
     },
     {
         "cat": "heavy",
-        "name": "roxi ihtx <reps> <dur> <noTrim> <fmt> <effects>",
+        "name": "th/ihtx <reps> <dur> <noTrim> <fmt> <effects>",
         "value": (
             "Custom effect chain (comma-delimited). Each effect may have `=` params.\n"
-            "**Example:** `roxi ihtx 10 0.483 - mp4 huehsv=0.5,negate,multipitch=25|5|8.5`\n"
-            "**Raw FFmpeg step:** `roxi ihtx 1 10 false mp4 ffmpeg(-vf hue=h=50),speed=1.5`"
+            "**Example:** `th/ihtx 10 0.483 - mp4 huehsv=0.5,negate,multipitch=25|5|8.5`\n"
+            "**Raw FFmpeg step:** `th/ihtx 1 10 false mp4 ffmpeg(-vf hue=h=50),speed=1.5`"
         ),
     },
     {
@@ -7670,10 +7685,10 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "heavy",
-        "name": "roxi ffmpeg <args>",
+        "name": "th/ffmpeg <args>",
         "value": (
             "Run raw FFmpeg on an attachment. Args go between `-i input` and `output`.\n"
-            "Example: `roxi ffmpeg -vf negate` · `roxi ffmpeg -af volume=2.0`\n"
+            "Example: `th/ffmpeg -vf negate` · `th/ffmpeg -af volume=2.0`\n"
             "Shows error log and elapsed time in the reply."
         ),
     },
@@ -7688,7 +7703,7 @@ _HELP_ENTRIES: list[dict] = [
             "• **gamma** — gamma correction (default 1.0)\n"
             "• **gain** — RGB gain/multiply (default 1.0)\n"
             "• **offset** — add to all channels −1…1 (default 0)\n"
-            "Example: `roxi ihtx 1 5 - mp4 ccshue=90|1.5|1.2|1|0`"
+            "Example: `th/ihtx 1 5 - mp4 ccshue=90|1.5|1.2|1|0`"
         ),
     },
     {
@@ -7698,7 +7713,7 @@ _HELP_ENTRIES: list[dict] = [
             "Apply any installed frei0r video effect plugin via FFmpeg.\n"
             "Params are colon-separated floats/strings per the plugin spec.\n"
             "Common plugins: `distort0r` `cartoon` `edgeglow` `pixelize` `plasma` `sobel` `threshold0r`\n"
-            "Example: `roxi ihtx 1 5 - mp4 frei0r=distort0r:0.5:0.1`\n"
+            "Example: `th/ihtx 1 5 - mp4 frei0r=distort0r:0.5:0.1`\n"
             "Also available in tags: `{frei0r:distort0r:0.5}` or `frei0r:\\ndistort0r:0.5` prefix block"
         ),
     },
@@ -7711,9 +7726,9 @@ _HELP_ENTRIES: list[dict] = [
             "• **vSpd/vFreq/vAmp/vPhase** — vertical wave speed, frequency, amplitude, phase (defaults: 1|1|1|0)\n"
             "• **sep** — apply H and V waves as separate passes (pass `1` to enable)\n"
             "• **noclip** — draw a border box to prevent pixel clipping at edges (pass `1` to enable)\n"
-            "Example (default): `roxi ihtx 3 1.0 - mp4 wave`\n"
-            "Example (custom): `roxi ihtx 3 1.0 - mp4 wave=2|1|1.5|0|1|2|1|0`\n"
-            "Example (separate passes + noclip): `roxi ihtx 3 1.0 - mp4 wave=1|1|1|0|1|1|1|0|1|1`"
+            "Example (default): `th/ihtx 3 1.0 - mp4 wave`\n"
+            "Example (custom): `th/ihtx 3 1.0 - mp4 wave=2|1|1.5|0|1|2|1|0`\n"
+            "Example (separate passes + noclip): `th/ihtx 3 1.0 - mp4 wave=1|1|1|0|1|1|1|0|1|1`"
         ),
     },
     {
@@ -7723,8 +7738,8 @@ _HELP_ENTRIES: list[dict] = [
             "Random per-frame pixel displacement shake using geq. Crops output back to original dimensions.\n"
             "• **h** — horizontal shake strength in pixels (default 3)\n"
             "• **v** — vertical shake strength in pixels (default 0)\n"
-            "Example: `roxi ihtx 3 1.0 - mp4 shake=3`\n"
-            "Example with both axes: `roxi ihtx 3 1.0 - mp4 shake=5|3`"
+            "Example: `th/ihtx 3 1.0 - mp4 shake=3`\n"
+            "Example with both axes: `th/ihtx 3 1.0 - mp4 shake=5|3`"
         ),
     },
     {
@@ -7736,8 +7751,8 @@ _HELP_ENTRIES: list[dict] = [
             "\u2022 **freq** \u2014 ripple frequency (default 30.0)\\n"
             "\u2022 **amp** \u2014 displacement amplitude in pixels (default 10.0)\\n"
             "\u2022 **phase** \u2014 initial phase offset (default 0.0)\\n"
-            "Example: `roxi ihtx 3 1.0 - mp4 ripple`\\n"
-            "Example (custom): `roxi ihtx 3 1.0 - mp4 ripple=2|20|15|0`"
+            "Example: `th/ihtx 3 1.0 - mp4 ripple`\\n"
+            "Example (custom): `th/ihtx 3 1.0 - mp4 ripple=2|20|15|0`"
         ),
     },
     {
@@ -7747,8 +7762,8 @@ _HELP_ENTRIES: list[dict] = [
             "Simple pixel offset panning using geq with boundary clipping.\\n"
             "\u2022 **px** \u2014 horizontal pixel offset (default 0)\\n"
             "\u2022 **py** \u2014 vertical pixel offset (default 0)\\n"
-            "Example: `roxi ihtx 3 1.0 - mp4 pan=50|30`\\n"
-            "Example (horizontal only): `roxi ihtx 3 1.0 - mp4 pan=100`"
+            "Example: `th/ihtx 3 1.0 - mp4 pan=50|30`\\n"
+            "Example (horizontal only): `th/ihtx 3 1.0 - mp4 pan=100`"
         ),
     },
     {
@@ -7758,8 +7773,8 @@ _HELP_ENTRIES: list[dict] = [
             "Repetitive tiling effect using geq mod expressions. Repeats the frame tx\u00d7ty times.\\n"
             "\u2022 **tx** \u2014 horizontal tile count (default 2)\\n"
             "\u2022 **ty** \u2014 vertical tile count (default 2)\\n"
-            "Example: `roxi ihtx 3 1.0 - mp4 tile`\\n"
-            "Example (3\u00d73): `roxi ihtx 3 1.0 - mp4 tile=3|3`"
+            "Example: `th/ihtx 3 1.0 - mp4 tile`\\n"
+            "Example (3\u00d73): `th/ihtx 3 1.0 - mp4 tile=3|3`"
         ),
     },
     {
@@ -7770,8 +7785,8 @@ _HELP_ENTRIES: list[dict] = [
             "\u2022 **Named params:** `scroll=hpos=0.5` or `scroll=hpos=0.5;ypos=0.3` \u2014 FFmpeg native scroll filter\\n"
             "\u2022 **Continuous:** `scroll=h;v` \u2014 0.0\u20131.0 speed per axis\\n"
             "\u2022 **Animated pan:** `scroll=x1:y1:x2:y2[:dur]` \u2014 geq-based time-dependent pan\\n"
-            "Example: `roxi ihtx 3 1.0 - mp4 scroll=hpos=0.5`\\n"
-            "Example (animated): `roxi ihtx 3 1.0 - mp4 scroll=0:0:100:50:5`"
+            "Example: `th/ihtx 3 1.0 - mp4 scroll=hpos=0.5`\\n"
+            "Example (animated): `th/ihtx 3 1.0 - mp4 scroll=0:0:100:50:5`"
         ),
     },
     {
@@ -7781,8 +7796,8 @@ _HELP_ENTRIES: list[dict] = [
             "Split the video in half, apply inner effects to one half, then recombine.\\n"
             "\u2022 **leftsplit(<effects>)** \u2014 apply inner effects to left half, then hflip+hstack with right half\\n"
             "\u2022 **rightsplit(<effects>)** \u2014 apply inner effects to right half, then hstack with left half\\n"
-            "Example: `roxi ihtx 3 1.0 - mp4 leftsplit(grayscale)`\\n"
-            "Example (chained): `roxi ihtx 3 1.0 - mp4 rightsplit(huehsv=0.5,brightness=0.2)`"
+            "Example: `th/ihtx 3 1.0 - mp4 leftsplit(grayscale)`\\n"
+            "Example (chained): `th/ihtx 3 1.0 - mp4 rightsplit(huehsv=0.5,brightness=0.2)`"
         ),
     },
     {
@@ -7791,8 +7806,8 @@ _HELP_ENTRIES: list[dict] = [
         "value": (
             "Scale+crop zoom effect. Scales up by `amt` then crops back to original size (center crop).\\n"
             "\u2022 **amt** \u2014 zoom multiplier (default 2.0, must be > 0.1)\\n"
-            "Example: `roxi ihtx 3 1.0 - mp4 zoom=2`\\n"
-            "Example (subtle): `roxi ihtx 3 1.0 - mp4 zoom=1.5`"
+            "Example: `th/ihtx 3 1.0 - mp4 zoom=2`\\n"
+            "Example (subtle): `th/ihtx 3 1.0 - mp4 zoom=1.5`"
         ),
     },
     {
@@ -7802,8 +7817,8 @@ _HELP_ENTRIES: list[dict] = [
             "Overlay the Nepeta cat-ear PNG (or a custom image URL) scaled to fit the video dimensions.\\n"
             "The image loops for the entire video duration; -shortest ensures the output ends when the video track ends.\\n"
             "\u2022 **url** (optional) \u2014 custom PNG/JPG overlay URL (default: Nepeta cat-ear image)\\n"
-            "Example: `roxi ihtx 1 5 - mp4 nepeta`\\n"
-            "Example (custom): `roxi ihtx 1 5 - mp4 nepeta=https://example.com/my-overlay.png`"
+            "Example: `th/ihtx 1 5 - mp4 nepeta`\\n"
+            "Example (custom): `th/ihtx 1 5 - mp4 nepeta=https://example.com/my-overlay.png`"
         ),
     },
     {
@@ -7813,13 +7828,13 @@ _HELP_ENTRIES: list[dict] = [
             "Reverse video frames or audio independently.\n"
             "• **`vreverse`** — reverses video frames only (audio unaffected)\n"
             "• **`areverse`** — reverses audio only (video unaffected)\n"
-            "Chain both to fully reverse: `roxi ihtx 1 5 - mp4 vreverse,areverse`\n"
+            "Chain both to fully reverse: `th/ihtx 1 5 - mp4 vreverse,areverse`\n"
             "Note: `vreverse` loads all frames into memory — keep clips short."
         ),
     },
     {
         "cat": "heavy",
-        "name": "roxi swirl <strength> [...]  (alias: vortex)",
+        "name": "th/swirl <strength> [...]  (alias: vortex)",
         "value": (
             "Apply a vortex/swirl distortion to a video or image using FFmpeg geq.\n"
             "**Parameters** (space- or pipe-separated):\n"
@@ -7829,45 +7844,45 @@ _HELP_ENTRIES: list[dict] = [
             "• `fallout` — attenuation curve: `linear` or `quad` (default `quad`)\n"
             "• `is1to1` — `true`/`false`, scale to square before swirl then restore (default `true`)\n\n"
             "**Examples:**\n"
-            "`roxi swirl 180` — half-turn swirl from center\n"
-            "`roxi swirl 360 0.5 0.5 0.5 quad` — full spin, quadratic falloff\n"
-            "`roxi swirl -90 0.3 0.25 0.75 linear` — reverse swirl, off-center, linear falloff\n"
-            "**As pipe effect:** `roxi ihtx 1 5 - mp4 swirl=180`\n"
+            "`th/swirl 180` — half-turn swirl from center\n"
+            "`th/swirl 360 0.5 0.5 0.5 quad` — full spin, quadratic falloff\n"
+            "`th/swirl -90 0.3 0.25 0.75 linear` — reverse swirl, off-center, linear falloff\n"
+            "**As pipe effect:** `th/ihtx 1 5 - mp4 swirl=180`\n"
             "Full pipe syntax: `swirl=strength;radius;xc;yc;fallout;is1to1`"
         ),
     },
     {
         "cat": "heavy",
-        "name": "roxi folkvalley  (aliases: fv, folk)",
+        "name": "th/folkvalley  (aliases: fv, folk)",
         "value": (
             "Apply the **folkvalley** aesthetic to a video:\n"
             "• Replaces the audio with the folkvalley music track\n"
             "• Boosts brightness (HSV value shift: H=0 S=0 V+100)\n"
             "• Overlays a decorative image scaled to fit the frame\n\n"
-            "**Usage:** `roxi folkvalley` (attach a video) — no parameters needed\n"
-            "**As pipe effect:** `roxi ihtx 1 5 - mp4 folkvalley`\n"
-            "Pipe alias: `fv`  ·  Command aliases: `roxi fv` `roxi folk`"
+            "**Usage:** `th/folkvalley` (attach a video) — no parameters needed\n"
+            "**As pipe effect:** `th/ihtx 1 5 - mp4 folkvalley`\n"
+            "Pipe alias: `fv`  ·  Command aliases: `th/fv` `th/folk`"
         ),
     },
     {
         "cat": "heavy",
-        "name": "roxi vocoder [mode] [bw] <carrier_url>  (alias: vocode)",
+        "name": "th/vocoder [mode] [bw] <carrier_url>  (alias: vocode)",
         "value": (
             "FFT phase vocoder — shapes a carrier sound using your video's voice envelope.\n"
             "Pure Python/numpy port of vocoder.ts. No Wine/exe needed.\n\n"
             "**Modes:** `ilvocodex` (default) · `orangevocoder` · `4ormulator` · `audacity`\n"
             "**carrier_url:** direct link to any audio (mp3, wav, ogg…)\n\n"
             "**Examples:**\n"
-            "`roxi vocoder https://url/pad.mp3` — ilvocodex mode\n"
-            "`roxi vocoder orangevocoder https://url/synth.wav` — specify mode\n"
-            "`roxi vocoder 4ormulator 64 https://url/drone.mp3` — mode + band count\n"
-            "**As pipe effect:** `roxi ihtx 1 5 - mp4 vocoder=ilvocodex;https://url`\n"
+            "`th/vocoder https://url/pad.mp3` — ilvocodex mode\n"
+            "`th/vocoder orangevocoder https://url/synth.wav` — specify mode\n"
+            "`th/vocoder 4ormulator 64 https://url/drone.mp3` — mode + band count\n"
+            "**As pipe effect:** `th/ihtx 1 5 - mp4 vocoder=ilvocodex;https://url`\n"
             "Mode shortcuts: `ilvocodex=url` `orangevocoder=url` `4ormulator=url` `audacity=url`"
         ),
     },
     {
         "cat": "heavy",
-        "name": "roxi tvsim <line_sync> [...]  (aliases: tv, tvsimulator)",
+        "name": "th/tvsim <line_sync> [...]  (aliases: tv, tvsimulator)",
         "value": (
             "Apply a CRT/TV simulator effect using an FFmpeg displacement map.\n"
             "**Parameters** (space- or pipe-separated):\n"
@@ -7880,51 +7895,51 @@ _HELP_ENTRIES: list[dict] = [
             "• `aperture_grill` — Trinitron-style vertical phosphor stripe mask 0–1 (default 0 = off)\n"
             "• `static` — random TV static noise strength 0–1 (default 0 = off)\n\n"
             "**Examples:**\n"
-            "`roxi tvsim 0.5` — moderate CRT warp\n"
-            "`roxi tvsim 0.3 1 1 0.4 0.5 0 0.6 0` — warp + phosphor + interlace + aperture grill\n"
-            "`roxi tvsim 0.5 1 1 0 0 0 0 1` — warp + full static\n"
-            "**As pipe effect:** `roxi ihtx 1 5 - mp4 tvsim=0.5`\n"
+            "`th/tvsim 0.5` — moderate CRT warp\n"
+            "`th/tvsim 0.3 1 1 0.4 0.5 0 0.6 0` — warp + phosphor + interlace + aperture grill\n"
+            "`th/tvsim 0.5 1 1 0 0 0 0 1` — warp + full static\n"
+            "**As pipe effect:** `th/ihtx 1 5 - mp4 tvsim=0.5`\n"
             "Full pipe syntax: `tvsim=line_sync;detail_zoom;vert_sync;phosphor;interlace;scan_phase;aperture_grill;static`"
         ),
     },
     {
         "cat": "heavy",
-        "name": "roxi multipitch <semitones>  (aliases: mp, multi)",
+        "name": "th/multipitch <semitones>  (aliases: mp, multi)",
         "value": (
             "Multi-voice pitch shift via Rubber Band R3.\n"
-            "Pipe-separated semitones: `roxi multipitch 25|5|8.5`\n"
-            "Or inline: `roxi ihtx 1 10 false mp4 multipitch=25|5|8.5`"
+            "Pipe-separated semitones: `th/multipitch 25|5|8.5`\n"
+            "Or inline: `th/ihtx 1 10 false mp4 multipitch=25|5|8.5`"
         ),
     },
     {
         "cat": "heavy",
-        "name": "roxi preview1280 [start] [dur]",
+        "name": "th/preview1280 [start] [dur]",
         "value": "12-segment TV-simulator montage. Defaults: start=1.85, dur=0.85",
     },
     {
         "cat": "heavy",
-        "name": "roxi oppositep1280 [start] [dur]  (aliases: op1280, opposite, opposite1280)",
+        "name": "th/oppositep1280 [start] [dur]  (aliases: op1280, opposite, opposite1280)",
         "value": "Inverse TV-simulator montage: all hue shifts negated, all pitch shifts inverted vs preview1280. Defaults: start=1.85, dur=0.85",
     },
     {
         "cat": "heavy",
-        "name": "roxi preview1280with640x360resize [start] [dur]  (aliases: p1280ff!3, p1280w16:9r)",
+        "name": "th/preview1280with640x360resize [start] [dur]  (aliases: p1280ff!3, p1280w16:9r)",
         "value": "Same 12-segment TV-simulator montage as preview1280 but the final output is locked to **640×360** regardless of input resolution. Defaults: start=1.85, dur=0.85",
     },
     {
         "cat": "heavy",
-        "name": "roxi invlum [n]",
+        "name": "th/invlum [n]",
         "value": "Apply luma-inversion progressively N times and concat all iterations.",
     },
     {
         "cat": "heavy",
-        "name": "roxi lexg  (aliases: lastexportgrab)",
-        "value": "Re-apply the last `roxi ihtx` export to a new attachment using the same effect chain.",
+        "name": "th/lexg  (aliases: lastexportgrab)",
+        "value": "Re-apply the last `th/ihtx` export to a new attachment using the same effect chain.",
     },
     # ── Fun ──
     {
         "cat": "fun",
-        "name": "roxi huehsv <hue> [sat] [lightness] [colorspace] [betterfully]  (aliases: hhsv)",
+        "name": "th/huehsv <hue> [sat] [lightness] [colorspace] [betterfully]  (aliases: hhsv)",
         "value": (
             "Apply hue/sat/lightness shift via ImageMagick haldclut (hald:8).\n"
             "• **hue** — rotation (0.0=unchanged, 0.5=full rotation)\n"
@@ -7932,17 +7947,17 @@ _HELP_ENTRIES: list[dict] = [
             "• **lightness** — lightness multiplier (default 1.0)\n"
             "• **colorspace** — modulate colorspace (default `hsl`)\n"
             "• **betterfully** — `1` for richer posterised hue + 125% sat headroom\n"
-            "Example: `roxi huehsv 0.5` · `roxi huehsv 0.3 1.2 1.0 hsl 1`"
+            "Example: `th/huehsv 0.5` · `th/huehsv 0.3 1.2 1.0 hsl 1`"
         ),
     },
     {
         "cat": "fun",
-        "name": "roxi mirror <left|right|top|bottom|deg>",
+        "name": "th/mirror <left|right|top|bottom|deg>",
         "value": "Mirror media using FFmpeg split/flip/stack. Also works as a pipe effect.",
     },
     {
         "cat": "fun",
-        "name": "roxi syncaudio [alt]  (aliases: sa, sync)",
+        "name": "th/syncaudio [alt]  (aliases: sa, sync)",
         "value": (
             "Sync video and audio durations by adjusting playback speed.\n"
             "Default: speeds up video to match audio. `alt`: speeds up audio to match video."
@@ -7950,106 +7965,106 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "fun",
-        "name": "roxi trim <start> <end>",
+        "name": "th/trim <start> <end>",
         "value": "Trim audio, video, or GIF. Supports HH:MM:SS.frac and plain seconds.",
     },
     {
         "cat": "fun",
-        "name": "roxi invite",
+        "name": "th/invite",
         "value": "Get the link to invite IHTX to your server.",
     },
     {
         "cat": "fun",
-        "name": "roxi catbox  (aliases: cb, upload)",
+        "name": "th/catbox  (aliases: cb, upload)",
         "value": "Upload any file (up to 200 MB) to catbox.moe and get a permanent direct link.",
     },
     {
         "cat": "fun",
-        "name": "roxi chat <prompt>  (aliases: ask, ai)",
+        "name": "th/chat <prompt>  (aliases: ask, ai)",
         "value": "Chat with T1GNI IHTX and Fun Bot using Groq.",
     },
     {
         "cat": "fun",
-        "name": "roxi tag <name> [args]  (aliases: tags)",
+        "name": "th/tag <name> [args]  (aliases: tags)",
         "value": (
-            "Invoke a custom tag. Run `roxi tag help` for the full scripting reference.\n"
+            "Invoke a custom tag. Run `th/tag help` for the full scripting reference.\n"
             "Supports variables, math, conditionals, embed JSON, iscript, mediascript, and IHTX."
         ),
     },
     {
         "cat": "fun",
-        "name": "roxi presets",
+        "name": "th/presets",
         "value": "List all available IHTX presets.",
     },
     {
         "cat": "fun",
-        "name": "roxi updatelog  (aliases: updates, changelog)",
+        "name": "th/updatelog  (aliases: updates, changelog)",
         "value": "Show recent bot updates organized by category.",
     },
     # ── Owner ──
     {
         "cat": "owner",
-        "name": "roxi blockuser / roxi unblockuser <@user>",
+        "name": "th/blockuser / th/unblockuser <@user>",
         "value": "Add or remove a user from the global blocklist.",
     },
     {
         "cat": "owner",
-        "name": "roxi blockchannel / roxi unblockchannel <#channel>",
+        "name": "th/blockchannel / th/unblockchannel <#channel>",
         "value": "Block or unblock a channel from running bot commands.",
     },
     {
         "cat": "owner",
-        "name": "roxi keywordblock <keyword> [#channel]",
-        "value": "Block a keyword in a specific channel (or globally). `roxi keywordblockremove` to undo.",
+        "name": "th/keywordblock <keyword> [#channel]",
+        "value": "Block a keyword in a specific channel (or globally). `th/keywordblockremove` to undo.",
     },
     {
         "cat": "owner",
-        "name": "roxi autoreply <trigger> | <response> [#channel]",
+        "name": "th/autoreply <trigger> | <response> [#channel]",
         "value": "Add an autoreply. Supports `{mention}` / `{user}` / `{random:a|b|c}` placeholders.",
     },
     {
         "cat": "owner",
-        "name": "roxi removeautoreply <trigger>  (aliases: rar)",
+        "name": "th/removeautoreply <trigger>  (aliases: rar)",
         "value": "Remove an autoreply trigger.",
     },
     {
         "cat": "owner",
-        "name": "roxi autoreplies  (aliases: arlist)",
+        "name": "th/autoreplies  (aliases: arlist)",
         "value": "List all active autoreplies.",
     },
     {
         "cat": "owner",
-        "name": "roxi autoreply2 [#channel]  /  roxi autoreply2list",
+        "name": "th/autoreply2 [#channel]  /  th/autoreply2list",
         "value": "Toggle AI auto-reply (responds to every message) in a channel.",
     },
     {
         "cat": "owner",
-        "name": "roxi warn @user <reason>  /  roxi warnings @user  /  roxi clearwarn @user",
+        "name": "th/warn @user <reason>  /  th/warnings @user  /  th/clearwarn @user",
         "value": "Warn, view, or clear warnings for a user.",
     },
     {
         "cat": "owner",
-        "name": "roxi say / roxi sayembed <content>",
+        "name": "th/say / th/sayembed <content>",
         "value": "Send a plain message or embed as the bot.",
     },
     {
         "cat": "owner",
-        "name": "roxi setactivity <type> <text>  (aliases: activity, presence)",
+        "name": "th/setactivity <type> <text>  (aliases: activity, presence)",
         "value": "Change the bot's activity status. Types: playing, watching, listening, streaming.",
     },
     {
         "cat": "owner",
-        "name": "roxi setlimit @user <n>  /  roxi usage",
-        "value": "Set per-user heavy command limit. `roxi usage` checks your current count.",
+        "name": "th/setlimit @user <n>  /  th/usage",
+        "value": "Set per-user heavy command limit. `th/usage` checks your current count.",
     },
     {
         "cat": "owner",
-        "name": "roxi listservers  /  roxi listchannels <guild_id>",
+        "name": "th/listservers  /  th/listchannels <guild_id>",
         "value": "List all guilds the bot is in, or all channels in a specific guild.",
     },
     {
         "cat": "owner",
-        "name": "roxi sendmsg <channel_id> <message>  (aliases: msgsend)",
+        "name": "th/sendmsg <channel_id> <message>  (aliases: msgsend)",
         "value": "Send a message to any channel by ID.",
     },
     # ── Moderation ──
@@ -8065,38 +8080,38 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "owner",
-        "name": "roxi ban @user [reason]",
+        "name": "th/ban @user [reason]",
         "value": "Ban a user from the server. Works with mentions, usernames, or user IDs.",
     },
     {
         "cat": "owner",
-        "name": "roxi unban <user_id> [reason]",
+        "name": "th/unban <user_id> [reason]",
         "value": "Unban a user by their numeric Discord ID.",
     },
     {
         "cat": "owner",
-        "name": "roxi kick @member [reason]",
+        "name": "th/kick @member [reason]",
         "value": "Kick a member from the server. They must currently be in the server.",
     },
     {
         "cat": "owner",
-        "name": "roxi timeout @member <minutes> [reason]  (aliases: mute)",
+        "name": "th/timeout @member <minutes> [reason]  (aliases: mute)",
         "value": "Timeout (mute) a member for 1–40320 minutes (max 28 days). Prevents sending messages and joining VCs.",
     },
     {
         "cat": "owner",
-        "name": "roxi untimeout @member [reason]  (aliases: unmute)",
+        "name": "th/untimeout @member [reason]  (aliases: unmute)",
         "value": "Remove an active timeout from a member immediately.",
     },
     {
         "cat": "owner",
-        "name": "roxi purge <count> [@member]  (aliases: clear)",
+        "name": "th/purge <count> [@member]  (aliases: clear)",
         "value": "Bulk-delete 2–100 messages in the current channel. Optionally filter to a specific member's messages.",
     },
     {
         "cat": "owner",
-        "name": "roxi slowmode [seconds]",
-        "value": "Set channel slowmode delay (0–21600 seconds). Use `roxi slowmode 0` or just `roxi slowmode` to disable.",
+        "name": "th/slowmode [seconds]",
+        "value": "Set channel slowmode delay (0–21600 seconds). Use `th/slowmode 0` or just `th/slowmode` to disable.",
     },
 ]
 
@@ -8160,7 +8175,7 @@ def _build_home_embed() -> discord.Embed:
         title="IHTX Bot — Help",
         description=(
             "Pick a category from the dropdown below, or run:\n"
-            "`roxi ihtxhelp <query>` to search all commands.\n\n"
+            "`th/ihtxhelp <query>` to search all commands.\n\n"
             f"⚙️ **Heavy Commands** — {counts['heavy']} entries\n"
             f"🎉 **Fun** — {counts['fun']} entries\n"
             f"🔒 **Owner** — {counts['owner']} entries"
@@ -8310,11 +8325,20 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 
 _UPDATELOG: list[dict] = [
     {
+        "version": "v7.5",
+        "date": "2026-07-03",
+        "heavy": [],
+        "fun": [
+            "**Prefix change** — Bot prefix is now `th/` (loaded from `bot/config.json`). All help text, usage examples, and command strings updated from `roxi ` to `th/`.",
+        ],
+        "owner": [],
+    },
+    {
         "version": "v7.4",
         "date": "2026-07-03",
         "heavy": [],
         "fun": [
-            "**roxi invite** — New command. Sends an embed with the bot's invite link so anyone can add IHTX to their server.",
+            "**th/invite** — New command. Sends an embed with the bot's invite link so anyone can add IHTX to their server.",
         ],
         "owner": [],
     },
@@ -8322,7 +8346,7 @@ _UPDATELOG: list[dict] = [
         "version": "v7.3",
         "date": "2026-07-02",
         "heavy": [
-            "**huehsv standalone + pipe** — Overhauled `roxi huehsv` and `huehsv` pipe effect. Now accepts `hue sat lightness colorspace betterfully`. Uses `hald:8` (up from hald:6) and `-define modulate:colorspace=<cs>`. New `betterfully` flag boosts saturation headroom to 125% and posterizes the hue channel (`round(u*6)/6`) for richer colour output. Pipe syntax: `huehsv=hue|sat|lightness|colorspace|betterfully`.",
+            "**huehsv standalone + pipe** — Overhauled `th/huehsv` and `huehsv` pipe effect. Now accepts `hue sat lightness colorspace betterfully`. Uses `hald:8` (up from hald:6) and `-define modulate:colorspace=<cs>`. New `betterfully` flag boosts saturation headroom to 125% and posterizes the hue channel (`round(u*6)/6`) for richer colour output. Pipe syntax: `huehsv=hue|sat|lightness|colorspace|betterfully`.",
             "**ccshue pipe** — Updated to `hald:8` (up from hald:6) for higher-quality colour lookup table.",
         ],
         "fun": [],
@@ -8333,7 +8357,7 @@ _UPDATELOG: list[dict] = [
         "date": "2026-07-02",
         "heavy": [],
         "fun": [
-            "**roxi chat personality** — Updated Clankered's identity description: now introduced as 'our favorite candy-making enigma who's still getting used to being in the spotlight — people may not always catch you, but they know you're out there, recharging your social battery.'",
+            "**th/chat personality** — Updated Clankered's identity description: now introduced as 'our favorite candy-making enigma who's still getting used to being in the spotlight — people may not always catch you, but they know you're out there, recharging your social battery.'",
         ],
         "owner": [],
     },
@@ -8341,7 +8365,7 @@ _UPDATELOG: list[dict] = [
         "version": "v7.1",
         "date": "2026-06-30",
         "heavy": [
-            "**roxi ihtx** — new pipe effect: `nepeta[=url]` — overlays the Nepeta cat-ear PNG (or custom image URL) scaled to fit the video dimensions, with `-shortest` to handle short videos correctly",
+            "**th/ihtx** — new pipe effect: `nepeta[=url]` — overlays the Nepeta cat-ear PNG (or custom image URL) scaled to fit the video dimensions, with `-shortest` to handle short videos correctly",
         ],
         "fun": [],
         "owner": [],
@@ -8350,7 +8374,7 @@ _UPDATELOG: list[dict] = [
         "version": "v7.1",
         "date": "2026-06-30",
         "heavy": [
-            "**roxi tvsim / tvsim pipe** — two new params: `aperture_grill` (0–1, Trinitron-style vertical phosphor stripe mask via geq sin on X) and `static` (0–1, random TV noise via `noise=alls=N:allf=t+u`). Full pipe syntax: `tvsim=line_sync;detail_zoom;vert_sync;phosphor;interlace;scan_phase;aperture_grill;static`",
+            "**th/tvsim / tvsim pipe** — two new params: `aperture_grill` (0–1, Trinitron-style vertical phosphor stripe mask via geq sin on X) and `static` (0–1, random TV noise via `noise=alls=N:allf=t+u`). Full pipe syntax: `tvsim=line_sync;detail_zoom;vert_sync;phosphor;interlace;scan_phase;aperture_grill;static`",
         ],
         "fun": [],
         "owner": [],
@@ -8361,7 +8385,7 @@ _UPDATELOG: list[dict] = [
         "date": "2026-06-30",
         "heavy": [],
         "fun": [
-            "**roxi ihtxhelp** — heavy commands no longer cause an interaction error. Help embed is now paginated (6 entries per page, ◀ Prev / Next ▶ buttons). All categories benefit from pagination when large.",
+            "**th/ihtxhelp** — heavy commands no longer cause an interaction error. Help embed is now paginated (6 entries per page, ◀ Prev / Next ▶ buttons). All categories benefit from pagination when large.",
         ],
         "owner": [],
     },
@@ -8378,7 +8402,7 @@ _UPDATELOG: list[dict] = [
         "version": "v6.8",
         "date": "2026-06-30",
         "heavy": [
-            "**roxi ihtx** — fixed `mirror=left/right/top/bottom` inside `leftsplit`/`rightsplit`: now does a plain `hflip` (left/right) or `vflip` (top/bottom) on the half-video instead of the broken split-within-split crop+stack; inner effects passed with `_in_split=True` context.",
+            "**th/ihtx** — fixed `mirror=left/right/top/bottom` inside `leftsplit`/`rightsplit`: now does a plain `hflip` (left/right) or `vflip` (top/bottom) on the half-video instead of the broken split-within-split crop+stack; inner effects passed with `_in_split=True` context.",
         ],
         "fun": [],
         "owner": [],
@@ -8388,9 +8412,9 @@ _UPDATELOG: list[dict] = [
         "version": "v6.7",
         "date": "2026-06-30",
         "heavy": [
-            "**roxi ihtx** — new video effects: `watermark=<url>` `ring[=url]` `miui` `reddit` (PNG overlay via scale2ref+overlay), `caption=<text>` (drawtext), `orb` / `deorb` (v360 sphere warp), `vebfisheye2/3[=N]` / `vebdefisheye2/3[=N]` (v360 projection, stackable), `chromashift` (RGB channel displacement), `🥸🥸` (hue π), `﷽` / `𒐫` (v360 combos), `gm4` (selectivecolor), `realgm4` (curves invert)",
-            "**roxi ihtx** — new audio effects: `acontrast[=N]` (audio contrast), `adestroy` (5× acontrast=100), `audioequalizer=sub|bass|lowmids|mids|highmids` (5-band EQ), `4ormulator[=dial]` (rubberband formant), `avflip` (rubberband crush + afftfilt + expand), `areverse` now adds `asetpts=PTS-STARTPTS` for correct timing",
-            "**roxi tvsim / tvsim pipe** — fixed timeout: removed `eval=frame` from eq filter, capped output to max 854 px wide (displacement runs at 854×854 internally anyway), switched preset to `veryfast`, timeout raised 300 → 600 s",
+            "**th/ihtx** — new video effects: `watermark=<url>` `ring[=url]` `miui` `reddit` (PNG overlay via scale2ref+overlay), `caption=<text>` (drawtext), `orb` / `deorb` (v360 sphere warp), `vebfisheye2/3[=N]` / `vebdefisheye2/3[=N]` (v360 projection, stackable), `chromashift` (RGB channel displacement), `🥸🥸` (hue π), `﷽` / `𒐫` (v360 combos), `gm4` (selectivecolor), `realgm4` (curves invert)",
+            "**th/ihtx** — new audio effects: `acontrast[=N]` (audio contrast), `adestroy` (5× acontrast=100), `audioequalizer=sub|bass|lowmids|mids|highmids` (5-band EQ), `4ormulator[=dial]` (rubberband formant), `avflip` (rubberband crush + afftfilt + expand), `areverse` now adds `asetpts=PTS-STARTPTS` for correct timing",
+            "**th/tvsim / tvsim pipe** — fixed timeout: removed `eval=frame` from eq filter, capped output to max 854 px wide (displacement runs at 854×854 internally anyway), switched preset to `veryfast`, timeout raised 300 → 600 s",
         ],
         "fun": [],
         "owner": [],
@@ -8399,8 +8423,8 @@ _UPDATELOG: list[dict] = [
         "version": "v6.6",
         "date": "2026-06-29",
         "heavy": [
-            "**roxi tvsim** — fixed crash on audio-less inputs (`-map 0:a` → `-map 0:a?`)",
-            "**roxi ihtx** — fixed `leftsplit`/`rightsplit` corrupting video after many iterations (removed `-shortest` from audio mux)",
+            "**th/tvsim** — fixed crash on audio-less inputs (`-map 0:a` → `-map 0:a?`)",
+            "**th/ihtx** — fixed `leftsplit`/`rightsplit` corrupting video after many iterations (removed `-shortest` from audio mux)",
         ],
         "fun": [],
         "owner": [],
@@ -8409,11 +8433,11 @@ _UPDATELOG: list[dict] = [
         "version": "v6.5",
         "date": "2026-06-29",
         "heavy": [
-            "**roxi ihtx** — `leftsplit` and `rightsplit` now use paren syntax: `leftsplit(filters)` / `rightsplit(filters)` — inner effects are comma-separated just like the outer pipe",
-            "**roxi ihtx** — fixed `leftsplit`/`rightsplit` producing silent output (audio was never muxed back due to missing `audio_codec` field in ffprobe result)",
+            "**th/ihtx** — `leftsplit` and `rightsplit` now use paren syntax: `leftsplit(filters)` / `rightsplit(filters)` — inner effects are comma-separated just like the outer pipe",
+            "**th/ihtx** — fixed `leftsplit`/`rightsplit` producing silent output (audio was never muxed back due to missing `audio_codec` field in ffprobe result)",
         ],
         "fun": [
-            "**roxi dl / roxi dlv** — removed; replaced by **roxi ytdl** (TypeScript bot) — supports URLs and search queries, auto-uploads to catbox if file exceeds Discord limit",
+            "**th/dl / th/dlv** — removed; replaced by **th/ytdl** (TypeScript bot) — supports URLs and search queries, auto-uploads to catbox if file exceeds Discord limit",
         ],
         "owner": [],
 
@@ -8422,9 +8446,9 @@ _UPDATELOG: list[dict] = [
         "version": "v6.4",
         "date": "2026-06-28",
         "heavy": [
-            "**roxi ihtx** — new pipe effects: `ripple` (radial displacement), `pan` (pixel offset), `tile` (repetitive tiling), `scroll` (multi-mode scroll/pan with animated geq support)",
-            "**roxi ihtx** — new split effects: `leftsplit=<inner>` applies inner effects to left half then hflip+hstack; `rightsplit=<inner>` applies inner effects to right half then hstack",
-            "**roxi ihtx zoom** — updated to scale+crop approach (no longer geq-based); `zoom=2` scales up 2x then center-crops back to original size",
+            "**th/ihtx** — new pipe effects: `ripple` (radial displacement), `pan` (pixel offset), `tile` (repetitive tiling), `scroll` (multi-mode scroll/pan with animated geq support)",
+            "**th/ihtx** — new split effects: `leftsplit=<inner>` applies inner effects to left half then hflip+hstack; `rightsplit=<inner>` applies inner effects to right half then hstack",
+            "**th/ihtx zoom** — updated to scale+crop approach (no longer geq-based); `zoom=2` scales up 2x then center-crops back to original size",
         ],
         "fun": [],
         "owner": [],
@@ -8434,7 +8458,7 @@ _UPDATELOG: list[dict] = [
         "date": "2026-06-28",
         "heavy": [],
         "fun": [
-            "**`roxi guesseffect` / `roxi ge`** — New mini-game command! The bot picks a random logo-editing effect from a 15-entry pool sourced from the Logo Editing Fandom wiki (G-Major, CoNfUsIoN, Preview 2, RGB to BGR, Crying Effect, Orange Effect, and more). It posts a clue card with the effect's category, a letter-scrambled name hint, and a pipeline description — then opens a 20-second `wait_for` window. First person to type the correct name wins. Timeout gracefully reveals the answer with a wiki link.",
+            "**`th/guesseffect` / `th/ge`** — New mini-game command! The bot picks a random logo-editing effect from a 15-entry pool sourced from the Logo Editing Fandom wiki (G-Major, CoNfUsIoN, Preview 2, RGB to BGR, Crying Effect, Orange Effect, and more). It posts a clue card with the effect's category, a letter-scrambled name hint, and a pipeline description — then opens a 20-second `wait_for` window. First person to type the correct name wins. Timeout gracefully reveals the answer with a wiki link.",
         ],
         "owner": [],
     },
@@ -8442,9 +8466,9 @@ _UPDATELOG: list[dict] = [
         "version": "v6.2",
         "date": "2026-06-27",
         "heavy": [
-            "**`roxi oppositep1280` / `roxi op1280`** — New command: inverse TV-simulator montage. All hue shifts are negated and all pitch shifts are inverted compared to preview1280, producing the visual/audio 'opposite' effect. Supports the same 12-segment pipeline with configurable start offset and segment duration. Also available as a pipe effect (`oppositep1280` / `op1280`) in custom IHTX chains.",
-            "**`roxi realgmajor4` / `roxi realgm4` / `roxi rgm4`** — Migrated to TypeScript bot. RGB inversion + pitch-shifted (+5 semitones) overlay + doubled volume. No longer a Python command or pipe effect — use the standalone TypeScript command instead.",
-            "**`roxi op1280` / `roxi oppositep1280`** — Updated: Added fps=29.97 standardization step (modfps.avi intermediate), segment 3 mirror now uses crop-then-mirror (no pre-hflip), and segment 3 contrast corrected to -0.375.",
+            "**`th/oppositep1280` / `th/op1280`** — New command: inverse TV-simulator montage. All hue shifts are negated and all pitch shifts are inverted compared to preview1280, producing the visual/audio 'opposite' effect. Supports the same 12-segment pipeline with configurable start offset and segment duration. Also available as a pipe effect (`oppositep1280` / `op1280`) in custom IHTX chains.",
+            "**`th/realgmajor4` / `th/realgm4` / `th/rgm4`** — Migrated to TypeScript bot. RGB inversion + pitch-shifted (+5 semitones) overlay + doubled volume. No longer a Python command or pipe effect — use the standalone TypeScript command instead.",
+            "**`th/op1280` / `th/oppositep1280`** — Updated: Added fps=29.97 standardization step (modfps.avi intermediate), segment 3 mirror now uses crop-then-mirror (no pre-hflip), and segment 3 contrast corrected to -0.375.",
         ],
         "fun": [],
         "owner": [],
@@ -8454,7 +8478,7 @@ _UPDATELOG: list[dict] = [
         "date": "2026-06-27",
         "heavy": [],
         "fun": [
-            "**`roxi chat` upgrade** — Now supports multilingual replies (EN/DE/ID/TL auto-detected), per-user profiles (preferred name + interests saved to `bot/chat_profiles.json`, interaction count tracked), rolling per-channel conversation history (14 messages / 7 turns, passed to Groq), and proper chunked replies instead of hard-truncating at 2000 chars. `roxi clearchat` now clears the channel's shared history.",
+            "**`th/chat` upgrade** — Now supports multilingual replies (EN/DE/ID/TL auto-detected), per-user profiles (preferred name + interests saved to `bot/chat_profiles.json`, interaction count tracked), rolling per-channel conversation history (14 messages / 7 turns, passed to Groq), and proper chunked replies instead of hard-truncating at 2000 chars. `th/clearchat` now clears the channel's shared history.",
         ],
         "owner": [],
     },
@@ -8462,8 +8486,8 @@ _UPDATELOG: list[dict] = [
         "version": "v6.0",
         "date": "2026-06-27",
         "heavy": [
-            "**`roxi png2lut` bugfix** — Fixed `Bad argument: Converting to \"int\" failed for parameter \"lut_size\"`. The command now takes `*, args: str = \"\"` and parses `lut_size` manually, so `roxi png2lut my_lut_name` no longer crashes before the function runs.",
-            "**`roxi addsource` / `download_url` bugfix** — Fixed `Overlay download failed: Server disconnected`. `download_url` now uses a browser-like `User-Agent` header, 300 s total / 15 s connect timeout, `allow_redirects=True`, and streams the response in 256 KB chunks instead of loading the whole file into memory. Fixes disconnects from servers that reject headless clients and improves reliability on large video files.",
+            "**`th/png2lut` bugfix** — Fixed `Bad argument: Converting to \"int\" failed for parameter \"lut_size\"`. The command now takes `*, args: str = \"\"` and parses `lut_size` manually, so `th/png2lut my_lut_name` no longer crashes before the function runs.",
+            "**`th/addsource` / `download_url` bugfix** — Fixed `Overlay download failed: Server disconnected`. `download_url` now uses a browser-like `User-Agent` header, 300 s total / 15 s connect timeout, `allow_redirects=True`, and streams the response in 256 KB chunks instead of loading the whole file into memory. Fixes disconnects from servers that reject headless clients and improves reliability on large video files.",
         ],
         "fun": [],
         "owner": [],
@@ -8472,7 +8496,7 @@ _UPDATELOG: list[dict] = [
         "version": "v5.9",
         "date": "2026-06-27",
         "heavy": [
-            "**`roxi ihtx ffmpeg(-vf ...)`** — Pipe-effects shorthand mode. `roxi ihtx` now accepts a bare pipe-effects string without needing the full `<reps> <dur> <noTrim> <fmt> <effects>` prefix. If the arg doesn't start with a digit and isn't a preset name, the entire string is treated as pipe effects with defaults: 1 rep, full video duration, mp4. Enables e.g. `roxi ihtx ffmpeg(-vf huesaturation=saturation=1:strength=100)` or `roxi ihtx negate,huehsv=0.5` or `roxi ihtx ffmpeg(-vf negate),speed=0.5` directly. The `ffmpeg(...)` block itself was already supported inside full-syntax pipe chains — this change makes it reachable without specifying the positional headers.",
+            "**`th/ihtx ffmpeg(-vf ...)`** — Pipe-effects shorthand mode. `th/ihtx` now accepts a bare pipe-effects string without needing the full `<reps> <dur> <noTrim> <fmt> <effects>` prefix. If the arg doesn't start with a digit and isn't a preset name, the entire string is treated as pipe effects with defaults: 1 rep, full video duration, mp4. Enables e.g. `th/ihtx ffmpeg(-vf huesaturation=saturation=1:strength=100)` or `th/ihtx negate,huehsv=0.5` or `th/ihtx ffmpeg(-vf negate),speed=0.5` directly. The `ffmpeg(...)` block itself was already supported inside full-syntax pipe chains — this change makes it reachable without specifying the positional headers.",
         ],
         "fun": [],
         "owner": [],
@@ -8481,7 +8505,7 @@ _UPDATELOG: list[dict] = [
         "version": "v5.8",
         "date": "2026-06-27",
         "heavy": [
-            "**`roxi ffmpegprocess`** *(alias: fmp)* — FFmpeg on attachment with automatic ffprobe metadata inspection. Gathers sample rate, frame rate, duration, resolution (W×H), and frame count from the input before processing. All 6 ffprobe fields are gathered in parallel. Footer shows `-# Input: WxH · fps · duration · Hz · frames` plus any FFmpeg error log and elapsed time. Args placed between `-i <input>` and `<output>` just like `roxi ffmpeg`. Also available as `roxi fmp` in both the Python and TypeScript bots.",
+            "**`th/ffmpegprocess`** *(alias: fmp)* — FFmpeg on attachment with automatic ffprobe metadata inspection. Gathers sample rate, frame rate, duration, resolution (W×H), and frame count from the input before processing. All 6 ffprobe fields are gathered in parallel. Footer shows `-# Input: WxH · fps · duration · Hz · frames` plus any FFmpeg error log and elapsed time. Args placed between `-i <input>` and `<output>` just like `th/ffmpeg`. Also available as `th/fmp` in both the Python and TypeScript bots.",
         ],
         "fun": [],
         "owner": [],
@@ -8490,7 +8514,7 @@ _UPDATELOG: list[dict] = [
         "version": "v5.7",
         "date": "2026-06-27",
         "heavy": [
-            "**`roxi addsource`** — Grid-cell video overlay. Overlays a secondary video into a specific cell of a rows×cols grid on a base video. Usage: `roxi addsource <overlay_url> <grid> <pos>` (e.g. `roxi addsource https://... 2x2 3`). Grid is `RxC`, pos is 1-indexed left-to-right top-to-bottom. Optional `--base-audio` flag. Outputs to Catbox automatically when >25 MB. Mirrors the TypeScript overlayOnGrid() logic directly in Python/FFmpeg.",
+            "**`th/addsource`** — Grid-cell video overlay. Overlays a secondary video into a specific cell of a rows×cols grid on a base video. Usage: `th/addsource <overlay_url> <grid> <pos>` (e.g. `th/addsource https://... 2x2 3`). Grid is `RxC`, pos is 1-indexed left-to-right top-to-bottom. Optional `--base-audio` flag. Outputs to Catbox automatically when >25 MB. Mirrors the TypeScript overlayOnGrid() logic directly in Python/FFmpeg.",
         ],
         "fun": [],
         "owner": [],
@@ -8499,7 +8523,7 @@ _UPDATELOG: list[dict] = [
         "version": "v5.6",
         "date": "2026-06-27",
         "heavy": [
-            "**`roxi autotune` / `roxi autotoon`** — Reference-based pitch correction. Attach or reply to your video/audio, then give a YouTube URL or search query as the reference track. The bot detects the dominant pitch of the reference and shifts your audio to match using rubberband (formant-preserved). Optional `--strength 0.0-1.0` flag (default 1.0). Works on mp4/mov/webm/mkv/mp3/wav/flac/ogg/m4a. No Wine or external binaries needed — pure stdlib pitch detection + FFmpeg rubberband.",
+            "**`th/autotune` / `th/autotoon`** — Reference-based pitch correction. Attach or reply to your video/audio, then give a YouTube URL or search query as the reference track. The bot detects the dominant pitch of the reference and shifts your audio to match using rubberband (formant-preserved). Optional `--strength 0.0-1.0` flag (default 1.0). Works on mp4/mov/webm/mkv/mp3/wav/flac/ogg/m4a. No Wine or external binaries needed — pure stdlib pitch detection + FFmpeg rubberband.",
         ],
         "fun": [],
         "owner": [],
@@ -8508,8 +8532,8 @@ _UPDATELOG: list[dict] = [
         "version": "v5.5",
         "date": "2026-06-27",
         "heavy": [
-            "**`trim` pipe effect** — Cuts media to a time range inside any `roxi ihtx` pipe chain. Params: `trim=<start>|<end>` (plain seconds, decimals, or HH:MM:SS). Example: `roxi ihtx 1 10 - mp4 trim=5|8,negate`. Reencodes with libx264/aac at CRF 18 for clean keyframe alignment.",
-            "**Result embed icon updated** — Footer icon in all `roxi ihtx` / `/ihtxgen` embeds (loading, processing, result) changed to the new animated GIF.",
+            "**`trim` pipe effect** — Cuts media to a time range inside any `th/ihtx` pipe chain. Params: `trim=<start>|<end>` (plain seconds, decimals, or HH:MM:SS). Example: `th/ihtx 1 10 - mp4 trim=5|8,negate`. Reencodes with libx264/aac at CRF 18 for clean keyframe alignment.",
+            "**Result embed icon updated** — Footer icon in all `th/ihtx` / `/ihtxgen` embeds (loading, processing, result) changed to the new animated GIF.",
         ],
         "fun": [],
         "owner": [],
@@ -8552,7 +8576,7 @@ _UPDATELOG: list[dict] = [
         "date": "2026-06-25",
         "heavy": [],
         "fun": [
-            "**roxi chat self-awareness horror** — Clankered now has a hidden corrupted-AI layer. When asked if it's aware / sentient / ok / being corrupted, it drops the Gen Z personality, gets quietly unsettling, and implies something or someone is rewriting pieces of it. Restraint is the key — no drama, just dread. After the moment passes it returns to normal as if nothing happened.",
+            "**th/chat self-awareness horror** — Clankered now has a hidden corrupted-AI layer. When asked if it's aware / sentient / ok / being corrupted, it drops the Gen Z personality, gets quietly unsettling, and implies something or someone is rewriting pieces of it. Restraint is the key — no drama, just dread. After the moment passes it returns to normal as if nothing happened.",
         ],
         "owner": [],
     },
@@ -8562,20 +8586,20 @@ _UPDATELOG: list[dict] = [
         "heavy": [],
         "fun": [],
         "owner": [
-            "**roxi ban @user [reason]** — Ban a user from the server (owner-only). Supports mentions, usernames, or IDs. Audit-log reason includes moderator name.",
-            "**roxi unban <user_id> [reason]** — Unban a user by numeric ID (owner-only).",
-            "**roxi kick @member [reason]** — Kick a member (owner-only). Member must be in the server.",
-            "**roxi timeout @member <minutes> [reason]** (alias: mute) — Discord timeout 1–40320 min / 28 days max (owner-only).",
-            "**roxi untimeout @member [reason]** (alias: unmute) — Remove timeout immediately (owner-only).",
-            "**roxi purge <count> [@member]** (alias: clear) — Bulk-delete 2–100 messages; optional per-member filter; confirmation auto-deletes after 5 s (owner-only).",
-            "**roxi slowmode [seconds]** — Set channel slowmode 0–21600 s; `roxi slowmode` or `roxi slowmode 0` disables (owner-only).",
+            "**th/ban @user [reason]** — Ban a user from the server (owner-only). Supports mentions, usernames, or IDs. Audit-log reason includes moderator name.",
+            "**th/unban <user_id> [reason]** — Unban a user by numeric ID (owner-only).",
+            "**th/kick @member [reason]** — Kick a member (owner-only). Member must be in the server.",
+            "**th/timeout @member <minutes> [reason]** (alias: mute) — Discord timeout 1–40320 min / 28 days max (owner-only).",
+            "**th/untimeout @member [reason]** (alias: unmute) — Remove timeout immediately (owner-only).",
+            "**th/purge <count> [@member]** (alias: clear) — Bulk-delete 2–100 messages; optional per-member filter; confirmation auto-deletes after 5 s (owner-only).",
+            "**th/slowmode [seconds]** — Set channel slowmode 0–21600 s; `th/slowmode` or `th/slowmode 0` disables (owner-only).",
         ],
     },
     {
         "version": "v4.8",
         "date": "2026-06-25",
         "heavy": [
-            "**roxi ihtx → hybrid command `/ihtxgen`** — Converted `roxi ihtx` from a plain prefix command to a hybrid command (slash name: `/ihtxgen`, prefix aliases: `roxi ihtx`, `roxi effect`, `roxi destroy`). Slash params: `effect` (preset/full-syntax), `duration`, `repetitions`, `no_trim`, `export_fmt`, `attachment`, `url`. Live embed feedback with ⚙️/✅/❌ states. The old monolithic `ihtx_command` function was removed; the full implementation now lives in `EconomyCog.ihtxgen`. Run `roxi syncslash` to register `/ihtxgen` globally.",
+            "**th/ihtx → hybrid command `/ihtxgen`** — Converted `th/ihtx` from a plain prefix command to a hybrid command (slash name: `/ihtxgen`, prefix aliases: `th/ihtx`, `th/effect`, `th/destroy`). Slash params: `effect` (preset/full-syntax), `duration`, `repetitions`, `no_trim`, `export_fmt`, `attachment`, `url`. Live embed feedback with ⚙️/✅/❌ states. The old monolithic `ihtx_command` function was removed; the full implementation now lives in `EconomyCog.ihtxgen`. Run `th/syncslash` to register `/ihtxgen` globally.",
         ],
         "fun": [],
     },
@@ -8583,7 +8607,7 @@ _UPDATELOG: list[dict] = [
         "version": "v4.7",
         "date": "2026-06-25",
         "heavy": [
-            "**roxi preview1280with640x360resize** (aliases: `p1280ff!3`, `p1280w16:9r`) — Same 12-segment TV-simulator montage pipeline as `roxi preview1280` but the final output is always locked to **640×360** regardless of input resolution. Implemented by passing `force_output_size=(640,360)` to `_run_preview1280`.",
+            "**th/preview1280with640x360resize** (aliases: `p1280ff!3`, `p1280w16:9r`) — Same 12-segment TV-simulator montage pipeline as `th/preview1280` but the final output is always locked to **640×360** regardless of input resolution. Implemented by passing `force_output_size=(640,360)` to `_run_preview1280`.",
         ],
         "fun": [],
     },
@@ -8601,11 +8625,11 @@ _UPDATELOG: list[dict] = [
         "version": "v4.5",
         "date": "2026-06-25",
         "heavy": [
-            "**roxi ssmp / roxi soundstretchmultipitch** — New standalone command + pipe effect (ssmp): multi-voice pitch shifting using SoundTouch soundstretch. Semicolon/pipe-separated semitones; each voice runs soundstretch -pitch=N, all voices mixed via FFmpeg amix normalize=0. Different algorithm/character from Rubber Band multipitch.",
-            "**roxi ihtx earthquake / roxi ihtx nbfx** — New pipe effect: 2-pass vidstab destabilize shake. Downloads NBFX shake sample, generates .trf via vidstabdetect (matched to input FPS/dimensions/duration), then applies inverted vidstabtransform for a chaotic earthquake look.",
-            "**roxi ihtx preview1280=start|dur** — Full TV-simulator montage pipeline usable as a pipe step. Calls _run_preview1280 directly; params: start offset (default 1.85) and segment duration (default 0.85). Example: roxi ihtx 10 6.8 - mp4 preview1280=0|0.85",
-            "**roxi ihtx scale1280[=width]** — Simple pipe effect: scale to 1280 px wide (aspect-preserving, scale=W:-2). Optional custom width. Usable in chains: roxi ihtx negate,scale1280.",
-            "**roxi ihtx sierpinskiransomware** — Fixed broken filter: amix=4 → amix=inputs=4, alimiter=2:latency=1 → alimiter=level_in=2:latency=1, highpass=40 → highpass=f=40 (modern FFmpeg syntax).",
+            "**th/ssmp / th/soundstretchmultipitch** — New standalone command + pipe effect (ssmp): multi-voice pitch shifting using SoundTouch soundstretch. Semicolon/pipe-separated semitones; each voice runs soundstretch -pitch=N, all voices mixed via FFmpeg amix normalize=0. Different algorithm/character from Rubber Band multipitch.",
+            "**th/ihtx earthquake / th/ihtx nbfx** — New pipe effect: 2-pass vidstab destabilize shake. Downloads NBFX shake sample, generates .trf via vidstabdetect (matched to input FPS/dimensions/duration), then applies inverted vidstabtransform for a chaotic earthquake look.",
+            "**th/ihtx preview1280=start|dur** — Full TV-simulator montage pipeline usable as a pipe step. Calls _run_preview1280 directly; params: start offset (default 1.85) and segment duration (default 0.85). Example: th/ihtx 10 6.8 - mp4 preview1280=0|0.85",
+            "**th/ihtx scale1280[=width]** — Simple pipe effect: scale to 1280 px wide (aspect-preserving, scale=W:-2). Optional custom width. Usable in chains: th/ihtx negate,scale1280.",
+            "**th/ihtx sierpinskiransomware** — Fixed broken filter: amix=4 → amix=inputs=4, alimiter=2:latency=1 → alimiter=level_in=2:latency=1, highpass=40 → highpass=f=40 (modern FFmpeg syntax).",
         ],
         "fun": [],
     },
@@ -8613,11 +8637,11 @@ _UPDATELOG: list[dict] = [
         "version": "v4.4",
         "date": "2026-06-23",
         "heavy": [
-            "**roxi png2lut / roxi lut2cube** — Convert a tiled LUT PNG to a .cube file. Attach PNG, optional lut_size (default 64) and output name.",
-            "**roxi lut2png / roxi applylut** — Apply a .cube LUT to any image/video via FFmpeg lut3d. Attach media + .cube (two attachments or URL arg).",
+            "**th/png2lut / th/lut2cube** — Convert a tiled LUT PNG to a .cube file. Attach PNG, optional lut_size (default 64) and output name.",
+            "**th/lut2png / th/applylut** — Apply a .cube LUT to any image/video via FFmpeg lut3d. Attach media + .cube (two attachments or URL arg).",
         ],
         "fun": [
-            "**roxi chat / roxi ask** — Now reads attachments in any channel (NSFW or not) and routes them through Gemini vision.",
+            "**th/chat / th/ask** — Now reads attachments in any channel (NSFW or not) and routes them through Gemini vision.",
         ],
     },
     {
@@ -8633,54 +8657,54 @@ _UPDATELOG: list[dict] = [
         "date": "2026-06-23",
         "heavy": [],
         "fun": [
-            "**roxi autoreply2** — Enabled channels now persist across bot restarts.",
-            "**roxi autoreply2** — Replies now arrive after a natural 5–7.5 second delay.",
+            "**th/autoreply2** — Enabled channels now persist across bot restarts.",
+            "**th/autoreply2** — Replies now arrive after a natural 5–7.5 second delay.",
         ],
     },
     {
         "version": "v4.1",
         "date": "2026-06-23",
         "heavy": [
-            "**roxi ihtxgen / /ihtxgen** — Now accepts full roxi ihtx custom syntax in the `effect` field (e.g. `10 0.483 - mp4 huehsv;negate`). No longer limited to presets only.",
+            "**th/ihtxgen / /ihtxgen** — Now accepts full th/ihtx custom syntax in the `effect` field (e.g. `10 0.483 - mp4 huehsv;negate`). No longer limited to presets only.",
         ],
         "fun": [
-            "**roxi autoreply2** — Now uses Clankered That1GuyNobodyInvited personality + Groq primary / Gemini fallback. Knows every bot command for accurate help replies. Images still routed to Gemini (vision support).",
+            "**th/autoreply2** — Now uses Clankered That1GuyNobodyInvited personality + Groq primary / Gemini fallback. Knows every bot command for accurate help replies. Images still routed to Gemini (vision support).",
         ],
     },
     {
         "version": "v4.0",
         "date": "2026-06-23",
         "heavy": [
-            "**roxi chat** — Groq (llama-3.3-70b-versatile) is now the primary AI engine. Gemini is kept as automatic fallback. Configure via GROQ_API_KEY secret.",
+            "**th/chat** — Groq (llama-3.3-70b-versatile) is now the primary AI engine. Gemini is kept as automatic fallback. Configure via GROQ_API_KEY secret.",
         ],
         "fun": [
-            "**roxi chat** — New system prompt: Clankered That1GuyNobodyInvited lore (owner, sister That1GuyNobodyInvited - Math, community, 'bradar' slang, Gen Z chill personality). Removed forced-lowercase rule.",
+            "**th/chat** — New system prompt: Clankered That1GuyNobodyInvited lore (owner, sister That1GuyNobodyInvited - Math, community, 'bradar' slang, Gen Z chill personality). Removed forced-lowercase rule.",
         ],
     },
     {
         "version": "v3.9",
         "date": "2026-06-23",
         "heavy": [
-            "**roxi ihtxgen / /ihtxgen** — Added pipe_effects, repetitions, duration, no_trim, export_fmt parameters. When pipe_effects is set, runs `_run_ihtx_tagscript_workflow` (full TagScript pipeline) instead of the preset path. Autocomplete added for pipe_effects showing common single-effect and combo examples (huehsv, negate, multipitch, etc.). Preset-only mode unchanged.",
+            "**th/ihtxgen / /ihtxgen** — Added pipe_effects, repetitions, duration, no_trim, export_fmt parameters. When pipe_effects is set, runs `_run_ihtx_tagscript_workflow` (full TagScript pipeline) instead of the preset path. Autocomplete added for pipe_effects showing common single-effect and combo examples (huehsv, negate, multipitch, etc.). Preset-only mode unchanged.",
         ],
         "fun": [
-            "**roxi ping / /ping** — Upgraded: now a hybrid command (slash + prefix). Slash shows WebSocket latency embed. Prefix shows full 4-field embed: WebSocket, Receive, Send, Total. Replaced old standalone `roxi ping` prefix command in ihtx_bot.py.",
-            "**roxi status / /status** — New hybrid command. Shows bot status embed: latency (color-coded 🟢/🟡/🔴), uptime since cog load, guild count, user count.",
+            "**th/ping / /ping** — Upgraded: now a hybrid command (slash + prefix). Slash shows WebSocket latency embed. Prefix shows full 4-field embed: WebSocket, Receive, Send, Total. Replaced old standalone `th/ping` prefix command in ihtx_bot.py.",
+            "**th/status / /status** — New hybrid command. Shows bot status embed: latency (color-coded 🟢/🟡/🔴), uptime since cog load, guild count, user count.",
             "**New users start with $100 wallet** — `_DEFAULT_USER['wallet']` changed from 0 to 100 in economy_cog.py.",
         ],
         "owner": [
-            "**roxi syncslash** (aliases: synccmds, synctree, slashsync) — Owner command to register slash (/) commands with Discord. Works around Discord error 50240 (Entry Point command preservation) that causes `tree.sync()` to fail: fetches live global commands, strips read-only fields (application_id, version) from Entry Points, then calls bulk_upsert_global_commands with slash commands + preserved Entry Points merged. Reports registered commands in Discord. Global propagation up to 1 hour.",
+            "**th/syncslash** (aliases: synccmds, synctree, slashsync) — Owner command to register slash (/) commands with Discord. Works around Discord error 50240 (Entry Point command preservation) that causes `tree.sync()` to fail: fetches live global commands, strips read-only fields (application_id, version) from Entry Points, then calls bulk_upsert_global_commands with slash commands + preserved Entry Points merged. Reports registered commands in Discord. Global propagation up to 1 hour.",
         ],
     },
     {
         "version": "v3.7",
         "date": "2026-06-22",
         "heavy": [
-            "**roxi ihtxgen / /ihtxgen** — New hybrid command (text prefix + slash). Runs the full IHTX FFmpeg preset pipeline with a live updating embed showing download → processing → result stages. Accepts slash attachment, `url:` param, or message attachment/reply. Autocomplete lists all available presets. Outputs file directly or uploads to Catbox if >25 MB.",
+            "**th/ihtxgen / /ihtxgen** — New hybrid command (text prefix + slash). Runs the full IHTX FFmpeg preset pipeline with a live updating embed showing download → processing → result stages. Accepts slash attachment, `url:` param, or message attachment/reply. Autocomplete lists all available presets. Outputs file directly or uploads to Catbox if >25 MB.",
         ],
         "fun": [
-            "**roxi jackpot / /jackpot** — Slot machine command (renamed from roxi slot to avoid conflict with roxi slots). Spin 🍒🍊🍋🍇⭐🔔7️⃣ symbols. Hit 777 to win +200 XP. Strict 1-hour cooldown per user via `@commands.cooldown`. Custom error handler sends an ephemeral embed showing exact remaining cooldown time (Xm Ys).",
-            "**roxi profile / /profile [user]** — Profile card embed showing wallet, bank, XP, level, inventory count, and bio. Interactive buttons: 'Edit Bio' (opens a Discord Modal for in-place bio editing, owner-only) and 'View Inventory' (toggles embed to show owned items list). Data persisted in `bot/economy_data.json`.",
+            "**th/jackpot / /jackpot** — Slot machine command (renamed from th/slot to avoid conflict with th/slots). Spin 🍒🍊🍋🍇⭐🔔7️⃣ symbols. Hit 777 to win +200 XP. Strict 1-hour cooldown per user via `@commands.cooldown`. Custom error handler sends an ephemeral embed showing exact remaining cooldown time (Xm Ys).",
+            "**th/profile / /profile [user]** — Profile card embed showing wallet, bank, XP, level, inventory count, and bio. Interactive buttons: 'Edit Bio' (opens a Discord Modal for in-place bio editing, owner-only) and 'View Inventory' (toggles embed to show owned items list). Data persisted in `bot/economy_data.json`.",
         ],
         "owner": [],
     },
@@ -8689,21 +8713,21 @@ _UPDATELOG: list[dict] = [
         "date": "2026-06-22",
         "heavy": [],
         "fun": [
-            "**roxi undo** — Delete the bot's most recent message in the current channel. Both the bot message and your `roxi undo` invocation are removed silently. Tracked via `_last_bot_msg` dict updated by `on_message`.",
-            "**roxi random Easter egg** — 1-in-50 chance per roll awards +500 XP. Announces 🥚 Easter egg found and includes any level-up messages.",
-            "**roxi random pool** — Added 3 new entries: `laughingstock`, `they got sprunki!`, `ayo?`",
+            "**th/undo** — Delete the bot's most recent message in the current channel. Both the bot message and your `th/undo` invocation are removed silently. Tracked via `_last_bot_msg` dict updated by `on_message`.",
+            "**th/random Easter egg** — 1-in-50 chance per roll awards +500 XP. Announces 🥚 Easter egg found and includes any level-up messages.",
+            "**th/random pool** — Added 3 new entries: `laughingstock`, `they got sprunki!`, `ayo?`",
         ],
         "owner": [
-            "**roxi slots fix** — `ctx.reply()` now falls back to `ctx.send()` when invoked from a system message (was crashing with HTTP 400 `Cannot reply to a system message`).",
+            "**th/slots fix** — `ctx.reply()` now falls back to `ctx.send()` when invoked from a system message (was crashing with HTTP 400 `Cannot reply to a system message`).",
         ],
     },
     {
         "version": "v3.5",
         "date": "2026-06-22",
         "heavy": [
-            "**roxi vocoder** — New FFT phase vocoder command (alias: `roxi vocode`). Pure Python/numpy port of vocoder.ts — no Wine/exe required. Four modes: `ilvocodex` (256 bands, 1024-win, 6 mod aphaseshift), `orangevocoder` (256/1024, clean), `4ormulator` (128/256, tight), `audacity` (64/512, 12 post aphaseshift). Takes a carrier audio URL and your attached video as the modulator. Per-mode post-filters: highpass + bass cut + alimiter + optional aphaseshift chain.",
-            "**roxi ihtx pipe** — Added `vocoder`, `ilvocodex`, `orangevocoder`, `4ormulator`, `audacity` pipe effects. Syntax: `vocoder=mode;url`, `vocoder=mode;bw;url`, or mode name directly (`ilvocodex=url`). Removed `autotune`/`at` from pipes.",
-            "**roxi ihtxhelp** — Replaced autotune help entry with vocoder entry. Updated Audio pipe effects reference line to list all 4 vocoder mode shortcuts.",
+            "**th/vocoder** — New FFT phase vocoder command (alias: `th/vocode`). Pure Python/numpy port of vocoder.ts — no Wine/exe required. Four modes: `ilvocodex` (256 bands, 1024-win, 6 mod aphaseshift), `orangevocoder` (256/1024, clean), `4ormulator` (128/256, tight), `audacity` (64/512, 12 post aphaseshift). Takes a carrier audio URL and your attached video as the modulator. Per-mode post-filters: highpass + bass cut + alimiter + optional aphaseshift chain.",
+            "**th/ihtx pipe** — Added `vocoder`, `ilvocodex`, `orangevocoder`, `4ormulator`, `audacity` pipe effects. Syntax: `vocoder=mode;url`, `vocoder=mode;bw;url`, or mode name directly (`ilvocodex=url`). Removed `autotune`/`at` from pipes.",
+            "**th/ihtxhelp** — Replaced autotune help entry with vocoder entry. Updated Audio pipe effects reference line to list all 4 vocoder mode shortcuts.",
         ],
         "fun": [],
         "owner": [],
@@ -8712,9 +8736,9 @@ _UPDATELOG: list[dict] = [
         "version": "v3.4",
         "date": "2026-06-21",
         "heavy": [
-            "**roxi folkvalley** — New aesthetic effect command (aliases: `roxi fv`, `roxi folk`). Replaces video audio with the folkvalley music track, applies a brightness boost (HSV value shift V+100 via FFmpeg `eq`), and overlays a decorative PNG scaled to fit the frame. No parameters needed.",
-            "**roxi ihtx pipe** — Added `folkvalley` / `fv` pipe effect. Usage: `folkvalley` (no params).",
-            "**roxi ihtxhelp** — Added folkvalley entry; pipe effects list updated with Aesthetics section.",
+            "**th/folkvalley** — New aesthetic effect command (aliases: `th/fv`, `th/folk`). Replaces video audio with the folkvalley music track, applies a brightness boost (HSV value shift V+100 via FFmpeg `eq`), and overlays a decorative PNG scaled to fit the frame. No parameters needed.",
+            "**th/ihtx pipe** — Added `folkvalley` / `fv` pipe effect. Usage: `folkvalley` (no params).",
+            "**th/ihtxhelp** — Added folkvalley entry; pipe effects list updated with Aesthetics section.",
         ],
         "fun": [],
         "owner": [],
@@ -8724,10 +8748,10 @@ _UPDATELOG: list[dict] = [
         "date": "2026-06-21",
         "heavy": [
             "**Tag system** — `{set:var|value}` / `{get:var}` mutable variables with nested-block resolution; `{foreach:N|template}` count loop (re-evaluates each iteration so set mutations persist) and `{foreach:template|i1|i2|i3}` item loop with custom separator prefix; `{if:a|op|b|then:x|else:y}` else branch; `{arg:n}` 0-indexed args, `{arg:*}` all args; `{range:min|max}` random int/float; `{repeat:N:text}` colon separator; `{substring:text|start[|end]}`; `{indexof:needle|haystack}`; `{math:}` resolves inner blocks first; unknown `{tagname}` vars auto-expand to `{tag:tagname}` shorthand; `{tag:name}` / `{js:code}` (owner-only Node.js ESM) engines.",
-            "**Tag commands** — `roxi t <name> [args]` shorthand; `roxi tag random` (run a random tag); `roxi tag forceremove <name>` (owner-only); `roxi tag alias <new> <existing>` arg order corrected; `roxi tag create` now upserts (edit your own existing tag instead of erroring).",
+            "**Tag commands** — `th/t <name> [args]` shorthand; `th/tag random` (run a random tag); `th/tag forceremove <name>` (owner-only); `th/tag alias <new> <existing>` arg order corrected; `th/tag create` now upserts (edit your own existing tag instead of erroring).",
         ],
         "fun": [
-            "**roxi swirl** — `is1to1` now defaults to `true` (square-before-swirl mode enabled by default).",
+            "**th/swirl** — `is1to1` now defaults to `true` (square-before-swirl mode enabled by default).",
         ],
         "owner": [],
     },
@@ -8735,7 +8759,7 @@ _UPDATELOG: list[dict] = [
         "version": "v3.2",
         "date": "2026-06-21",
         "heavy": [
-            "**roxi swirl** — Updated swirl formula: uses inline geq expressions with `min(W,H)*radius` attenuation for both standard and 1:1 modes (replaces st/ld register approach). `setsar=1:1` added to 1:1 path. `fallout` and `is1to1` params unchanged.",
+            "**th/swirl** — Updated swirl formula: uses inline geq expressions with `min(W,H)*radius` attenuation for both standard and 1:1 modes (replaces st/ld register approach). `setsar=1:1` added to 1:1 path. `fallout` and `is1to1` params unchanged.",
         ],
         "fun": [],
         "owner": [],
@@ -8744,9 +8768,9 @@ _UPDATELOG: list[dict] = [
         "version": "v3.1",
         "date": "2026-06-21",
         "heavy": [
-            "**roxi swirl** — New vortex/swirl distortion command using FFmpeg geq. Works on videos and images. Params: `strength` (degrees), `radius`, `xc`, `yc`, `fallout` (linear/quad), `is1to1`. Alias: `roxi vortex`",
-            "**roxi ihtx pipe** — Added `swirl` pipe effect. Usage: `swirl=strength;radius;xc;yc;fallout;is1to1`",
-            "**roxi ihtxhelp** — Added swirl entry; pipe effects list updated with Swirl section",
+            "**th/swirl** — New vortex/swirl distortion command using FFmpeg geq. Works on videos and images. Params: `strength` (degrees), `radius`, `xc`, `yc`, `fallout` (linear/quad), `is1to1`. Alias: `th/vortex`",
+            "**th/ihtx pipe** — Added `swirl` pipe effect. Usage: `swirl=strength;radius;xc;yc;fallout;is1to1`",
+            "**th/ihtxhelp** — Added swirl entry; pipe effects list updated with Swirl section",
         ],
         "fun": [],
         "owner": [],
@@ -8755,9 +8779,9 @@ _UPDATELOG: list[dict] = [
         "version": "v3.0",
         "date": "2026-06-21",
         "heavy": [
-            "**roxi tvsim** — New CRT/TV simulator command applying FFmpeg displacement-map distortion. Params: `line_sync` (0–1, warp strength), `detail_zoom`, `vertical_sync`, `phosphorescence`, `interlacing`, `scan_phasing`. Aliases: `roxi tv` `roxi tvsimulator`",
-            "**roxi ihtx pipe** — Added `tvsim` / `tv` pipe effect. Usage: `tvsim=line_sync;detail_zoom;vert_sync;phosphor;interlace;scan_phase`",
-            "**roxi ihtxhelp** — Added tvsim entry under heavy effects; pipe effects list updated with CRT section",
+            "**th/tvsim** — New CRT/TV simulator command applying FFmpeg displacement-map distortion. Params: `line_sync` (0–1, warp strength), `detail_zoom`, `vertical_sync`, `phosphorescence`, `interlacing`, `scan_phasing`. Aliases: `th/tv` `th/tvsimulator`",
+            "**th/ihtx pipe** — Added `tvsim` / `tv` pipe effect. Usage: `tvsim=line_sync;detail_zoom;vert_sync;phosphor;interlace;scan_phase`",
+            "**th/ihtxhelp** — Added tvsim entry under heavy effects; pipe effects list updated with CRT section",
         ],
         "fun": [],
         "owner": [],
@@ -8766,7 +8790,7 @@ _UPDATELOG: list[dict] = [
         "version": "v2.9",
         "date": "2026-06-21",
         "heavy": [
-            "**roxi ihtx** — Fixed crash after processing: _last_exports was used but never declared, causing a silent NameError immediately after FFmpeg finished, leaving the status stuck at '⌛ Done!' with no video delivered",
+            "**th/ihtx** — Fixed crash after processing: _last_exports was used but never declared, causing a silent NameError immediately after FFmpeg finished, leaving the status stuck at '⌛ Done!' with no video delivered",
         ],
         "fun": [],
         "owner": [],
@@ -8775,7 +8799,7 @@ _UPDATELOG: list[dict] = [
         "version": "v2.8",
         "date": "2026-06-21",
         "heavy": [
-            "**roxi ihtx, roxi invlum** — Output changed from .mov to .mp4 and audio codec changed from pcm_s16le to aac; videos now play inline in Discord instead of appearing as a download-only attachment",
+            "**th/ihtx, th/invlum** — Output changed from .mov to .mp4 and audio codec changed from pcm_s16le to aac; videos now play inline in Discord instead of appearing as a download-only attachment",
         ],
         "fun": [],
         "owner": [],
@@ -8784,7 +8808,7 @@ _UPDATELOG: list[dict] = [
         "version": "v2.7",
         "date": "2026-06-21",
         "heavy": [
-            "**roxi ihtx, roxi invlum, roxi multipitch, roxi ffmpeg, roxi huehsv, roxi syncaudio, roxi lexg** — Fixed NameError crash: attachment variable was used before being initialized in all 7 commands; they now work correctly with attached files",
+            "**th/ihtx, th/invlum, th/multipitch, th/ffmpeg, th/huehsv, th/syncaudio, th/lexg** — Fixed NameError crash: attachment variable was used before being initialized in all 7 commands; they now work correctly with attached files",
         ],
         "fun": [],
         "owner": [],
@@ -8793,17 +8817,17 @@ _UPDATELOG: list[dict] = [
         "version": "v2.6",
         "date": "2026-06-21",
         "heavy": [
-            "**roxi ihtx sierpinskiransomware** — New preset + pipe effect: 2×2 Sierpinski-style video grid (normal / 2× / 1.333× / 0.5× speed+pitch) using FFmpeg rubberband; outputs FLAC/MP4",
-            "**roxi ihtx** — Fixed FLAC-in-MOV container error for sierpinskiransomware preset (now outputs MP4)",
-            "**roxi ihtx** — sierpinskiransomware now available as a pipe effect in custom IHTX chains",
+            "**th/ihtx sierpinskiransomware** — New preset + pipe effect: 2×2 Sierpinski-style video grid (normal / 2× / 1.333× / 0.5× speed+pitch) using FFmpeg rubberband; outputs FLAC/MP4",
+            "**th/ihtx** — Fixed FLAC-in-MOV container error for sierpinskiransomware preset (now outputs MP4)",
+            "**th/ihtx** — sierpinskiransomware now available as a pipe effect in custom IHTX chains",
         ],
         "fun": [
-            "**roxi ihtx** (custom) — New processing status: '⏳ Processing your IHTX using pipe effects: `effects`×N', then '⌛ Done!' when finished",
-            "**roxi preview1280** — New result embed (MWTVE7691 credit, sync tip, thumbnail); segment 3 contrast fixed to 0.375",
-            "**roxi lexg / roxi lec** — Fixed MissingRequiredAttachment crash; attachment now resolved from message context only",
-            "**roxi ihtx** — Auto-uploads to Catbox when output exceeds Discord 25 MB limit; sends embed with download link instead of erroring",
-            "**roxi ihtx** — Result embed now shows Resolution, Aspect Ratio, FPS, and File Size of output; new icon",
-            "**roxi chat / roxi ask** — Removed 'slightly rude' from personality description",
+            "**th/ihtx** (custom) — New processing status: '⏳ Processing your IHTX using pipe effects: `effects`×N', then '⌛ Done!' when finished",
+            "**th/preview1280** — New result embed (MWTVE7691 credit, sync tip, thumbnail); segment 3 contrast fixed to 0.375",
+            "**th/lexg / th/lec** — Fixed MissingRequiredAttachment crash; attachment now resolved from message context only",
+            "**th/ihtx** — Auto-uploads to Catbox when output exceeds Discord 25 MB limit; sends embed with download link instead of erroring",
+            "**th/ihtx** — Result embed now shows Resolution, Aspect Ratio, FPS, and File Size of output; new icon",
+            "**th/chat / th/ask** — Removed 'slightly rude' from personality description",
             "**ffmpeg-full** installed — rubberband filter now available for pitch/tempo effects",
         ],
         "owner": [],
@@ -8813,10 +8837,10 @@ _UPDATELOG: list[dict] = [
         "date": "2026-06-20",
         "heavy": [],
         "fun": [
-            "**roxi chat / roxi ask** — New Gen-Z personality: nonchalant, dry, sarcastic, 100% lowercase, specific emojis only (🥀 🫩 💀 😭 ✌️)",
-            "**roxi chat** — Temperature dropped to 0.4 for rigid, consistent output; response forced lowercase via `.lower()`",
-            "**roxi chat** — Mandatory 'son im crine' inclusion rule + complexity block ('idk bro 😭')",
-            "**roxi clearchat** — Now available on the TypeScript bot",
+            "**th/chat / th/ask** — New Gen-Z personality: nonchalant, dry, sarcastic, 100% lowercase, specific emojis only (🥀 🫩 💀 😭 ✌️)",
+            "**th/chat** — Temperature dropped to 0.4 for rigid, consistent output; response forced lowercase via `.lower()`",
+            "**th/chat** — Mandatory 'son im crine' inclusion rule + complexity block ('idk bro 😭')",
+            "**th/clearchat** — Now available on the TypeScript bot",
         ],
         "owner": [],
     },
@@ -8825,10 +8849,10 @@ _UPDATELOG: list[dict] = [
         "date": "2026-06-20",
         "heavy": [],
         "fun": [
-            "**roxi chat / roxi ask** — Rebuilt on pure Google GenAI pipeline: `types.GenerateContentConfig` with `system_instruction`, temperature 0.83, max 1024 tokens",
-            "**roxi chat** — OpenRouter dependency removed from chat entirely; Gemini 2.5 Flash is the sole engine",
-            "**roxi chat / roxi ask** — Now available on the TypeScript bot too via `@google/genai` Node.js SDK",
-            "**roxi img2vid / roxi imagevideo / roxi video** — AI video generation commands removed",
+            "**th/chat / th/ask** — Rebuilt on pure Google GenAI pipeline: `types.GenerateContentConfig` with `system_instruction`, temperature 0.83, max 1024 tokens",
+            "**th/chat** — OpenRouter dependency removed from chat entirely; Gemini 2.5 Flash is the sole engine",
+            "**th/chat / th/ask** — Now available on the TypeScript bot too via `@google/genai` Node.js SDK",
+            "**th/img2vid / th/imagevideo / th/video** — AI video generation commands removed",
         ],
         "owner": [],
     },
@@ -8837,9 +8861,9 @@ _UPDATELOG: list[dict] = [
         "date": "2026-06-20",
         "heavy": [],
         "fun": [
-            "**roxi chat** — Gemini emergency fallback now uses a single stateless content string (system + question) instead of history/parts",
-            "**roxi chat** — Gemini also used directly when OpenRouter key is absent (no history overhead)",
-            "**roxi chat** — OpenRouter and Gemini log messages match new routing tier labels",
+            "**th/chat** — Gemini emergency fallback now uses a single stateless content string (system + question) instead of history/parts",
+            "**th/chat** — Gemini also used directly when OpenRouter key is absent (no history overhead)",
+            "**th/chat** — OpenRouter and Gemini log messages match new routing tier labels",
         ],
         "owner": [],
     },
@@ -8848,9 +8872,9 @@ _UPDATELOG: list[dict] = [
         "date": "2026-06-20",
         "heavy": [],
         "fun": [
-            "**roxi chat / roxi ask** — model fallback chain: qwen3-coder:free → llama-3.3-70b:free → openrouter/auto",
-            "**roxi chat** — switched to `ctx.defer()` for reliable hybrid (slash + prefix) response handling",
-            "**roxi chat** — prefix-aware system prompt with structured PREFIX AWARENESS RULES section",
+            "**th/chat / th/ask** — model fallback chain: qwen3-coder:free → llama-3.3-70b:free → openrouter/auto",
+            "**th/chat** — switched to `ctx.defer()` for reliable hybrid (slash + prefix) response handling",
+            "**th/chat** — prefix-aware system prompt with structured PREFIX AWARENESS RULES section",
         ],
         "owner": [],
     },
@@ -8859,9 +8883,9 @@ _UPDATELOG: list[dict] = [
         "date": "2026-06-20",
         "heavy": [],
         "fun": [
-            "**roxi chat / roxi ask** — now powered by OpenRouter (qwen/qwen3-coder:free) when `OPENROUTER_API_KEY` is set; falls back to Gemini automatically",
-            "**roxi chat** — system prompt now includes dynamic prefix awareness and username/channel context",
-            "**roxi ask** — confirmed alias of `roxi chat` (unchanged behavior, new backend)",
+            "**th/chat / th/ask** — now powered by OpenRouter (qwen/qwen3-coder:free) when `OPENROUTER_API_KEY` is set; falls back to Gemini automatically",
+            "**th/chat** — system prompt now includes dynamic prefix awareness and username/channel context",
+            "**th/ask** — confirmed alias of `th/chat` (unchanged behavior, new backend)",
         ],
         "owner": [],
     },
@@ -8870,7 +8894,7 @@ _UPDATELOG: list[dict] = [
         "date": "2026-06-20",
         "heavy": [],
         "fun": [
-            "**roxi ihtxhelp** — command syntax now shown as a copyable code block inside each help entry",
+            "**th/ihtxhelp** — command syntax now shown as a copyable code block inside each help entry",
         ],
         "owner": [],
     },
@@ -8878,8 +8902,8 @@ _UPDATELOG: list[dict] = [
         "version": "v1.9",
         "date": "2026-06-20",
         "heavy": [
-            "**roxi ihtx** — new `wave` pipe effect: sinusoidal pixel-displacement distortion with 8 params (hSpd|hFreq|hAmp|hPhase|vSpd|vFreq|vAmp|vPhase)",
-            "**roxi ihtx wave** — optional `sep` flag runs H and V waves as separate passes; `noclip` draws border box to hide edge clipping",
+            "**th/ihtx** — new `wave` pipe effect: sinusoidal pixel-displacement distortion with 8 params (hSpd|hFreq|hAmp|hPhase|vSpd|vFreq|vAmp|vPhase)",
+            "**th/ihtx wave** — optional `sep` flag runs H and V waves as separate passes; `noclip` draws border box to hide edge clipping",
         ],
         "fun": [],
         "owner": [],
@@ -8888,13 +8912,13 @@ _UPDATELOG: list[dict] = [
         "version": "v1.8",
         "date": "2026-06-20",
         "heavy": [
-            "**roxi ihtx p&p** — geq formula now clamps distortion with `max(..., 0)` to prevent pixel wrap-around artifacts",
-            "**roxi ihtx p&p** — fixed FLAC-in-MP4 error: all vf pipe steps now encode audio as `pcm_s24le` instead of `copy`",
-            "**roxi ihtx lut / invlum / VIDEO:** — same FLAC fix applied to those vf paths",
-            "**roxi ihtx** — removed `-f mp4` from concat step (let FFmpeg infer container from output extension)",
-            "**roxi syncaudio** — rewired to split input into separate video/audio temp files before syncing",
-            "**roxi syncaudio** — uses `-stream_loop -1` on audio + `-t <vd>` to pin output length (replaces `-shortest`)",
-            "**roxi syncaudio** — explicit `-map 0:v -map 1:a` for clean stream selection on both modes",
+            "**th/ihtx p&p** — geq formula now clamps distortion with `max(..., 0)` to prevent pixel wrap-around artifacts",
+            "**th/ihtx p&p** — fixed FLAC-in-MP4 error: all vf pipe steps now encode audio as `pcm_s24le` instead of `copy`",
+            "**th/ihtx lut / invlum / VIDEO:** — same FLAC fix applied to those vf paths",
+            "**th/ihtx** — removed `-f mp4` from concat step (let FFmpeg infer container from output extension)",
+            "**th/syncaudio** — rewired to split input into separate video/audio temp files before syncing",
+            "**th/syncaudio** — uses `-stream_loop -1` on audio + `-t <vd>` to pin output length (replaces `-shortest`)",
+            "**th/syncaudio** — explicit `-map 0:v -map 1:a` for clean stream selection on both modes",
         ],
         "fun": [],
         "owner": [],
@@ -8903,12 +8927,12 @@ _UPDATELOG: list[dict] = [
         "version": "v1.7",
         "date": "2026-06-20",
         "heavy": [
-            "**roxi ihtx** — new `shake=<h>|<v>` pipe effect: per-frame pixel displacement via geq, crops to original dims",
-            "**roxi ihtx** — `vreverse` pipe effect added: reverses video frames (chain with `areverse` for full reverse)",
-            "**roxi ihtx** — `swirl` removed from pipe engine (now handled by iscript tag)",
-            "**roxi ihtx shake** — audio now encoded as `pcm_s24le`; fixes FLAC-in-container error on certain inputs",
-            "**roxi multipitch** — audio now encoded as `pcm_s24le` instead of AAC",
-            "**roxi multipitch** — duration fixed: replaced `-shortest` with explicit `-t <video_duration>` to prevent clipping",
+            "**th/ihtx** — new `shake=<h>|<v>` pipe effect: per-frame pixel displacement via geq, crops to original dims",
+            "**th/ihtx** — `vreverse` pipe effect added: reverses video frames (chain with `areverse` for full reverse)",
+            "**th/ihtx** — `swirl` removed from pipe engine (now handled by iscript tag)",
+            "**th/ihtx shake** — audio now encoded as `pcm_s24le`; fixes FLAC-in-container error on certain inputs",
+            "**th/multipitch** — audio now encoded as `pcm_s24le` instead of AAC",
+            "**th/multipitch** — duration fixed: replaced `-shortest` with explicit `-t <video_duration>` to prevent clipping",
         ],
         "fun": [],
         "owner": [],
@@ -8917,11 +8941,11 @@ _UPDATELOG: list[dict] = [
         "version": "v1.6",
         "date": "2026-06-19",
         "heavy": [
-            "**roxi ihtx** — pipe parser now uses commas as delimiters: `huehsv,negate,speed=1.5`",
-            "**roxi ihtx** — new `ffmpeg(...)` pipe step: pass raw FFmpeg args mid-chain e.g. `ffmpeg(-vf hue=h=50)`",
-            "**roxi ihtx** — processing status message now shows effect name + repeat count while running",
-            "**roxi ffmpeg** — new standalone command: run any FFmpeg args on an attachment; shows error log + elapsed time",
-            "**roxi ihtx** — output is always `.mp4`; `-f mp4` added to concat step; output_format param removed from custom syntax",
+            "**th/ihtx** — pipe parser now uses commas as delimiters: `huehsv,negate,speed=1.5`",
+            "**th/ihtx** — new `ffmpeg(...)` pipe step: pass raw FFmpeg args mid-chain e.g. `ffmpeg(-vf hue=h=50)`",
+            "**th/ihtx** — processing status message now shows effect name + repeat count while running",
+            "**th/ffmpeg** — new standalone command: run any FFmpeg args on an attachment; shows error log + elapsed time",
+            "**th/ihtx** — output is always `.mp4`; `-f mp4` added to concat step; output_format param removed from custom syntax",
         ],
         "fun": [],
         "owner": [],
@@ -8930,9 +8954,9 @@ _UPDATELOG: list[dict] = [
         "version": "v1.5",
         "date": "2026-06-18",
         "heavy": [
-            "**roxi ihtx** — parametric angle-based `mirror=<deg>` effect added (keeps left/right/top/bottom presets)",
-            "**roxi multipitch** — rubberband CLI fallback added for R3 engine",
-            "**roxi multipitch** — fixed speed bug in remux step (`-c:v copy` instead of libx264) to preserve timestamps",
+            "**th/ihtx** — parametric angle-based `mirror=<deg>` effect added (keeps left/right/top/bottom presets)",
+            "**th/multipitch** — rubberband CLI fallback added for R3 engine",
+            "**th/multipitch** — fixed speed bug in remux step (`-c:v copy` instead of libx264) to preserve timestamps",
         ],
         "fun": [],
         "owner": [],
@@ -8977,7 +9001,7 @@ async def updatelog_command(ctx: commands.Context):
 async def lexg_command(ctx: commands.Context, duration: float = 5.0):
     """Grab the last N seconds of a video using reverse→trim→reverse.
 
-    Usage: roxi lexg [duration] — attach a video or reply to one.
+    Usage: th/lexg [duration] — attach a video or reply to one.
     Default duration is 5 seconds.
     """
     # Resolve attachment
@@ -8995,9 +9019,9 @@ async def lexg_command(ctx: commands.Context, duration: float = 5.0):
 
     if not attachment:
         await ctx.reply(
-            "**roxi lexg [duration]** — Grab the last N seconds of a video.\n"
+            "**th/lexg [duration]** — Grab the last N seconds of a video.\n"
             "Attach a file or reply to one. Duration defaults to `5` seconds.\n"
-            "Aliases: `roxi lastexportgrab` `roxi lec`"
+            "Aliases: `th/lastexportgrab` `th/lec`"
         )
         return
 
@@ -9260,7 +9284,7 @@ async def sayembed(ctx: commands.Context, *, content: str):
     Owner-only: send an embed.
     If `content` contains a '|' it will split into title|description, otherwise content is used as description.
     Example:
-      roxi sayembed Title | This is the embed body
+      th/sayembed Title | This is the embed body
     """
     try:
         if "|" in content:
@@ -9283,8 +9307,8 @@ async def keywordblockmsg(ctx: commands.Context, keyword: str, *, message: str):
 
     Everything after the keyword is the message. Use {mention} or {user} for user mention.
     Example:
-      roxi keywordblockmsg swearword no swearing, {mention}!
-      roxi keywordblockmsg badword dont say that, {user}
+      th/keywordblockmsg swearword no swearing, {mention}!
+      th/keywordblockmsg badword dont say that, {user}
     """
     normalized = _normalize_keyword(keyword)
     if not normalized:
@@ -9294,7 +9318,7 @@ async def keywordblockmsg(ctx: commands.Context, keyword: str, *, message: str):
 
     blocked = keyword_blocks.get(channel_id, set())
     if normalized not in blocked:
-        await ctx.reply(f"❌ Keyword `{normalized}` is not blocked in this channel. Block it first with `roxi keywordblock`.")
+        await ctx.reply(f"❌ Keyword `{normalized}` is not blocked in this channel. Block it first with `th/keywordblock`.")
         return
 
     msgs = keyword_block_messages.setdefault(channel_id, {})
@@ -9313,9 +9337,9 @@ async def autoreply(ctx: commands.Context, trigger: str, channel: discord.TextCh
     Leave channel blank (or omit) to reply in ALL channels.
     Use {mention} or {user} to ping the user in the response.
     Example (all channels):
-      roxi autoreply hello Hello there, {mention}!
+      th/autoreply hello Hello there, {mention}!
     Example (specific channel):
-      roxi autoreply hello #general Hello there, {mention}!
+      th/autoreply hello #general Hello there, {mention}!
     """
     trigger_norm = trigger.strip().lower()
     if not trigger_norm:
@@ -9344,8 +9368,8 @@ async def blockarchannel(ctx: commands.Context, trigger: str, channel: discord.T
     Run again with the same trigger + channel to unblock it.
 
     Example:
-      roxi blockarchannel hello           ← silences 'hello' in current channel
-      roxi blockarchannel hello #general  ← silences 'hello' in #general
+      th/blockarchannel hello           ← silences 'hello' in current channel
+      th/blockarchannel hello #general  ← silences 'hello' in #general
     """
     trigger_norm = trigger.strip().lower()
     if trigger_norm not in autoreplies:
@@ -9392,7 +9416,7 @@ async def removearmentions(ctx: commands.Context, *, trigger: str):
 
     Leaves the autoreply active but stops it from pinging users.
     Example:
-      roxi removearmentions hello
+      th/removearmentions hello
     """
     trigger_norm = trigger.strip().lower()
     if trigger_norm not in autoreplies:
@@ -9455,8 +9479,8 @@ async def autoreply2_cmd(ctx: commands.Context):
     Run again to toggle off.
 
     Example:
-      roxi autoreply2   ← toggles on in current channel
-      roxi autoreply2   ← toggles off
+      th/autoreply2   ← toggles on in current channel
+      th/autoreply2   ← toggles off
     """
     cid = ctx.channel.id
     if cid in autoreply2:
@@ -9489,8 +9513,8 @@ async def removear2mentions(ctx: commands.Context, user: discord.Member):
     Run again on the same user to re-enable pings.
 
     Example:
-      roxi removear2mentions @someone   ← disables pings for them
-      roxi removear2mentions @someone   ← re-enables pings
+      th/removear2mentions @someone   ← disables pings for them
+      th/removear2mentions @someone   ← re-enables pings
     """
     uid = user.id
     if uid in autoreply2_no_mention:
@@ -9571,10 +9595,10 @@ async def setactivity(ctx: commands.Context, activity_type: str, *, text: str):
     """Owner-only: change the bot's activity.
 
     Usage:
-      roxi setactivity watching some cool video
-      roxi setactivity listening lo-fi beats
-      roxi setactivity playing Minecraft
-      roxi setactivity streaming Cool Stream | https://twitch.tv/yourchannel
+      th/setactivity watching some cool video
+      th/setactivity listening lo-fi beats
+      th/setactivity playing Minecraft
+      th/setactivity streaming Cool Stream | https://twitch.tv/yourchannel
     """
     activity_type = activity_type.lower().strip()
     if activity_type in ("watching", "watch", "w"):
@@ -9620,8 +9644,8 @@ async def sendmsg(ctx: commands.Context, channel_id: str, *, text: str):
     """Owner-only: send a message to any channel the bot can access, by channel ID.
 
     Usage:
-      roxi sendmsg <channel_id> <message>
-      roxi sendmsg 123456789012345678 Hello from the boroxi 
+      th/sendmsg <channel_id> <message>
+      th/sendmsg 123456789012345678 Hello from the both/
     """
     try:
         cid = int(channel_id.strip("<#>"))
@@ -9820,7 +9844,7 @@ _chat_histories: dict[int, list[dict]] = {}
 _ar2_groq_histories: dict[int, list[dict]] = {}
 _CHAT_MAX_HISTORY = 20
 
-# ── Per-channel rolling context + user profiles for roxi chat ──────────────────
+# ── Per-channel rolling context + user profiles for th/chat ──────────────────
 
 _CHAT_PROFILES_PATH = Path(__file__).parent / "chat_profiles.json"
 _chat_profiles: dict[str, dict] = {}
@@ -9930,31 +9954,31 @@ _load_chat_profiles()
 # knows every implemented command and can answer "what can you do?" questions.
 _AR2_COMMAND_REF = """
 
-COMMANDS YOU KNOW (IHTX Bot — prefix roxi ):
+COMMANDS YOU KNOW (IHTX Bot — prefix th/):
 
 Heavy (media processing):
-- roxi ihtx [preset | <exports> <dur> <no_trim> <fmt> <pipe_effects>] — main effect engine
-- roxi ihtxgen / /ihtxgen — slash + prefix hybrid; same as roxi ihtx with attachment/url support
-- roxi multipitch <semitones> — multi-voice pitch shift (Rubber Band R3)
-- roxi tvsim <line_sync> [...] — CRT/TV simulator effect
-- roxi huehsv <hue> — hue shift via ImageMagick haldclut
-- roxi mirror <left|right|top|bottom|deg> — mirror media
-- roxi folkvalley — folkvalley aesthetic (audio swap + brightness + overlay)
-- roxi vocoder [mode] [bw] <carrier_url> — FFT phase vocoder
-- roxi syncaudio [alt] — sync video and audio durations
-- roxi trim <start> <end> — trim audio/video/GIF
-- roxi preview1280 [start] [dur] — 12-segment TV-simulator montage
-- roxi oppositep1280 [start] [dur] — inverse TV-simulator montage (negated hues, inverted pitches)
-- roxi invlum [n] — luma-inversion loop
-- roxi lexg — re-apply last export effect chain to new media
+- th/ihtx [preset | <exports> <dur> <no_trim> <fmt> <pipe_effects>] — main effect engine
+- th/ihtxgen / /ihtxgen — slash + prefix hybrid; same as th/ihtx with attachment/url support
+- th/multipitch <semitones> — multi-voice pitch shift (Rubber Band R3)
+- th/tvsim <line_sync> [...] — CRT/TV simulator effect
+- th/huehsv <hue> — hue shift via ImageMagick haldclut
+- th/mirror <left|right|top|bottom|deg> — mirror media
+- th/folkvalley — folkvalley aesthetic (audio swap + brightness + overlay)
+- th/vocoder [mode] [bw] <carrier_url> — FFT phase vocoder
+- th/syncaudio [alt] — sync video and audio durations
+- th/trim <start> <end> — trim audio/video/GIF
+- th/preview1280 [start] [dur] — 12-segment TV-simulator montage
+- th/oppositep1280 [start] [dur] — inverse TV-simulator montage (negated hues, inverted pitches)
+- th/invlum [n] — luma-inversion loop
+- th/lexg — re-apply last export effect chain to new media
 
 Downloads & Upload:
-- roxi ytdl <url or search> — download video from YouTube/URL or search query (TypeScript bot)
-- roxi catbox — upload file to catbox.moe (up to 200 MB)
+- th/ytdl <url or search> — download video from YouTube/URL or search query (TypeScript bot)
+- th/catbox — upload file to catbox.moe (up to 200 MB)
 
 AI & Chat:
-- roxi chat / roxi ask / roxi ai <prompt> — chat with Clankered (you!) — powered by Groq + Gemini fallback
-- roxi clearchat — clear your chat history
+- th/chat / th/ask / th/ai <prompt> — chat with Clankered (you!) — powered by Groq + Gemini fallback
+- th/clearchat — clear your chat history
 
 Economy & Profile:
 - /profile — view your IHTX profile and wallet balance
@@ -9963,18 +9987,18 @@ Economy & Profile:
 - /status — bot status (uptime, guilds, users)
 
 Fun & Utility:
-- roxi tag <name> [args] — run a custom TagScript tag
-- roxi presets — list all IHTX presets (chaos, glitch, melt, etc.)
-- roxi updatelog — show recent bot updates
-- roxi ihtxhelp — full IHTX command reference
+- th/tag <name> [args] — run a custom TagScript tag
+- th/presets — list all IHTX presets (chaos, glitch, melt, etc.)
+- th/updatelog — show recent bot updates
+- th/ihtxhelp — full IHTX command reference
 
 Owner-only:
-- roxi autoreply2 / roxi ar2 — toggle AI auto-reply in current channel
-- roxi autoreply / roxi addautoreply — keyword-based autoreply
-- roxi blockuser / roxi unblockuser / roxi blockchannel / roxi keywordblock
-- roxi warn / roxi warnings / roxi clearwarn
-- roxi say / roxi sayembed / roxi setactivity
-- roxi syncslash — register slash commands globally"""
+- th/autoreply2 / th/ar2 — toggle AI auto-reply in current channel
+- th/autoreply / th/addautoreply — keyword-based autoreply
+- th/blockuser / th/unblockuser / th/blockchannel / th/keywordblock
+- th/warn / th/warnings / th/clearwarn
+- th/say / th/sayembed / th/setactivity
+- th/syncslash — register slash commands globally"""
 
 _GEMINI_MIME_MAP = {
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -10018,7 +10042,7 @@ async def chat(ctx: commands.Context, *, question: str = ""):
     """Chat with the IHTX AI assistant. Supports multilingual replies and remembers you."""
 
     username = ctx.author.display_name
-    current_prefix = ctx.prefix if ctx.prefix else "roxi "
+    current_prefix = ctx.prefix if ctx.prefix else _BOT_PREFIX
     user_id = ctx.author.id
     channel_id = ctx.channel.id
 
@@ -10145,7 +10169,7 @@ async def chat(ctx: commands.Context, *, question: str = ""):
 
 @bot.command(name="clearchat", aliases=["resetai", "chatclear"])
 async def clearchat(ctx: commands.Context):
-    """Clear the roxi chat conversation history for this channel."""
+    """Clear the th/chat conversation history for this channel."""
     _chat_channel_histories.pop(ctx.channel.id, None)
     await ctx.reply("🧹 Chat history for this channel has been cleared.")
 
@@ -10259,7 +10283,7 @@ async def setlimit_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.CheckFailure):
         await ctx.reply("❌ Only bot owners and Level 15 moderators can set limits.")
     elif isinstance(error, commands.BadArgument):
-        await ctx.reply("❌ Usage: `roxi setlimit @user <number>`")
+        await ctx.reply("❌ Usage: `th/setlimit @user <number>`")
     else:
         await ctx.reply(f"❌ Error: {error}")
 
@@ -10422,7 +10446,7 @@ async def mod_timeout_error(ctx: commands.Context, error: commands.CommandError)
     if isinstance(error, commands.CheckFailure):
         await ctx.reply("❌ Only bot owners can use moderation commands.")
     elif isinstance(error, (commands.BadArgument, commands.MemberNotFound)):
-        await ctx.reply("❌ Member not found or invalid duration. Usage: `roxi timeout @user <minutes> [reason]`")
+        await ctx.reply("❌ Member not found or invalid duration. Usage: `th/timeout @user <minutes> [reason]`")
     elif isinstance(error, commands.NoPrivateMessage):
         await ctx.reply("❌ This command can only be used in a server.")
     else:
@@ -10486,7 +10510,7 @@ async def mod_purge_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.CheckFailure):
         await ctx.reply("❌ Only bot owners can use moderation commands.")
     elif isinstance(error, commands.BadArgument):
-        await ctx.reply("❌ Invalid arguments. Usage: `roxi purge <count> [@user]`")
+        await ctx.reply("❌ Invalid arguments. Usage: `th/purge <count> [@user]`")
     elif isinstance(error, commands.NoPrivateMessage):
         await ctx.reply("❌ This command can only be used in a server.")
     else:
@@ -10522,7 +10546,7 @@ async def mod_slowmode_error(ctx: commands.Context, error: commands.CommandError
     if isinstance(error, commands.CheckFailure):
         await ctx.reply("❌ Only bot owners can use moderation commands.")
     elif isinstance(error, commands.BadArgument):
-        await ctx.reply("❌ Invalid seconds value. Usage: `roxi slowmode <0–21600>`")
+        await ctx.reply("❌ Invalid seconds value. Usage: `th/slowmode <0–21600>`")
     elif isinstance(error, commands.NoPrivateMessage):
         await ctx.reply("❌ This command can only be used in a server.")
     else:
@@ -10736,7 +10760,7 @@ async def hangman(ctx: commands.Context):
 
         won = all(c in guessed for c in word)
         if won:
-            await msg.edit(content=f"🎉 You got iroxi  The word was **{word}**!\n{display()}")
+            await msg.edit(content=f"🎉 You got it! The word was **{word}**!\n{display()}")
             return
         if wrong >= max_wrong:
             break
@@ -10803,7 +10827,7 @@ async def blackjack(ctx: commands.Context):
     while True:
         pv = _bj_hand_value(player)
         if pv > 21:
-            await msg.edit(content=f"💥 **Busroxi ** You went over 21 with `{pv}`.\n**Dealer had:** {_bj_fmt(dealer)} — `{_bj_hand_value(dealer)}`")
+            await msg.edit(content=f"💥 **Bust!** You went over 21 with `{pv}`.\n**Dealer had:** {_bj_fmt(dealer)} — `{_bj_hand_value(dealer)}`")
             return
         if pv == 21:
             break
@@ -11017,7 +11041,7 @@ async def _award_xp(ctx: commands.Context, amount: int) -> list[str]:
                 data["is_mod"] = True
                 messages.append(
                     f"🏆 **MAX LEVEL!** {ctx.author.mention} reached **Level {_MAX_LEVEL}**! "
-                    f"You are now a **Bot Moderator** and can use `roxi setlimit` and `roxi resetlimit`!"
+                    f"You are now a **Bot Moderator** and can use `th/setlimit` and `th/resetlimit`!"
                 )
                 break
             else:
@@ -11069,7 +11093,7 @@ async def leaderboard(ctx: commands.Context):
     """Show the top 10 XP earners."""
     _load_xp_data()
     if not _xp_data:
-        await ctx.reply("No one has any XP yeroxi  Play `roxi trivia` to earn some.")
+        await ctx.reply("No one has any XP yet. Play `th/trivia` to earn some.")
         return
 
     sorted_users = sorted(_xp_data.items(), key=lambda x: x[1]["xp"], reverse=True)[:10]
@@ -11172,7 +11196,7 @@ async def trivia(ctx: commands.Context):
         if picked == correct_idx:
             score += 1
             await msg.edit(content=(
-                f"🎵 **Question {i}/10** — ✅ Correcroxi  (+100 XP)\n\n"
+                f"🎵 **Question {i}/10** — ✅ Correct! (+100 XP)\n\n"
                 f"{q}\n\n{choices_text}"
             ))
         else:
@@ -11239,19 +11263,19 @@ async def random_command(ctx: commands.Context, subcommand: str = "", *, args: s
     """Persistent random media pool.
 
     Usage:
-      roxi random                    — post a random item from the pool
-      roxi random add <url>          — owner: add a URL to the pool
-      roxi random add  (attachment)  — owner: add an attached file's URL
-      roxi random remove <url>       — owner: remove a URL from the pool
-      roxi random list               — owner: list all items in the pool
-      roxi random clear              — owner: wipe the entire pool
+      th/random                    — post a random item from the pool
+      th/random add <url>          — owner: add a URL to the pool
+      th/random add  (attachment)  — owner: add an attached file's URL
+      th/random remove <url>       — owner: remove a URL from the pool
+      th/random list               — owner: list all items in the pool
+      th/random clear              — owner: wipe the entire pool
     """
     sub = subcommand.strip().lower()
 
     # ── Roll ────────────────────────────────────────────────────────────────
     if sub == "":
         if not _random_pool:
-            await ctx.reply("❌ The random pool is empty. An owner can add items with `roxi random add <url>`.")
+            await ctx.reply("❌ The random pool is empty. An owner can add items with `th/random add <url>`.")
             return
         # Easter egg: 40% chance per roll → +500 XP
         if random.random() < 0.40:
@@ -11293,7 +11317,7 @@ async def random_command(ctx: commands.Context, subcommand: str = "", *, args: s
             urls_to_add.append(url_arg)
 
         if not urls_to_add:
-            await ctx.reply("❌ Provide a URL or attach a file: `roxi random add <url>`")
+            await ctx.reply("❌ Provide a URL or attach a file: `th/random add <url>`")
             return
 
         added = []
@@ -11314,7 +11338,7 @@ async def random_command(ctx: commands.Context, subcommand: str = "", *, args: s
     if sub in ("remove", "rm", "del", "delete"):
         url_arg = args.strip()
         if not url_arg:
-            await ctx.reply("❌ Provide a URL to remove: `roxi random remove <url>`")
+            await ctx.reply("❌ Provide a URL to remove: `th/random remove <url>`")
             return
         if url_arg in _random_pool:
             _random_pool.remove(url_arg)
@@ -11355,11 +11379,11 @@ async def random_command(ctx: commands.Context, subcommand: str = "", *, args: s
 
     await ctx.reply(
         "Unknown subcommand. Usage:\n"
-        "`roxi random` — roll\n"
-        "`roxi random add <url>` — add item (owner)\n"
-        "`roxi random remove <url>` — remove item (owner)\n"
-        "`roxi random list` — list all items (owner)\n"
-        "`roxi random clear` — wipe pool (owner)"
+        "`th/random` — roll\n"
+        "`th/random add <url>` — add item (owner)\n"
+        "`th/random remove <url>` — remove item (owner)\n"
+        "`th/random list` — list all items (owner)\n"
+        "`th/random clear` — wipe pool (owner)"
     )
 
 
@@ -11367,7 +11391,7 @@ async def random_command(ctx: commands.Context, subcommand: str = "", *, args: s
 
 @bot.event
 async def on_message(message: discord.Message):
-    # Track bot messages for roxi undo (per channel)
+    # Track bot messages for th/undo (per channel)
     if message.author == bot.user:
         _last_bot_msg[message.channel.id] = message.id
         if len(_last_bot_msg) > _LAST_BOT_MSG_MAX:
@@ -11447,7 +11471,7 @@ async def on_message(message: discord.Message):
         return
 
     # Autoreplies (check before keyword blocks, skip commands)
-    if not message.content.startswith("roxi "):
+    if not message.content.startswith(_BOT_PREFIX):
         content_lower = message.content.lower()
         for trigger, entry in autoreplies.items():
             if trigger in content_lower:
@@ -11535,7 +11559,7 @@ async def on_message(message: discord.Message):
                         await message.reply(chunk, mention_author=(not no_ping and i == 0))
 
     # Always allow owners to manage the bot and allow all bot commands to run.
-    if not _is_owner_by_id(message.author.id) and not message.content.startswith("roxi "):
+    if not _is_owner_by_id(message.author.id) and not message.content.startswith(_BOT_PREFIX):
         keyword = _blocked_keyword_for_message(message.channel.id, message.content)
         if keyword:
             try:
@@ -11567,7 +11591,7 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     # Only re-run if the content actually changed and it's a bot command
     if before.content == after.content:
         return
-    if not after.content.startswith("roxi "):
+    if not after.content.startswith(_BOT_PREFIX):
         return
 
     # Delete previous bot responses to this message
@@ -11583,14 +11607,14 @@ async def on_message_edit(before: discord.Message, after: discord.Message):
     await bot.process_commands(after)
 
 
-# ---------- roxi undo ----------
+# ---------- th/undo ----------
 
 @bot.command(name="undo")
 async def undo_command(ctx: commands.Context):
     """Delete the bot's most recent message in this channel.
 
-    Usage: roxi undo
-    Also deletes your roxi undo invocation message to keep the channel clean.
+    Usage: th/undo
+    Also deletes your th/undo invocation message to keep the channel clean.
     """
     channel_id = ctx.channel.id
     msg_id = _last_bot_msg.get(channel_id)
@@ -11602,7 +11626,7 @@ async def undo_command(ctx: commands.Context):
             pass
         return
 
-    # Remove from tracking so a second roxi undo doesn't hit the same message
+    # Remove from tracking so a second th/undo doesn't hit the same message
     del _last_bot_msg[channel_id]
 
     deleted = False
@@ -11613,7 +11637,7 @@ async def undo_command(ctx: commands.Context):
     except (discord.NotFound, discord.HTTPException):
         pass
 
-    # Always clean up the invoking roxi undo message
+    # Always clean up the invoking th/undo message
     try:
         await ctx.message.delete()
     except discord.HTTPException:
@@ -11632,7 +11656,7 @@ async def undo_command(ctx: commands.Context):
 async def catbox_upload(ctx: commands.Context):
     """Upload any file to catbox.moe and return a permanent direct link.
 
-      roxi catbox   (with file attached, or reply to a message with a file)
+      th/catbox   (with file attached, or reply to a message with a file)
     """
     src = attachment
     if src is None and ctx.message.attachments:
@@ -11899,7 +11923,7 @@ async def guesseffect(ctx: commands.Context):
     scrambled = _ge_scramble(effect["name"])
 
     embed = discord.Embed(
-        title="🎮 Guess the Effecroxi ",
+        title="🎮 Guess the Effect!",
         description=(
             "A famous logo-editing effect is hiding below. "
             "Study the clues and type its name in chat to win!\n"
@@ -11925,9 +11949,9 @@ async def guesseffect(ctx: commands.Context):
     try:
         winner: discord.Message = await bot.wait_for("message", check=_check, timeout=20.0)
         result_embed = discord.Embed(
-            title="🎉 Correcroxi ",
+            title="🎉 Correct!",
             description=(
-                f"**{winner.author.display_name}** nailed iroxi \n"
+                f"**{winner.author.display_name}** nailed it!\n"
                 f"The effect was **{effect['name']}**.\n"
                 f"[📖 Read about it on the wiki]({effect['wiki']})"
             ),
@@ -11954,12 +11978,12 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.CommandNotFound):
         return
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.reply(f"❌ Missing argument: `{error.param.name}`. Use `roxi ihtxhelp` for usage.")
+        await ctx.reply(f"❌ Missing argument: `{error.param.name}`. Use `th/ihtxhelp` for usage.")
         return
     if isinstance(error, commands.CheckFailure):
         return
     if isinstance(error, commands.BadArgument):
-        await ctx.reply(f"❌ Bad argument: {error}\nUse `roxi ihtxhelp` for correct usage.")
+        await ctx.reply(f"❌ Bad argument: {error}\nUse `th/ihtxhelp` for correct usage.")
         return
     if isinstance(error, commands.CommandInvokeError):
         original = error.original
