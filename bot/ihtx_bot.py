@@ -7955,6 +7955,11 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "fun",
+        "name": "roxi invite",
+        "value": "Get the link to invite IHTX to your server.",
+    },
+    {
+        "cat": "fun",
         "name": "roxi catbox  (aliases: cb, upload)",
         "value": "Upload any file (up to 200 MB) to catbox.moe and get a permanent direct link.",
     },
@@ -8258,6 +8263,19 @@ class _HelpView(discord.ui.View):
             item.disabled = True
 
 
+_INVITE_URL = "https://discord.com/oauth2/authorize?client_id=1510887192040570910&permissions=1099780073478&integration_type=0&scope=bot"
+
+@bot.command(name="invite")
+async def invite_command(ctx: commands.Context):
+    """Send the bot invite link."""
+    embed = discord.Embed(
+        title="Invite IHTX to your server!",
+        description=f"[Click here to add me]({_INVITE_URL})",
+        color=discord.Color.blurple(),
+    )
+    await ctx.reply(embed=embed)
+
+
 @bot.command(name="ihtxhelp", aliases=["bothelp"])
 async def help_command(ctx: commands.Context, *, query: str = ""):
     query = query.strip().lower()
@@ -8291,6 +8309,15 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 # ---------- Update Log ----------
 
 _UPDATELOG: list[dict] = [
+    {
+        "version": "v7.4",
+        "date": "2026-07-03",
+        "heavy": [],
+        "fun": [
+            "**roxi invite** — New command. Sends an embed with the bot's invite link so anyone can add IHTX to their server.",
+        ],
+        "owner": [],
+    },
     {
         "version": "v7.3",
         "date": "2026-07-02",
