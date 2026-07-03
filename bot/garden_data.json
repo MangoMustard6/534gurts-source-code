@@ -1,6 +1,6 @@
 {
   "1355759019330895973": {
-    "coins": 15,
+    "coins": 225,
     "seeds": {
       "corn": 1
     },
@@ -13,16 +13,9 @@
         "water_deadline": null,
         "grow_deadline": null,
         "state": "empty",
-        "golden": false
-      },
-      {
-        "crop": "blueberry",
-        "planted_at": 1783070154.5285408,
-        "watered": true,
-        "water_deadline": 1783070394.5285408,
-        "grow_deadline": 1783070634.5285408,
-        "state": "growing",
-        "golden": false
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false
       },
       {
         "crop": null,
@@ -31,7 +24,9 @@
         "water_deadline": null,
         "grow_deadline": null,
         "state": "empty",
-        "golden": false
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false
       },
       {
         "crop": null,
@@ -40,7 +35,9 @@
         "water_deadline": null,
         "grow_deadline": null,
         "state": "empty",
-        "golden": false
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false
       },
       {
         "crop": null,
@@ -49,9 +46,23 @@
         "water_deadline": null,
         "grow_deadline": null,
         "state": "empty",
-        "golden": false
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false
+      },
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false
       }
     ],
-    "pending_pest": null
+    "pending_pest": null,
+    "notify_channel_id": 1520000257738670130
   }
 }
