@@ -1409,6 +1409,82 @@ class GardenCog(commands.Cog, name="Garden"):
         lines = [result or "Pests scared off!"]
         await _send(ctx, title="👏 Pests Scared!", lines=lines, color=0x57F287, extra=event_msg, ping_msg=ping_msg)
 
+    # ── /gardenclear ──────────────────────────────────────────────────────────
+
+    @commands.hybrid_command(name="gardenclear", aliases=["gclear"], description="Clear dead plots. Omit plot to clear all dead at once.")
+    @app_commands.describe(plot="Plot number to clear (optional — leave blank to clear all dead plots)")
+    async def gardenclear(self, ctx: commands.Context, plot: str = "") -> None:
+        uid  = ctx.author.id
+        user = self._load(uid)
+        self._record_channel(user, ctx)
+
+        plots     = user["plots"]
+        num_plots = len(plots)
+
+        if plot:
+            # ── Single plot ──
+            try:
+                plot_num = int(plot)
+            except ValueError:
+                await _send_error(ctx, f"`{plot}` is not a valid plot number.")
+                return
+            if not (1 <= plot_num <= num_plots):
+                await _send_error(ctx, f"Plot number must be between 1 and {num_plots}.")
+                return
+
+            plot_idx  = plot_num - 1
+            plot_data = plots[plot_idx]
+            state     = _effective_state(plot_data)
+
+            if state != "dead":
+                state_desc = {
+                    "empty":    "already empty",
+                    "growing":  "still growing — wait for it or let it die first",
+                    "ready":    "ready to harvest — use `/harvest` first",
+                    "infested": "infested — use `/scare` first",
+                }.get(state, f"in state '{state}'")
+                await _send_error(ctx, f"Plot {plot_num} is {state_desc}, not dead.")
+                return
+
+            crop = (plot_data.get("crop") or "crop").capitalize()
+            plots[plot_idx] = copy.deepcopy(_EMPTY_PLOT)
+            # Clear pending pest if it was on this plot
+            if user.get("pending_pest") == plot_idx:
+                user["pending_pest"] = None
+
+            self._save(uid, user)
+            await _send(ctx,
+                title="🧹 Plot Cleared",
+                lines=[f"Cleared dead **{crop}** from Plot {plot_num}. The soil is ready for replanting."],
+                color=0x808080,
+            )
+
+        else:
+            # ── Clear all dead plots ──
+            cleared: list[int] = []
+            for i, p in enumerate(plots):
+                if _effective_state(p) == "dead":
+                    crop_name = (p.get("crop") or "plot").capitalize()
+                    plots[i] = copy.deepcopy(_EMPTY_PLOT)
+                    cleared.append(i + 1)
+                    if user.get("pending_pest") == i:
+                        user["pending_pest"] = None
+
+            if not cleared:
+                await _send_error(ctx, "No dead plots to clear — your garden looks fine!")
+                return
+
+            self._save(uid, user)
+            plot_list = ", ".join(f"Plot {n}" for n in cleared)
+            await _send(ctx,
+                title="🧹 Garden Cleared",
+                lines=[
+                    f"Cleared **{len(cleared)}** dead plot{'s' if len(cleared) != 1 else ''}:  {plot_list}.",
+                    "All cleared plots are ready for replanting.",
+                ],
+                color=0x808080,
+            )
+
     # ── Error handlers ────────────────────────────────────────────────────────
 
     @buy.error
