@@ -1431,7 +1431,7 @@ class GardenCog(commands.Cog, name="Garden"):
 
 # ── /leaderboard ─────────────────────────────────────────────────────────────
 
-    @commands.hybrid_command(name="leaderboard", aliases=["lb", "top"], description="Show the top garden earners.")
+    @commands.hybrid_command(name="gardenboard", aliases=["glb", "gardenleaderboard"], description="Show the top garden coin earners.")
     async def leaderboard(self, ctx: commands.Context) -> None:
         uid  = ctx.author.id
         user = self._load(uid)
