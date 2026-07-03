@@ -28,6 +28,7 @@ import { handleClearchat } from './commands/clearchat.js';
 import { handleBytebeat, handleBytebeatInteraction } from './commands/bytebeat.js';
 import { handleFfmpegProcess } from './commands/ffmpegprocess.js';
 import { handleRealGMajor4 } from './commands/realgmajor4.js';
+import { handleMultipitch2 } from './commands/multipitch2.js';
 
 if (!BOT_TOKEN) {
   console.error('ERROR: DISCORD_TOKEN environment variable is not set.');
@@ -67,7 +68,7 @@ client.once('clientReady', async (c) => {
   console.log(`[IHTX-TS] Logged in as ${c.user.tag}`);
   console.log(`[IHTX-TS] Prefix: ${PREFIX}`);
   console.log(`[IHTX-TS] Owner ID: ${BOT_OWNER_ID || '(not set)'}`);
-  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitchihtx, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, bytebeat, ffmpegprocess, realgmajor4`);
+  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitchihtx, multipitch2, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, bytebeat, ffmpegprocess, realgmajor4`);
 
   // Register slash commands.
   // Set BOT_GUILD_ID env var for instant guild-level registration (dev),
@@ -205,6 +206,11 @@ client.on('messageCreate', async (message: Message) => {
       case 'realgm4':
       case 'rgm4':
         await handleRealGMajor4(message);
+        break;
+
+      case 'multipitch2':
+      case 'mp2':
+        await handleMultipitch2(message, rest);
         break;
 
       default:

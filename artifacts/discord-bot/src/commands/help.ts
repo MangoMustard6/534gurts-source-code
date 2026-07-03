@@ -89,6 +89,17 @@ export async function handleHelp(message: Message, ownerId: string): Promise<voi
           ].join('\n'),
         },
         {
+          name: '🎛️ TypeScript: t!multipitch2',
+          value: [
+            `\`${PREFIX}multipitch2 <pitches> [||<wave-hammer>] [sr=<rate>]\` — attach a video/audio file`,
+            `**Pitches:** pipe-separated integers, e.g. \`7|8|9\` or \`-3|0|4\``,
+            `**Wave hammers:** \`G-Major_17\` (light limit) · \`Evil_Rampaging_Sorcerer\` (heavy limit)`,
+            `**sr=N** — processing sample rate (default 44100)`,
+            `Example: \`${PREFIX}multipitch2 7|8|9||G-Major_17\``,
+            `Example: \`${PREFIX}multipitch2 -3|0|4||Evil_Rampaging_Sorcerer sr=48000\``,
+          ].join('\n'),
+        },
+        {
           name: '🎛️ TypeScript: t!realgmajor4',
           value: [
             `\`${PREFIX}realgmajor4\` *realgm4 rgm4* — RGB invert + pitch-shifted overlay + doubled volume`,
