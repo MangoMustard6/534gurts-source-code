@@ -3140,33 +3140,16 @@ def _apply_pipe_effects(
                 else:
                     af_str = f"asetrate={sr_val}"
 
-                # Step 4: remux — original video stream + processed audio
-                _mp2_has_vid = bool(_ffprobe(
-                    current,
-                    "-select_streams", "v:0",
-                    "-show_entries", "stream=codec_type",
-                    "-of", "default=nw=1:nk=1",
-                ).strip())
-
-                if _mp2_has_vid:
-                    ok, err = _run_ffmpeg_raw([
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", current, "-i", out_wav,
-                        "-map", "0:v", "-map", "1:a",
-                        "-af", af_str,
-                        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                        "-pix_fmt", "yuv420p",
-                        "-c:a", "pcm_s16le",
-                        out,
-                    ], timeout=300)
-                else:
-                    ok, err = _run_ffmpeg_raw([
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", out_wav,
-                        "-af", af_str,
-                        "-c:a", "pcm_s16le",
-                        out,
-                    ], timeout=300)
+                # Step 4: remux — original video stream (copy, no re-encode) + processed audio
+                ok, err = _run_ffmpeg_raw([
+                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                    "-i", current, "-i", out_wav,
+                    "-map", "0:v?", "-map", "1:a",
+                    "-af", af_str,
+                    "-c:v", "copy",
+                    "-c:a", "pcm_s16le",
+                    out,
+                ], timeout=300)
                 if not ok:
                     return False, f"multipitch2: remux failed: {err}"
                 current = out
@@ -8343,6 +8326,16 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 # ---------- Update Log ----------
 
 _UPDATELOG: list[dict] = [
+    {
+        "version": "v7.9",
+        "date": "2026-07-03",
+        "heavy": [
+            "**mp2 remux: `-c:v copy`** — video stream is now stream-copied instead of re-encoded with libx264, making mp2 faster and lossless for the video track.",
+            "**mp2 remux: unified `-map 0:v?`** — removed the separate ffprobe video-detection branch; `-map 0:v?` handles both video and audio-only inputs in one FFmpeg call.",
+        ],
+        "fun": [],
+        "owner": [],
+    },
     {
         "version": "v7.8",
         "date": "2026-07-03",

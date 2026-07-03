@@ -1,6 +1,6 @@
 export const BOT_TOKEN = process.env.DISCORD_TOKEN ?? process.env.DISCORD_TOKEN_TS ?? '';
 export const BOT_OWNER_ID = process.env.BOT_OWNER_ID ?? '';
-export const PREFIX = 'roxi ';
+export const PREFIX = 'th/';
 
 export const LIMITS = {
   NON_OWNER_MAX_REPS: 30,
