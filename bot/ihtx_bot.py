@@ -3578,10 +3578,21 @@ def _apply_pipe_effects(
                             _f.write(_resp.read())
                 except Exception as _ne:
                     return False, f"nepeta: failed to download overlay from {nepeta_url}: {_ne}"
+                # Probe video dimensions so we can scale the PNG exactly to them.
+                # (scale2ref + loop crashes on this FFmpeg build; probing then hardcoding is stable.)
+                _probe = subprocess.run(
+                    ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                     "-show_entries", "stream=width,height",
+                     "-of", "csv=p=0", current],
+                    capture_output=True, text=True, timeout=15,
+                )
+                try:
+                    _vw, _vh = map(int, _probe.stdout.strip().split(","))
+                except Exception:
+                    _vw, _vh = 1280, 720  # safe fallback
                 fc = (
-                    "[1:v]format=rgba,loop=loop=-1:size=1[_nepeta];"
-                    "[_nepeta][0:v]scale2ref=w=ref_w:h=ref_h:flags=lanczos[_nimg][_vid];"
-                    "[_vid][_nimg]overlay=0:0:eof_action=repeat[vout]"
+                    f"[1:v]format=rgba,scale={_vw}:{_vh}:flags=lanczos[_nimg];"
+                    "[0:v][_nimg]overlay=0:0:repeatlast=1[vout]"
                 )
                 cmd = [
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
@@ -8324,6 +8335,15 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 # ---------- Update Log ----------
 
 _UPDATELOG: list[dict] = [
+    {
+        "version": "v7.6",
+        "date": "2026-07-03",
+        "heavy": [],
+        "fun": [
+            "**nepeta pipe fix** — Fixed crash caused by `loop+scale2ref` filter chain (assertion failure on this FFmpeg build). Now ffprobes video dimensions first and scales the overlay PNG to exact WxH, then uses `repeatlast=1` for the overlay. Stable across all video sizes.",
+        ],
+        "owner": [],
+    },
     {
         "version": "v7.5",
         "date": "2026-07-03",
