@@ -27,7 +27,7 @@ from typing import Any, Optional
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 # ── Crop catalogue ────────────────────────────────────────────────────────────
 
@@ -50,21 +50,24 @@ WATER_WARN_PCT  = 0.35   # show 💧 warning after this fraction has elapsed
 _DB_PATH = Path("bot/garden_data.json")
 
 _EMPTY_PLOT: dict[str, Any] = {
-    "crop":           None,
-    "planted_at":     None,
-    "watered":        False,
-    "water_deadline": None,   # unix ts: must water by here
-    "grow_deadline":  None,   # unix ts: ready at here
-    "state":          "empty",  # empty | growing | ready | dead | infested
-    "golden":         False,
+    "crop":             None,
+    "planted_at":       None,
+    "watered":          False,
+    "water_deadline":   None,   # unix ts: must water by here
+    "grow_deadline":    None,   # unix ts: ready at here
+    "state":            "empty",  # empty | growing | ready | dead | infested
+    "golden":           False,
+    "ping_at":          None,   # unix ts: halfway point — ping fires here
+    "notify_halfway":   False,  # True once the halfway ping has been sent
 }
 
 _DEFAULT_USER: dict[str, Any] = {
-    "coins":        100,
-    "seeds":        {"corn": 2},
-    "harvested":    {},
-    "plots":        None,   # filled in _ensure_user
-    "pending_pest": None,   # 0-based plot index with active crow infestation
+    "coins":             100,
+    "seeds":             {"corn": 2},
+    "harvested":         {},
+    "plots":             None,   # filled in get()
+    "pending_pest":      None,   # 0-based plot index with active crow infestation
+    "notify_channel_id": None,   # last channel the player issued a garden command in
 }
 
 
@@ -103,14 +106,27 @@ class GardenDB:
         plots = u.setdefault("plots", [])
         while len(plots) < NUM_PLOTS:
             plots.append(copy.deepcopy(_EMPTY_PLOT))
+        # Migrate: ensure each plot has the new ping fields
+        for p in plots:
+            p.setdefault("ping_at", None)
+            p.setdefault("notify_halfway", False)
         u.setdefault("pending_pest", None)
         u.setdefault("seeds", {"corn": 2})
         u.setdefault("harvested", {})
         u.setdefault("coins", 100)
+        u.setdefault("notify_channel_id", None)
         return u
 
     def save(self, uid: int, data: dict[str, Any]) -> None:
         self._data[str(uid)] = data
+        self._save()
+
+    def iter_all(self) -> list[tuple[str, dict[str, Any]]]:
+        """Return a snapshot of (uid_str, user_dict) for all known users."""
+        return list(self._data.items())
+
+    def flush(self) -> None:
+        """Persist current in-memory state without a full external save call."""
         self._save()
 
 
@@ -313,6 +329,88 @@ class GardenCog(commands.Cog, name="Garden"):
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        self._ping_loop.start()
+
+    def cog_unload(self) -> None:
+        self._ping_loop.cancel()
+
+    # ── Background halfway-ping loop ─────────────────────────────────────────
+
+    @tasks.loop(seconds=20)
+    async def _ping_loop(self) -> None:
+        """Every 20 s: scan all plots and ping users whose crop just hit the halfway mark."""
+        now     = _now()
+        changed = False
+
+        for uid_str, user in _db.iter_all():
+            uid_int    = int(uid_str)
+            channel_id = user.get("notify_channel_id")
+            user_dirty = False
+
+            for i, plot in enumerate(user.get("plots", [])):
+                if plot.get("notify_halfway"):
+                    continue
+                ping_at = plot.get("ping_at")
+                if not ping_at or now < ping_at:
+                    continue
+
+                state = _effective_state(plot)
+                if state != "growing":
+                    # Already done/dead — mark notified so we never revisit
+                    plot["notify_halfway"] = True
+                    user_dirty = True
+                    continue
+
+                crop      = plot.get("crop") or "crop"
+                info      = CROPS.get(crop, {})
+                em        = info.get("emoji", "🌿")
+                grow_left = max(0.0, (plot.get("grow_deadline") or now) - now)
+
+                msg = (
+                    f"🌱 <@{uid_int}> your **{em} {crop.capitalize()}** "
+                    f"in **Plot {i + 1}** is halfway through growing!\n"
+                    f"⏱ Ready in about **{_fmt_time(grow_left)}**."
+                )
+                if not plot.get("watered"):
+                    msg += (
+                        f"\n💧 **It still needs water!** "
+                        f"Run `th/water {i + 1}` or `/water {i + 1}` before it dies."
+                    )
+
+                sent = False
+                # Try the last-used channel first (mention in-server)
+                if channel_id:
+                    try:
+                        ch = self.bot.get_channel(channel_id)
+                        if ch is None:
+                            ch = await self.bot.fetch_channel(channel_id)
+                        await ch.send(msg)
+                        sent = True
+                    except Exception:
+                        pass
+
+                # Fall back to DM
+                if not sent:
+                    try:
+                        u_obj = self.bot.get_user(uid_int) or await self.bot.fetch_user(uid_int)
+                        await u_obj.send(msg)
+                        sent = True
+                    except Exception:
+                        pass
+
+                if sent:
+                    plot["notify_halfway"] = True
+                    user_dirty = True
+
+            if user_dirty:
+                changed = True
+
+        if changed:
+            _db.flush()
+
+    @_ping_loop.before_loop
+    async def _before_ping_loop(self) -> None:
+        await self.bot.wait_until_ready()
 
     # ── Internal helpers ─────────────────────────────────────────────────────
 
@@ -321,6 +419,11 @@ class GardenCog(commands.Cog, name="Garden"):
 
     def _save(self, uid: int, user: dict[str, Any]) -> None:
         _db.save(uid, user)
+
+    def _record_channel(self, user: dict, ctx: commands.Context) -> None:
+        """Store the channel this command came from so the ping loop knows where to ping."""
+        if hasattr(ctx, "channel") and ctx.channel:
+            user["notify_channel_id"] = ctx.channel.id
 
     def _pre_action(self, user: dict) -> str | None:
         """Called before active (state-changing) actions only.
@@ -336,6 +439,7 @@ class GardenCog(commands.Cog, name="Garden"):
     async def garden(self, ctx: commands.Context) -> None:
         uid  = ctx.author.id
         user = self._load(uid)
+        self._record_channel(user, ctx)
         # Passive command — do NOT consume pending pest here; player must see state first.
 
         pest_idx = user.get("pending_pest")
@@ -357,7 +461,12 @@ class GardenCog(commands.Cog, name="Garden"):
 
     @commands.hybrid_command(name="shop", description="Browse seeds available for purchase.")
     async def shop(self, ctx: commands.Context) -> None:
-        # Passive command — no pest check.
+        # Passive command — no pest check, but still record channel for ping routing.
+        uid  = ctx.author.id
+        user = self._load(uid)
+        self._record_channel(user, ctx)
+        self._save(uid, user)
+
         lines = _shop_lines()
         lines += [
             "",
@@ -385,6 +494,7 @@ class GardenCog(commands.Cog, name="Garden"):
 
         uid   = ctx.author.id
         user  = self._load(uid)
+        self._record_channel(user, ctx)
         pest_loss = self._pre_action(user)
 
         info       = CROPS[crop_key]
@@ -420,6 +530,7 @@ class GardenCog(commands.Cog, name="Garden"):
         # Passive command — no pest check.
         uid  = ctx.author.id
         user = self._load(uid)
+        self._record_channel(user, ctx)
 
         seeds     = user.get("seeds", {})
         harvested = user.get("harvested", {})
@@ -480,6 +591,7 @@ class GardenCog(commands.Cog, name="Garden"):
 
         uid  = ctx.author.id
         user = self._load(uid)
+        self._record_channel(user, ctx)
         pest_loss = self._pre_action(user)
 
         seeds = user.get("seeds", {})
@@ -513,13 +625,15 @@ class GardenCog(commands.Cog, name="Garden"):
         water_secs   = grow_secs * WATER_PCT
 
         user["plots"][plot_idx] = {
-            "crop":           crop_key,
-            "planted_at":     now,
-            "watered":        False,
-            "water_deadline": now + water_secs,
-            "grow_deadline":  now + grow_secs,
-            "state":          "growing",
-            "golden":         False,
+            "crop":             crop_key,
+            "planted_at":       now,
+            "watered":          False,
+            "water_deadline":   now + water_secs,
+            "grow_deadline":    now + grow_secs,
+            "state":            "growing",
+            "golden":           False,
+            "ping_at":          now + grow_secs / 2,   # halfway ping fires here
+            "notify_halfway":   False,
         }
 
         event_msg = _roll_event(user)
@@ -558,6 +672,7 @@ class GardenCog(commands.Cog, name="Garden"):
 
         uid  = ctx.author.id
         user = self._load(uid)
+        self._record_channel(user, ctx)
         pest_loss = self._pre_action(user)
 
         plot_idx  = plot_num - 1
@@ -624,6 +739,7 @@ class GardenCog(commands.Cog, name="Garden"):
 
         uid  = ctx.author.id
         user = self._load(uid)
+        self._record_channel(user, ctx)
         pest_loss = self._pre_action(user)
 
         plot_idx  = plot_num - 1
@@ -697,6 +813,7 @@ class GardenCog(commands.Cog, name="Garden"):
 
         uid  = ctx.author.id
         user = self._load(uid)
+        self._record_channel(user, ctx)
         pest_loss = self._pre_action(user)
 
         harvested = user.setdefault("harvested", {})
@@ -762,6 +879,7 @@ class GardenCog(commands.Cog, name="Garden"):
 
         uid  = ctx.author.id
         user = self._load(uid)
+        self._record_channel(user, ctx)
         pest_loss = self._pre_action(user)
 
         for plot in user["plots"]:
@@ -769,6 +887,9 @@ class GardenCog(commands.Cog, name="Garden"):
                 plot["grow_deadline"]  -= skip
             if plot.get("water_deadline"):
                 plot["water_deadline"] -= skip
+            # Shift the halfway ping too so it stays relative to the new timeline
+            if plot.get("ping_at"):
+                plot["ping_at"] -= skip
 
         event_msg = _roll_event(user)
         self._save(uid, user)
@@ -787,6 +908,7 @@ class GardenCog(commands.Cog, name="Garden"):
     async def scare(self, ctx: commands.Context) -> None:
         uid  = ctx.author.id
         user = self._load(uid)
+        self._record_channel(user, ctx)
 
         pest_idx = user.get("pending_pest")
         if pest_idx is None:

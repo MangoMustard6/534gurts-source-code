@@ -1,0 +1,57 @@
+{
+  "1355759019330895973": {
+    "coins": 15,
+    "seeds": {
+      "corn": 1
+    },
+    "harvested": {},
+    "plots": [
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false
+      },
+      {
+        "crop": "blueberry",
+        "planted_at": 1783070154.5285408,
+        "watered": true,
+        "water_deadline": 1783070394.5285408,
+        "grow_deadline": 1783070634.5285408,
+        "state": "growing",
+        "golden": false
+      },
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false
+      },
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false
+      },
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false
+      }
+    ],
+    "pending_pest": null
+  }
+}
