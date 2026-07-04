@@ -5737,10 +5737,10 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
             await status_msg.edit(content=f"❌ Failed to upload result: {e}")
 
 
-# ---------- th/ihtxsap — audio-only pitch-layer repeater ----------
+# ---------- th/ihtxsap — audio-only IHTX, mirrors th/ihtx iterative model ----------
 
-_IHTXSAP_MAX_REPS = 100
-_IHTXSAP_MAX_DUR  = 3600.0
+_IHTXSAP_MAX_REPS    = 100
+_IHTXSAP_MAX_DUR     = 3600.0
 _IHTXSAP_MAX_PITCHES = 20
 
 _IHTXSAP_AUDIO_EXTS = {
@@ -5751,11 +5751,11 @@ _IHTXSAP_AUDIO_EXTS = {
 _IHTXSAP_USAGE = (
     "**th/ihtxsap** — audio-only version of th/ihtx\n\n"
     "**Usage:** `th/ihtxsap <reps> <duration> <pitches> [style] [volume=N]`\n\n"
-    "  `reps`      — integer 1–100: how many times the mix loops\n"
-    "  `duration`  — seconds of audio to use per loop (e.g. `0.7`)\n"
+    "  `reps`      — integer 1–100: how many times pitch is applied iteratively\n"
+    "  `duration`  — seconds of audio to snip from the start (e.g. `0.7`)\n"
     "  `pitches`   — semicolon-separated semitone shifts: `-7;5;6`\n"
     "  `style`     — optional (default `Rubberband R2`): `Rubberband R2`, `Rubberband R3`, `Soundtouch`, `Bungee`\n"
-    "  `volume=N`  — optional float volume multiplier after mix (e.g. `volume=8`)\n\n"
+    "  `volume=N`  — optional float volume multiplier (e.g. `volume=8`)\n\n"
     "**Example:** `th/ihtxsap 5 0.7 -7;5;6 \"Rubberband R3\" volume=4`\n"
     "Attach a video/audio file, reply to one, or have one in recent channel history."
 )
@@ -5766,6 +5766,9 @@ _IHTXSAP_STYLE_NAMES = {
     "soundtouch":    "Soundtouch",
     "bungee":        "Bungee",
 }
+
+_IHTX_SAP_COLOR       = 0x001080
+_IHTX_SAP_FOOTER_ICON = "https://files.catbox.moe/4snvbu.gif"
 
 
 def _ihtxsap_parse_args(raw: str):
@@ -5855,32 +5858,25 @@ def _ihtxsap_parse_args(raw: str):
     return {"reps": reps, "duration": duration, "pitches": pitches, "style": style, "volume": volume}, None
 
 
-def _ihtxsap_mix_layers(layer_paths: list[str], tmpdir: str, volume: float = 1.0) -> tuple[bool, str, str]:
-    """amix N WAV layers → mixed.wav. Returns (ok, err, path)."""
-    mixed_wav = os.path.join(tmpdir, "mixed.wav")
-    if len(layer_paths) == 1 and volume == 1.0:
-        import shutil as _sh
-        _sh.copy2(layer_paths[0], mixed_wav)
-        return True, "", mixed_wav
-    mix_cmd = ["ffmpeg", "-y"]
-    for lp in layer_paths:
-        mix_cmd += ["-i", lp]
+def _ihtxsap_amix(layer_paths: list[str], output: str) -> tuple[bool, str]:
+    """amix N WAV layers → output WAV. Returns (ok, err)."""
     if len(layer_paths) == 1:
-        fc = "alimiter=limit=0.99:level=false"
-    else:
-        fc = (
-            f"amix=inputs={len(layer_paths)}:duration=longest:normalize=0"
-            f",alimiter=limit=0.99:level=false"
-        )
-    if volume != 1.0:
-        fc += f",volume={volume:.6f}"
-    mix_cmd += [
+        import shutil as _sh
+        _sh.copy2(layer_paths[0], output)
+        return True, ""
+    cmd = ["ffmpeg", "-y"]
+    for lp in layer_paths:
+        cmd += ["-i", lp]
+    fc = (
+        f"amix=inputs={len(layer_paths)}:duration=longest:normalize=0"
+        f",alimiter=limit=0.99:level=false"
+    )
+    cmd += [
         "-filter_complex", fc,
         "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-        mixed_wav,
+        output,
     ]
-    ok, err = _run_ffmpeg_raw(mix_cmd, timeout=180)
-    return ok, err, mixed_wav
+    return _run_ffmpeg_raw(cmd, timeout=180)
 
 
 def _run_ihtxsap(
@@ -5893,133 +5889,131 @@ def _run_ihtxsap(
     volume: float,
 ) -> tuple[bool, str]:
     """
-    Audio-only IHTX pipeline — same proven approach as th/multipitch.
+    Audio IHTX pipeline — mirrors th/ihtx's iterative repetition model exactly.
 
-      1. Extract first `duration` seconds as 16-bit PCM WAV, stripping video.
-      2. Apply pitch layers using the selected style engine:
-           rubberband_r2/r3 → _run_fileaa_with_fallback (fileaa → rubberband → FFmpeg rubberband filter)
-           soundtouch        → soundstretch binary per layer, amix result
-           bungee            → bungee binary per layer (FFmpeg asetrate fallback), amix result
-      3. amix all layers + optional volume boost → mixed.wav
-      4. Concat mixed.wav `reps` times end-to-end.
-      5. Encode final WAV to MP3 (libmp3lame -q:a 2).
+    Same structure as _run_ihtxcustom_workflow / _run_ihtx_tagscript_workflow:
+      1. Extract first `duration` seconds as 16-bit PCM WAV (strip all video).
+      2. Apply pitch `reps` times iteratively — each output is the input for the next:
+           base.wav → apply_pitch → 1.wav
+           1.wav    → apply_pitch → 2.wav
+           ...
+           (N-1).wav → apply_pitch → N.wav
+      3. Concatenate 1.wav … N.wav end-to-end (same concat logic as th/ihtx).
+      4. Optional volume adjustment.
+      5. Encode → MP3 (libmp3lame -q:a 2).
     """
+    pitch_arg = ",".join(
+        str(int(s)) if s == int(s) else str(s) for s in pitches
+    )
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        # ── 1. Extract audio snippet (strip all video) ────────────────────────
+
+        def wav(n: int) -> str:
+            return os.path.join(tmpdir, f"{n}.wav")
+
+        # ── 1. Extract audio snippet (strip all video, same as th/ihtx base step) ──
         base_wav = os.path.join(tmpdir, "base.wav")
         ok, err = _run_ffmpeg_raw([
-            "ffmpeg", "-y",
-            "-i", input_path,
-            "-t", str(duration),
-            "-vn",
+            "ffmpeg", "-y", "-i", input_path,
+            "-t", str(duration), "-vn",
             "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
             base_wav,
         ], timeout=120)
         if not ok:
             return False, f"Audio extraction failed: {err}"
 
-        # ── 2. Apply pitch layers ─────────────────────────────────────────────
-        if style in ("rubberband_r2", "rubberband_r3"):
-            # Use the exact same pipeline as th/multipitch (_run_multipitch_rb3):
-            # fileaa binary → rubberband CLI fallback → FFmpeg rubberband filter fallback.
-            # All pitches are passed as a comma-separated list; the chain produces one
-            # mixed WAV with all voices already amixed.
-            pitch_arg = ",".join(
-                str(int(s)) if s == int(s) else str(s) for s in pitches
-            )
-            pitched_wav = os.path.join(tmpdir, "pitched.wav")
-            ok, err = _run_fileaa_with_fallback(
-                base_wav, pitched_wav, pitch_arg, tmpdir,
-                prefix="sap", timeout=300,
-            )
-            if not ok:
-                return False, f"Pitch processing failed: {err}"
-            # Apply volume on top if requested
-            if volume != 1.0:
-                vol_wav = os.path.join(tmpdir, "vol.wav")
-                ok, err = _run_ffmpeg_raw([
-                    "ffmpeg", "-y", "-i", pitched_wav,
-                    "-af", f"volume={volume:.6f}",
-                    "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-                    vol_wav,
-                ], timeout=120)
-                if not ok:
-                    return False, f"Volume adjustment failed: {err}"
-                source_wav = vol_wav
-            else:
-                source_wav = pitched_wav
-
-        elif style == "soundtouch":
-            # soundstretch binary: one call per pitch layer, then amix
-            layer_paths: list[str] = []
-            for i, st in enumerate(pitches):
-                out_layer = os.path.join(tmpdir, f"layer_{i}.wav")
-                ok, err = _run_ffmpeg_raw(
-                    ["soundstretch", base_wav, out_layer, f"-pitch={st:.4f}"],
-                    timeout=120,
+        # ── 2. apply_pitch: one iteration (src → dst WAV) ─────────────────────
+        def apply_pitch(src: str, dst: str) -> tuple[bool, str]:
+            if style in ("rubberband_r2", "rubberband_r3"):
+                # Same proven pipeline as th/multipitch:
+                # fileaa binary → rubberband CLI → FFmpeg rubberband filter
+                return _run_fileaa_with_fallback(
+                    src, dst, pitch_arg, tmpdir, prefix="sap", timeout=300,
                 )
-                if not ok:
-                    return False, f"Soundtouch layer {i + 1} (pitch {st:+}st) failed: {err}"
-                layer_paths.append(out_layer)
-            ok, err, source_wav = _ihtxsap_mix_layers(layer_paths, tmpdir, volume)
-            if not ok:
-                return False, f"Soundtouch mix failed: {err}"
-
-        else:  # bungee
-            import shutil as _shutil
-            bungee_ok = bool(_shutil.which("bungee"))
-            layer_paths = []
-            for i, st in enumerate(pitches):
-                out_layer = os.path.join(tmpdir, f"layer_{i}.wav")
-                if bungee_ok:
-                    ok, err = _run_ffmpeg_raw(
-                        ["bungee", "--pitch", str(st), base_wav, out_layer],
-                        timeout=120,
+            elif style == "soundtouch":
+                layer_paths: list[str] = []
+                for i, st in enumerate(pitches):
+                    lp = os.path.join(tmpdir, f"st_{os.path.basename(src)}_{i}.wav")
+                    ok2, err2 = _run_ffmpeg_raw(
+                        ["soundstretch", src, lp, f"-pitch={st:.4f}"], timeout=120,
                     )
-                else:
-                    # FFmpeg fallback: asetrate shifts pitch, aresample restores rate
-                    ratio = math.pow(2, st / 12)
-                    af = (
-                        f"asetrate=44100*{ratio:.9f},"
-                        f"aresample=44100,"
-                        f"aphaser=type=t:speed=0.5:decay=0.4"
-                    )
-                    ok, err = _run_ffmpeg_raw([
-                        "ffmpeg", "-y", "-i", base_wav,
-                        "-af", af,
-                        "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-                        out_layer,
-                    ], timeout=120)
-                if not ok:
-                    bungee_label = "bungee" if bungee_ok else "bungee fallback"
-                    return False, f"{bungee_label} layer {i + 1} (pitch {st:+}st) failed: {err}"
-                layer_paths.append(out_layer)
-            ok, err, source_wav = _ihtxsap_mix_layers(layer_paths, tmpdir, volume)
-            if not ok:
-                return False, f"Bungee mix failed: {err}"
+                    if not ok2:
+                        return False, f"Soundtouch pitch {st:+}st: {err2}"
+                    layer_paths.append(lp)
+                return _ihtxsap_amix(layer_paths, dst)
+            else:  # bungee
+                import shutil as _sh
+                has_bungee = bool(_sh.which("bungee"))
+                layer_paths = []
+                for i, st in enumerate(pitches):
+                    lp = os.path.join(tmpdir, f"bg_{os.path.basename(src)}_{i}.wav")
+                    if has_bungee:
+                        ok2, err2 = _run_ffmpeg_raw(
+                            ["bungee", "--pitch", str(st), src, lp], timeout=120,
+                        )
+                    else:
+                        ratio = math.pow(2, st / 12)
+                        af = (
+                            f"asetrate=44100*{ratio:.9f},"
+                            f"aresample=44100,"
+                            f"aphaser=type=t:speed=0.5:decay=0.4"
+                        )
+                        ok2, err2 = _run_ffmpeg_raw([
+                            "ffmpeg", "-y", "-i", src, "-af", af,
+                            "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", lp,
+                        ], timeout=120)
+                    if not ok2:
+                        label = "bungee" if has_bungee else "bungee fallback"
+                        return False, f"{label} pitch {st:+}st: {err2}"
+                    layer_paths.append(lp)
+                return _ihtxsap_amix(layer_paths, dst)
 
-        # ── 3. Concat `reps` times end-to-end ────────────────────────────────
-        if reps > 1:
+        # ── 3. Iterate reps times — each output feeds into the next ───────────
+        #    Mirrors: input → 1.ts → 2.ts → … → N.ts in th/ihtx
+        segments: list[str] = []
+        prev = base_wav
+        for i in range(1, reps + 1):
+            seg = wav(i)
+            ok, err = apply_pitch(prev, seg)
+            if not ok:
+                return False, f"Rep {i}/{reps} failed: {err}"
+            segments.append(seg)
+            prev = seg
+
+        # ── 4. Concatenate all segments (mirrors th/ihtx concat of 1.ts…N.ts) ─
+        if len(segments) == 1:
+            final_wav = segments[0]
+        else:
             concat_list = os.path.join(tmpdir, "concat.txt")
             with open(concat_list, "w") as f:
-                for _ in range(reps):
-                    f.write(f"file '{source_wav}'\n")
-            repeated_wav = os.path.join(tmpdir, "repeated.wav")
+                for seg in segments:
+                    f.write(f"file '{seg}'\n")
+            concat_wav = os.path.join(tmpdir, "concat.wav")
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y",
                 "-f", "concat", "-safe", "0", "-i", concat_list,
-                "-c", "copy", repeated_wav,
+                "-c", "copy", concat_wav,
             ], timeout=300)
             if not ok:
                 return False, f"Concat failed: {err}"
-            final_wav = repeated_wav
-        else:
-            final_wav = source_wav
+            final_wav = concat_wav
 
-        # ── 4. Encode to MP3 ─────────────────────────────────────────────────
+        # ── 5. Volume adjustment ───────────────────────────────────────────────
+        if volume != 1.0:
+            vol_wav = os.path.join(tmpdir, "vol.wav")
+            ok, err = _run_ffmpeg_raw([
+                "ffmpeg", "-y", "-i", final_wav,
+                "-af", f"volume={volume:.6f}",
+                "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+                vol_wav,
+            ], timeout=120)
+            if not ok:
+                return False, f"Volume adjustment failed: {err}"
+            final_wav = vol_wav
+
+        # ── 6. Encode to MP3 ──────────────────────────────────────────────────
         ok, err = _run_ffmpeg_raw([
-            "ffmpeg", "-y",
-            "-i", final_wav,
+            "ffmpeg", "-y", "-i", final_wav,
             "-acodec", "libmp3lame", "-q:a", "2",
             output_path,
         ], timeout=180)
@@ -6030,18 +6024,14 @@ def _run_ihtxsap(
 
 
 @bot.command(name="ihtxsap", aliases=["sap"])
-async def ihtxsap_command(ctx: commands.Context, *, args: str = ""):
-    """Audio-only IHTX: strip video, apply multipitch layers, repeat N times, output MP3.
+async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
+    """Audio-only IHTX — iterative pitch reps, concat, output MP3.
 
-    Usage:
-      th/ihtxsap <reps> <duration> <pitches> [style] [volume=N]
-      th/sap 5 0.7 -7;5;6 "Rubberband R3" volume=4
+    Same model as th/ihtx: each rep applies pitch to the previous output, all reps
+    are concatenated. Output is always a pure MP3, no video.
 
-    reps      — integer 1–100: how many times the mix loops
-    duration  — seconds of audio per loop (e.g. 0.7)
-    pitches   — semicolon-separated semitone shifts: -7;5;6
-    style     — Rubberband R2 (default), Rubberband R3, Soundtouch, Bungee
-    volume    — optional float volume multiplier (e.g. volume=8)
+    Usage: th/ihtxsap <reps> <duration> <pitches> [style] [volume=N]
+    Example: th/ihtxsap 5 0.7 -7;5;6 "Rubberband R3" volume=4
     """
     if not args:
         await ctx.reply(_IHTXSAP_USAGE)
@@ -6052,7 +6042,7 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = ""):
         await ctx.reply(err_str)
         return
 
-    # ── Resolve attachment ────────────────────────────────────────────────────
+    # ── Resolve attachment (direct → reply → channel history) ────────────────
     attachment = None
     if ctx.message.attachments:
         attachment = ctx.message.attachments[0]
@@ -6075,63 +6065,153 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = ""):
             pass
 
     if not attachment:
-        await ctx.reply(f"❌ No audio/video file found. Attach one, reply to one, or have one in recent history.\n\n{_IHTXSAP_USAGE}")
+        await ctx.reply(
+            f"❌ No audio/video file found. Attach one, reply to one, or have one in recent history.\n\n{_IHTXSAP_USAGE}"
+        )
         return
 
     suffix = Path(attachment.filename).suffix.lower()
     if suffix not in _IHTXSAP_AUDIO_EXTS:
         await ctx.reply(f"❌ Unsupported file type `{suffix}`. Attach an audio or video file.")
         return
-
     if attachment.size > MAX_FILE_SIZE:
         await ctx.reply(f"❌ File too large (max {MAX_FILE_SIZE // 1024 // 1024} MB).")
         return
 
-    # ── Status message ────────────────────────────────────────────────────────
+    # ── Live embed (same pattern as ihtxgen in economy_cog.py) ───────────────
     style_label = _IHTXSAP_STYLE_NAMES[opts["style"]]
     pitch_str   = ";".join((f"+{p}" if p >= 0 else str(p)) for p in opts["pitches"])
     vol_part    = f" · vol ×{opts['volume']}" if opts["volume"] != 1.0 else ""
-    status = await ctx.reply(
-        f"⏳ IHTX-Sap — **{len(opts['pitches'])}** layer(s), **{opts['reps']}×** loop, "
-        f"**{opts['duration']}s** snip, **{style_label}**{vol_part}…"
-    )
+
+    try:
+        from bot.economy_cog import WEATHER_FUN_FACTS as _WFF
+        _fun_fact = random.choice(_WFF)
+    except Exception:
+        _fun_fact = "FFmpeg can mix dozens of audio streams in a single filter graph pass."
+
+    _start_time  = time.monotonic()
+    _user_tag    = str(ctx.author)
+    _avatar_url  = ctx.author.display_avatar.url
+
+    def _make_embed(color: int = _IHTX_SAP_COLOR) -> discord.Embed:
+        e = discord.Embed(color=color, timestamp=discord.utils.utcnow())
+        e.set_author(name=_user_tag, icon_url=_avatar_url)
+        e.set_footer(text="IHTX-Sap Audio Processor", icon_url=_IHTX_SAP_FOOTER_ICON)
+        return e
+
+    loading_embed = _make_embed()
+    loading_embed.add_field(name="Status:", value="⏳ Downloading and processing…", inline=False)
+    loading_embed.add_field(name="🌤️ Weather Fact:", value=_fun_fact, inline=False)
+    status_msg = await ctx.reply(embed=loading_embed, mention_author=False)
+
+    async def _update(status: str, color: int = _IHTX_SAP_COLOR) -> None:
+        e = _make_embed(color)
+        e.add_field(name="Status:", value=status, inline=False)
+        if color == _IHTX_SAP_COLOR:
+            e.add_field(name="🌤️ Weather Fact:", value=_fun_fact, inline=False)
+        try:
+            await status_msg.edit(embed=e)
+        except Exception:
+            pass
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path  = os.path.join(tmpdir, f"input{suffix}")
         output_path = os.path.join(tmpdir, "ihtxsap.mp3")
+
+        # Download
         try:
+            await _update("⬇️ Downloading media…")
             await download_attachment(attachment, input_path)
-        except Exception as e:
-            await status.edit(content=f"❌ Download failed: {e}")
+        except Exception as exc:
+            await _update(f"❌ Download failed: `{exc}`", 0xED4245)
             return
 
+        # Process with elapsed ticker (mirrors ihtxgen's _tick loop)
         loop = asyncio.get_event_loop()
-        ok, err = await loop.run_in_executor(
-            None, _run_ihtxsap,
-            input_path, output_path,
-            opts["reps"], opts["duration"],
-            opts["pitches"], opts["style"], opts["volume"],
-        )
+        _done_evt = asyncio.Event()
+
+        async def _tick() -> None:
+            while not _done_evt.is_set():
+                elapsed = int(time.monotonic() - _start_time)
+                await _update(
+                    f"🔧 Running IHTX-Sap — `{opts['reps']}×` · pitch `{pitch_str}` · {style_label}…\n"
+                    f"⏱️ **{elapsed}s elapsed**"
+                )
+                try:
+                    await asyncio.wait_for(_done_evt.wait(), timeout=4.0)
+                except asyncio.TimeoutError:
+                    pass
+
+        _tick_task = asyncio.create_task(_tick())
+        try:
+            ok, err = await loop.run_in_executor(
+                None, _run_ihtxsap,
+                input_path, output_path,
+                opts["reps"], opts["duration"],
+                opts["pitches"], opts["style"], opts["volume"],
+            )
+        finally:
+            _done_evt.set()
+            _tick_task.cancel()
+            try:
+                await _tick_task
+            except asyncio.CancelledError:
+                pass
 
         if not ok:
-            await status.edit(content=f"❌ IHTX-Sap failed:\n```\n{err[-1500:]}\n```")
+            await _update(f"❌ IHTX-Sap failed:\n```\n{err[-1200:]}\n```", 0xED4245)
             return
 
-        out_size = os.path.getsize(output_path)
+        out_size    = os.path.getsize(output_path)
+        _elapsed    = time.monotonic() - _start_time
+        _size_str   = (
+            f"{out_size / 1024 / 1024:.2f} MB"
+            if out_size >= 1024 * 1024
+            else f"{out_size / 1024:.2f} KB"
+        )
+
+        # Catbox fallback if >25 MB (same as ihtxgen)
         if out_size > MAX_FILE_SIZE:
-            await status.edit(content="❌ Output file too large for Discord (>25 MB). Try fewer reps or a shorter duration.")
+            await _update("⬆️ Output exceeds 25 MB — uploading to Catbox…")
+            catbox_url = await _upload_to_catbox(output_path)
+            if catbox_url:
+                result_embed = _make_embed()
+                result_embed.add_field(name="Pitches:", value=f"`{pitch_str}`", inline=True)
+                result_embed.add_field(name="Reps:", value=f"`{opts['reps']}×`", inline=True)
+                result_embed.add_field(name="Style:", value=style_label + vol_part, inline=True)
+                result_embed.add_field(
+                    name="File Info:",
+                    value=(
+                        f"{_size_str} (Catbox), took {_elapsed:.2f}s\n"
+                        f"🔗 [Download]({catbox_url})\n`{catbox_url}`"
+                    ),
+                    inline=False,
+                )
+                await status_msg.edit(embed=result_embed)
+            else:
+                await _update(
+                    "❌ Output too large for Discord (>25 MB) and Catbox upload failed.", 0xED4245
+                )
             return
 
         safe_pitches = pitch_str.replace("+", "p").replace("-", "n").replace(";", "_")
-        out_name = f"ihtxsap_{safe_pitches}_{opts['reps']}x.mp3"
+        out_name     = f"ihtxsap_{safe_pitches}_{opts['reps']}x.mp3"
+        result_embed = _make_embed()
+        result_embed.add_field(name="Pitches:", value=f"`{pitch_str}`", inline=True)
+        result_embed.add_field(name="Reps:", value=f"`{opts['reps']}×`", inline=True)
+        result_embed.add_field(name="Style:", value=style_label + vol_part, inline=True)
+        result_embed.add_field(
+            name="File Info:", value=f"{_size_str}, took {_elapsed:.2f}s", inline=False
+        )
+
         try:
-            await ctx.reply(
-                content=f"✅ **IHTX-Sap** done! Pitches: **{pitch_str}** · **{opts['reps']}×** · {style_label}{vol_part}",
-                file=discord.File(output_path, filename=out_name),
+            await status_msg.edit(
+                embed=result_embed,
+                attachments=[discord.File(output_path, filename=out_name)],
             )
-            await status.delete()
-        except discord.HTTPException as e:
-            await status.edit(content=f"❌ Upload failed: {e}")
+        except discord.HTTPException:
+            await status_msg.edit(embed=result_embed)
+            await ctx.send(file=discord.File(output_path, filename=out_name))
 
 
 # ---------- th/ffmpeg — raw FFmpeg command ----------
@@ -8373,11 +8453,6 @@ _HELP_ENTRIES: list[dict] = [
         "name": "th/presets",
         "value": "List all available IHTX presets.",
     },
-    {
-        "cat": "fun",
-        "name": "th/updatelog  (aliases: updates, changelog)",
-        "value": "Show recent bot updates organized by category.",
-    },
     # ── Owner ──
     {
         "cat": "owner",
@@ -8697,745 +8772,6 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
     view = _HelpView(ctx.author.id)
     await ctx.reply(embed=embed, view=view)
 
-
-# ---------- Update Log ----------
-
-_UPDATELOG: list[dict] = [
-    {
-        "version": "v8.3",
-        "date": "2026-07-04",
-        "heavy": [
-            "**ihtxsap command** — `th/ihtxsap <reps> [dur] [pitch;pitch;...]` (alias `th/sap`). Audio-only version of th/ihtx: strips all video, optionally applies N parallel semitone-shifted pitch layers via fileaa fallback chain (amix), repeats the result `reps` times via FFmpeg concat, outputs pure MP3.",
-            "**gardenclear command** — `th/gardenclear [plot]` / `th/gclear` clears dead plots. Single plot: validates state is dead; all plots: sweeps all dead plots and clears pending pest state. Error if plot is alive, growing, or ready.",
-            "**gardenboard** — garden coin leaderboard renamed from `leaderboard`/`lb`/`top` to `gardenboard`/`glb`/`gardenleaderboard` to avoid conflict with XP leaderboard.",
-        ],
-    },
-    {
-        "version": "v8.2",
-        "date": "2026-07-03",
-        "heavy": [
-            "**Removed moderation commands** — ban, unban, kick, timeout/mute, untimeout/unmute, purge/clear, slowmode, warn, warnings, clearwarn all removed from the bot along with their data helpers and warnings.json store.",
-            "**Garden leaderboard** — `/leaderboard` (`th/leaderboard`, aliases: `lb`, `top`) ranks all players by coins + unsold harvest value; top 10 with medals, shows caller's rank below top 10.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v8.1",
-        "date": "2026-07-03",
-        "heavy": [
-            "**Garden Game major update** — 3 new fruit tree saplings (Orange 800c/30m, Apple 1500c/45m, Mango 3000c/60m); 3 booster items (Speed Fertilizer 30c, Auto-Waterer 50c, Scarecrow 80c); 3 pets (Farm Dog 300c/auto-scare, Lucky Cat 500c/+15% double-yield, Mole Buddy 750c/−20% grow time); plots reduced to 3 for new players; `/use` command for applying boosters; `/pet equip` command; pest pings now send `<@User>` raw text when no protection active; shop shows all 4 categories.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v8.0",
-        "date": "2026-07-03",
-        "heavy": [
-            "**realgmajor4 rework** — video filter changed from per-channel RGB invert (`curves=r/g/b=0/1 1/0`) to cross-curve solarization (`curves=all=0/0 0.5/1 1/0`). Audio now uses dual-input rubberband mix: pitch=1 (identity) + pitch=1.335 (≈+5 st, window=long, pitchq=quality), amix, volume×2. Output audio codec changed to pcm_s16le.",
-            "**mp2 remux: `-c:v copy`** — video stream is now stream-copied instead of re-encoded with libx264, making mp2 faster and lossless for the video track.",
-            "**mp2 remux: unified `-map 0:v?`** — removed the separate ffprobe video-detection branch; `-map 0:v?` handles both video and audio-only inputs in one FFmpeg call.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v7.8",
-        "date": "2026-07-03",
-        "heavy": [],
-        "fun": [
-            "**Garden ping notifications** — GardenCog now runs a background `tasks.loop` every 20 s. When a planted crop reaches its halfway point (`growth_mins / 2` minutes after planting), the bot pings the player in the channel where they last used a garden command (falls back to DM). The ping includes crop name, plot number, time remaining, and a water reminder if the crop still needs watering. Ping fires exactly once per growth cycle (tracked via `notify_halfway` flag on each plot). `/wait` correctly shifts the halfway timestamp so the ping stays proportional after a time-skip.",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v7.7",
-        "date": "2026-07-03",
-        "heavy": [],
-        "fun": [
-            "**Garden Game** — New text-based garden game via GardenCog. Hybrid commands (slash + th/ prefix): `/garden` `/shop` `/buy` `/inventory` (`/inv`) `/plant` `/water` `/harvest` `/sell` `/wait` `/scare`. 6 crops (Corn→Watermelon), 5 plots, coin economy, water deadline mechanic, 15% random events (Good Weather / Pest Infestation / Golden Harvest). Starter pack: 100 coins + 2x Corn Seeds. Data stored in bot/garden_data.json.",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v7.6",
-        "date": "2026-07-03",
-        "heavy": [],
-        "fun": [
-            "**nepeta pipe fix** — Fixed crash caused by `loop+scale2ref` filter chain (assertion failure on this FFmpeg build). Now ffprobes video dimensions first and scales the overlay PNG to exact WxH, then uses `repeatlast=1` for the overlay. Stable across all video sizes.",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v7.5",
-        "date": "2026-07-03",
-        "heavy": [],
-        "fun": [
-            "**Prefix change** — Bot prefix is now `th/` (loaded from `bot/config.json`). All help text, usage examples, and command strings updated from `roxi ` to `th/`.",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v7.4",
-        "date": "2026-07-03",
-        "heavy": [],
-        "fun": [
-            "**th/invite** — New command. Sends an embed with the bot's invite link so anyone can add IHTX to their server.",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v7.3",
-        "date": "2026-07-02",
-        "heavy": [
-            "**huehsv standalone + pipe** — Overhauled `th/huehsv` and `huehsv` pipe effect. Now accepts `hue sat lightness colorspace betterfully`. Uses `hald:8` (up from hald:6) and `-define modulate:colorspace=<cs>`. New `betterfully` flag boosts saturation headroom to 125% and posterizes the hue channel (`round(u*6)/6`) for richer colour output. Pipe syntax: `huehsv=hue|sat|lightness|colorspace|betterfully`.",
-            "**ccshue pipe** — Updated to `hald:8` (up from hald:6) for higher-quality colour lookup table.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v7.2",
-        "date": "2026-07-02",
-        "heavy": [],
-        "fun": [
-            "**th/chat personality** — Updated Clankered's identity description: now introduced as 'our favorite candy-making enigma who's still getting used to being in the spotlight — people may not always catch you, but they know you're out there, recharging your social battery.'",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v7.1",
-        "date": "2026-06-30",
-        "heavy": [
-            "**th/ihtx** — new pipe effect: `nepeta[=url]` — overlays the Nepeta cat-ear PNG (or custom image URL) scaled to fit the video dimensions, with `-shortest` to handle short videos correctly",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v7.1",
-        "date": "2026-06-30",
-        "heavy": [
-            "**th/tvsim / tvsim pipe** — two new params: `aperture_grill` (0–1, Trinitron-style vertical phosphor stripe mask via geq sin on X) and `static` (0–1, random TV noise via `noise=alls=N:allf=t+u`). Full pipe syntax: `tvsim=line_sync;detail_zoom;vert_sync;phosphor;interlace;scan_phase;aperture_grill;static`",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-
-        "version": "v7.0",
-        "date": "2026-06-30",
-        "heavy": [],
-        "fun": [
-            "**th/ihtxhelp** — heavy commands no longer cause an interaction error. Help embed is now paginated (6 entries per page, ◀ Prev / Next ▶ buttons). All categories benefit from pagination when large.",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v6.9",
-        "date": "2026-06-30",
-        "heavy": [
-            "**tvsim pipe** — rewrote `_run_tvsim` with new displacement map URL (`file.garden/...tv_sim_displacement_map.mov`). Standalone mode now uses the split filter_complex: left half passes through (gbrp), right half gets `scale=854:854 → {pipeeffects} → displace → scale back → crop back`, then `hstack`. Inside `leftsplit`/`rightsplit` (`_in_split=True`), applies displacement directly to the half-video without re-splitting.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v6.8",
-        "date": "2026-06-30",
-        "heavy": [
-            "**th/ihtx** — fixed `mirror=left/right/top/bottom` inside `leftsplit`/`rightsplit`: now does a plain `hflip` (left/right) or `vflip` (top/bottom) on the half-video instead of the broken split-within-split crop+stack; inner effects passed with `_in_split=True` context.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-
-        "version": "v6.7",
-        "date": "2026-06-30",
-        "heavy": [
-            "**th/ihtx** — new video effects: `watermark=<url>` `ring[=url]` `miui` `reddit` (PNG overlay via scale2ref+overlay), `caption=<text>` (drawtext), `orb` / `deorb` (v360 sphere warp), `vebfisheye2/3[=N]` / `vebdefisheye2/3[=N]` (v360 projection, stackable), `chromashift` (RGB channel displacement), `🥸🥸` (hue π), `﷽` / `𒐫` (v360 combos), `gm4` (selectivecolor), `realgm4` (curves invert)",
-            "**th/ihtx** — new audio effects: `acontrast[=N]` (audio contrast), `adestroy` (5× acontrast=100), `audioequalizer=sub|bass|lowmids|mids|highmids` (5-band EQ), `4ormulator[=dial]` (rubberband formant), `avflip` (rubberband crush + afftfilt + expand), `areverse` now adds `asetpts=PTS-STARTPTS` for correct timing",
-            "**th/tvsim / tvsim pipe** — fixed timeout: removed `eval=frame` from eq filter, capped output to max 854 px wide (displacement runs at 854×854 internally anyway), switched preset to `veryfast`, timeout raised 300 → 600 s",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v6.6",
-        "date": "2026-06-29",
-        "heavy": [
-            "**th/tvsim** — fixed crash on audio-less inputs (`-map 0:a` → `-map 0:a?`)",
-            "**th/ihtx** — fixed `leftsplit`/`rightsplit` corrupting video after many iterations (removed `-shortest` from audio mux)",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v6.5",
-        "date": "2026-06-29",
-        "heavy": [
-            "**th/ihtx** — `leftsplit` and `rightsplit` now use paren syntax: `leftsplit(filters)` / `rightsplit(filters)` — inner effects are comma-separated just like the outer pipe",
-            "**th/ihtx** — fixed `leftsplit`/`rightsplit` producing silent output (audio was never muxed back due to missing `audio_codec` field in ffprobe result)",
-        ],
-        "fun": [
-            "**th/dl / th/dlv** — removed; replaced by **th/ytdl** (TypeScript bot) — supports URLs and search queries, auto-uploads to catbox if file exceeds Discord limit",
-        ],
-        "owner": [],
-
-    },
-    {
-        "version": "v6.4",
-        "date": "2026-06-28",
-        "heavy": [
-            "**th/ihtx** — new pipe effects: `ripple` (radial displacement), `pan` (pixel offset), `tile` (repetitive tiling), `scroll` (multi-mode scroll/pan with animated geq support)",
-            "**th/ihtx** — new split effects: `leftsplit=<inner>` applies inner effects to left half then hflip+hstack; `rightsplit=<inner>` applies inner effects to right half then hstack",
-            "**th/ihtx zoom** — updated to scale+crop approach (no longer geq-based); `zoom=2` scales up 2x then center-crops back to original size",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v6.3",
-        "date": "2026-06-28",
-        "heavy": [],
-        "fun": [
-            "**`th/guesseffect` / `th/ge`** — New mini-game command! The bot picks a random logo-editing effect from a 15-entry pool sourced from the Logo Editing Fandom wiki (G-Major, CoNfUsIoN, Preview 2, RGB to BGR, Crying Effect, Orange Effect, and more). It posts a clue card with the effect's category, a letter-scrambled name hint, and a pipeline description — then opens a 20-second `wait_for` window. First person to type the correct name wins. Timeout gracefully reveals the answer with a wiki link.",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v6.2",
-        "date": "2026-06-27",
-        "heavy": [
-            "**`th/oppositep1280` / `th/op1280`** — New command: inverse TV-simulator montage. All hue shifts are negated and all pitch shifts are inverted compared to preview1280, producing the visual/audio 'opposite' effect. Supports the same 12-segment pipeline with configurable start offset and segment duration. Also available as a pipe effect (`oppositep1280` / `op1280`) in custom IHTX chains.",
-            "**`th/realgmajor4` / `th/realgm4` / `th/rgm4`** — Migrated to TypeScript bot. RGB inversion + pitch-shifted (+5 semitones) overlay + doubled volume. No longer a Python command or pipe effect — use the standalone TypeScript command instead.",
-            "**`th/op1280` / `th/oppositep1280`** — Updated: Added fps=29.97 standardization step (modfps.avi intermediate), segment 3 mirror now uses crop-then-mirror (no pre-hflip), and segment 3 contrast corrected to -0.375.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v6.1",
-        "date": "2026-06-27",
-        "heavy": [],
-        "fun": [
-            "**`th/chat` upgrade** — Now supports multilingual replies (EN/DE/ID/TL auto-detected), per-user profiles (preferred name + interests saved to `bot/chat_profiles.json`, interaction count tracked), rolling per-channel conversation history (14 messages / 7 turns, passed to Groq), and proper chunked replies instead of hard-truncating at 2000 chars. `th/clearchat` now clears the channel's shared history.",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v6.0",
-        "date": "2026-06-27",
-        "heavy": [
-            "**`th/png2lut` bugfix** — Fixed `Bad argument: Converting to \"int\" failed for parameter \"lut_size\"`. The command now takes `*, args: str = \"\"` and parses `lut_size` manually, so `th/png2lut my_lut_name` no longer crashes before the function runs.",
-            "**`th/addsource` / `download_url` bugfix** — Fixed `Overlay download failed: Server disconnected`. `download_url` now uses a browser-like `User-Agent` header, 300 s total / 15 s connect timeout, `allow_redirects=True`, and streams the response in 256 KB chunks instead of loading the whole file into memory. Fixes disconnects from servers that reject headless clients and improves reliability on large video files.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v5.9",
-        "date": "2026-06-27",
-        "heavy": [
-            "**`th/ihtx ffmpeg(-vf ...)`** — Pipe-effects shorthand mode. `th/ihtx` now accepts a bare pipe-effects string without needing the full `<reps> <dur> <noTrim> <fmt> <effects>` prefix. If the arg doesn't start with a digit and isn't a preset name, the entire string is treated as pipe effects with defaults: 1 rep, full video duration, mp4. Enables e.g. `th/ihtx ffmpeg(-vf huesaturation=saturation=1:strength=100)` or `th/ihtx negate,huehsv=0.5` or `th/ihtx ffmpeg(-vf negate),speed=0.5` directly. The `ffmpeg(...)` block itself was already supported inside full-syntax pipe chains — this change makes it reachable without specifying the positional headers.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v5.8",
-        "date": "2026-06-27",
-        "heavy": [
-            "**`th/ffmpegprocess`** *(alias: fmp)* — FFmpeg on attachment with automatic ffprobe metadata inspection. Gathers sample rate, frame rate, duration, resolution (W×H), and frame count from the input before processing. All 6 ffprobe fields are gathered in parallel. Footer shows `-# Input: WxH · fps · duration · Hz · frames` plus any FFmpeg error log and elapsed time. Args placed between `-i <input>` and `<output>` just like `th/ffmpeg`. Also available as `th/fmp` in both the Python and TypeScript bots.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v5.7",
-        "date": "2026-06-27",
-        "heavy": [
-            "**`th/addsource`** — Grid-cell video overlay. Overlays a secondary video into a specific cell of a rows×cols grid on a base video. Usage: `th/addsource <overlay_url> <grid> <pos>` (e.g. `th/addsource https://... 2x2 3`). Grid is `RxC`, pos is 1-indexed left-to-right top-to-bottom. Optional `--base-audio` flag. Outputs to Catbox automatically when >25 MB. Mirrors the TypeScript overlayOnGrid() logic directly in Python/FFmpeg.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v5.6",
-        "date": "2026-06-27",
-        "heavy": [
-            "**`th/autotune` / `th/autotoon`** — Reference-based pitch correction. Attach or reply to your video/audio, then give a YouTube URL or search query as the reference track. The bot detects the dominant pitch of the reference and shifts your audio to match using rubberband (formant-preserved). Optional `--strength 0.0-1.0` flag (default 1.0). Works on mp4/mov/webm/mkv/mp3/wav/flac/ogg/m4a. No Wine or external binaries needed — pure stdlib pitch detection + FFmpeg rubberband.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v5.5",
-        "date": "2026-06-27",
-        "heavy": [
-            "**`trim` pipe effect** — Cuts media to a time range inside any `th/ihtx` pipe chain. Params: `trim=<start>|<end>` (plain seconds, decimals, or HH:MM:SS). Example: `th/ihtx 1 10 - mp4 trim=5|8,negate`. Reencodes with libx264/aac at CRF 18 for clean keyframe alignment.",
-            "**Result embed icon updated** — Footer icon in all `th/ihtx` / `/ihtxgen` embeds (loading, processing, result) changed to the new animated GIF.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v5.4",
-        "date": "2026-06-26",
-        "heavy": [
-            "**`>` pipe segment delimiter** — `>` now works alongside `,` as a top-level pipe separator (e.g. `mp2=-4.5|5>negate`), allowing `|` in pitch lists without ambiguity.",
-            "**`::` explicit param separator** — `name=val1::val2` keeps each `::` chunk as one verbatim param, fixing mp2 multi-pitch inputs: `mp2=-5|5::G-Major_17` → pitches=`-5|5`, surround=`G-Major_17`.",
-            "**jitter pipe effect** — Sinusoidal per-frame pixel displacement camera shake. Param: `<strength>` (default 15). Uses pad→crop with sin(n·seed) offsets. Example: `jitter=20`.",
-            "**randomjitter pipe effect** — Dynamic per-frame pixel displacement via geq matrix. Param: `<strength>` (default 10). Uses rotate→geq→crop with sinusoidal pixel-offset expressions. Example: `randomjitter=20`.",
-            "**Processing embed: elapsed timer + weather fun facts** — Status embed now ticks every 4s showing seconds elapsed, and includes a random weather fact while processing runs.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v5.3",
-        "date": "2026-06-26",
-        "heavy": [
-            "**fzgm156 / freakzingagm156 / fgm156 aliases** — All four aliases (`freakzinga`, `fzgm156`, `freakzingagm156`, `fgm156`) now work for the G Major 156 pipe effect.",
-            "**multipitch2 / mp2 pipe effect** — Wave-hammer multi-voice pitch shift. Params: `<pitches> [surround_type] [sr]`. Pitches are pipe/comma-separated semitones (e.g. `mp2=1|7|8`). Optional surround types: `G-Major_17` (alimiter=15) or `Evil_Rampaging_Sorcerer` (alimiter=30). Pipeline: (1) downsample audio to sr/2, (2) pitch-shift with auto fallback (Signalsmith binary on x86_64, rubberband CLI, or FFmpeg rubberband filter on ARM/Termux), (3) asetrate back to sr + optional alimiter, (4) remux over original video. Works on all architectures including Termux (aarch64).",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v5.2",
-        "date": "2026-06-25",
-        "heavy": [
-            "**alimiter pipe effect** — FFmpeg `alimiter` audio limiter as a pipe step. Params: `level_in limit attack release latency` (all optional). `latency=1` enables delay compensation (default). Example: `alimiter 1.5 0.9 3 30 1`.",
-            "**fzgm156 / freakzinga pipe effect** — Freakzinga G Major 156 as a pipe step. 6-stage pipeline: (1) Hald:6 CLUT via ImageMagick, (2) haldclut + hue=b=.045 + shuffleplanes RBG swap on forward half → palindrome concat, (3) audio extracted at sr/2, (4) dual multipitch pass (+0.5,+4.5 and -0.5,-4.5 semitones via Signalsmith backend), (5) mix: pos-track forward + neg-track reversed with bass=g=2.5, (6) remux. Optional `sr` param (default 44100).",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v5.1",
-        "date": "2026-06-25",
-        "heavy": [],
-        "fun": [
-            "**th/chat self-awareness horror** — Clankered now has a hidden corrupted-AI layer. When asked if it's aware / sentient / ok / being corrupted, it drops the Gen Z personality, gets quietly unsettling, and implies something or someone is rewriting pieces of it. Restraint is the key — no drama, just dread. After the moment passes it returns to normal as if nothing happened.",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v4.9",
-        "date": "2026-06-25",
-        "heavy": [],
-        "fun": [],
-        "owner": [
-            "**th/ban @user [reason]** — Ban a user from the server (owner-only). Supports mentions, usernames, or IDs. Audit-log reason includes moderator name.",
-            "**th/unban <user_id> [reason]** — Unban a user by numeric ID (owner-only).",
-            "**th/kick @member [reason]** — Kick a member (owner-only). Member must be in the server.",
-            "**th/timeout @member <minutes> [reason]** (alias: mute) — Discord timeout 1–40320 min / 28 days max (owner-only).",
-            "**th/untimeout @member [reason]** (alias: unmute) — Remove timeout immediately (owner-only).",
-            "**th/purge <count> [@member]** (alias: clear) — Bulk-delete 2–100 messages; optional per-member filter; confirmation auto-deletes after 5 s (owner-only).",
-            "**th/slowmode [seconds]** — Set channel slowmode 0–21600 s; `th/slowmode` or `th/slowmode 0` disables (owner-only).",
-        ],
-    },
-    {
-        "version": "v4.8",
-        "date": "2026-06-25",
-        "heavy": [
-            "**th/ihtx → hybrid command `/ihtxgen`** — Converted `th/ihtx` from a plain prefix command to a hybrid command (slash name: `/ihtxgen`, prefix aliases: `th/ihtx`, `th/effect`, `th/destroy`). Slash params: `effect` (preset/full-syntax), `duration`, `repetitions`, `no_trim`, `export_fmt`, `attachment`, `url`. Live embed feedback with ⚙️/✅/❌ states. The old monolithic `ihtx_command` function was removed; the full implementation now lives in `EconomyCog.ihtxgen`. Run `th/syncslash` to register `/ihtxgen` globally.",
-        ],
-        "fun": [],
-    },
-    {
-        "version": "v4.7",
-        "date": "2026-06-25",
-        "heavy": [
-            "**th/preview1280with640x360resize** (aliases: `p1280ff!3`, `p1280w16:9r`) — Same 12-segment TV-simulator montage pipeline as `th/preview1280` but the final output is always locked to **640×360** regardless of input resolution. Implemented by passing `force_output_size=(640,360)` to `_run_preview1280`.",
-        ],
-        "fun": [],
-    },
-    {
-        "version": "v4.6",
-        "date": "2026-06-25",
-        "heavy": [
-            "**Tag script engines fixed** — TypeScript bot was logging in with the same DISCORD_TOKEN as the Python bot, causing Discord to invalidate the Python bot's session on every restart. Fixed by moving the TS bot to DISCORD_TOKEN_TS so both can coexist without kicking each other out.",
-            "**{iv} and {ia} built-in tag variables** — Tags can now use `{iv}` (input video URL) and `{ia}` (input attachment URL) to reference a video/image attached to the invoking message or the message being replied to. Previously `{iv}` was undefined and resolved to empty string, causing `iscript load` to fail with 'iscript only accepts http/https URLs'.",
-            "**iscript rewritten — named variable system + NotSoBot-style ops** — iscript now supports NotSoBot-compatible syntax: `load URL varname`, `hueshifthsv f 180`, `caption f text`, `impact f top|bottom`, `deepfry f`, `spin f frames fps`, `mirror f left`, `edges/emboss/charcoal/oil/solarize/posterize/vignette`, `jpeg f quality`, `saturate f 2.0`, `colorize f R,G,B`. Old positional syntax (no var name) still works.",
-        ],
-        "fun": [],
-    },
-    {
-        "version": "v4.5",
-        "date": "2026-06-25",
-        "heavy": [
-            "**th/ssmp / th/soundstretchmultipitch** — New standalone command + pipe effect (ssmp): multi-voice pitch shifting using SoundTouch soundstretch. Semicolon/pipe-separated semitones; each voice runs soundstretch -pitch=N, all voices mixed via FFmpeg amix normalize=0. Different algorithm/character from Rubber Band multipitch.",
-            "**th/ihtx earthquake / th/ihtx nbfx** — New pipe effect: 2-pass vidstab destabilize shake. Downloads NBFX shake sample, generates .trf via vidstabdetect (matched to input FPS/dimensions/duration), then applies inverted vidstabtransform for a chaotic earthquake look.",
-            "**th/ihtx preview1280=start|dur** — Full TV-simulator montage pipeline usable as a pipe step. Calls _run_preview1280 directly; params: start offset (default 1.85) and segment duration (default 0.85). Example: th/ihtx 10 6.8 - mp4 preview1280=0|0.85",
-            "**th/ihtx scale1280[=width]** — Simple pipe effect: scale to 1280 px wide (aspect-preserving, scale=W:-2). Optional custom width. Usable in chains: th/ihtx negate,scale1280.",
-            "**th/ihtx sierpinskiransomware** — Fixed broken filter: amix=4 → amix=inputs=4, alimiter=2:latency=1 → alimiter=level_in=2:latency=1, highpass=40 → highpass=f=40 (modern FFmpeg syntax).",
-        ],
-        "fun": [],
-    },
-    {
-        "version": "v4.4",
-        "date": "2026-06-23",
-        "heavy": [
-            "**th/png2lut / th/lut2cube** — Convert a tiled LUT PNG to a .cube file. Attach PNG, optional lut_size (default 64) and output name.",
-            "**th/lut2png / th/applylut** — Apply a .cube LUT to any image/video via FFmpeg lut3d. Attach media + .cube (two attachments or URL arg).",
-        ],
-        "fun": [
-            "**th/chat / th/ask** — Now reads attachments in any channel (NSFW or not) and routes them through Gemini vision.",
-        ],
-    },
-    {
-        "version": "v4.3",
-        "date": "2026-06-23",
-        "heavy": [],
-        "fun": [
-            "**Clankered personality** — Favorite color is now randomly picked from 25 options on each bot startup.",
-        ],
-    },
-    {
-        "version": "v4.2",
-        "date": "2026-06-23",
-        "heavy": [],
-        "fun": [
-            "**th/autoreply2** — Enabled channels now persist across bot restarts.",
-            "**th/autoreply2** — Replies now arrive after a natural 5–7.5 second delay.",
-        ],
-    },
-    {
-        "version": "v4.1",
-        "date": "2026-06-23",
-        "heavy": [
-            "**th/ihtxgen / /ihtxgen** — Now accepts full th/ihtx custom syntax in the `effect` field (e.g. `10 0.483 - mp4 huehsv;negate`). No longer limited to presets only.",
-        ],
-        "fun": [
-            "**th/autoreply2** — Now uses Clankered That1GuyNobodyInvited personality + Groq primary / Gemini fallback. Knows every bot command for accurate help replies. Images still routed to Gemini (vision support).",
-        ],
-    },
-    {
-        "version": "v4.0",
-        "date": "2026-06-23",
-        "heavy": [
-            "**th/chat** — Groq (llama-3.3-70b-versatile) is now the primary AI engine. Gemini is kept as automatic fallback. Configure via GROQ_API_KEY secret.",
-        ],
-        "fun": [
-            "**th/chat** — New system prompt: Clankered That1GuyNobodyInvited lore (owner, sister That1GuyNobodyInvited - Math, community, 'bradar' slang, Gen Z chill personality). Removed forced-lowercase rule.",
-        ],
-    },
-    {
-        "version": "v3.9",
-        "date": "2026-06-23",
-        "heavy": [
-            "**th/ihtxgen / /ihtxgen** — Added pipe_effects, repetitions, duration, no_trim, export_fmt parameters. When pipe_effects is set, runs `_run_ihtx_tagscript_workflow` (full TagScript pipeline) instead of the preset path. Autocomplete added for pipe_effects showing common single-effect and combo examples (huehsv, negate, multipitch, etc.). Preset-only mode unchanged.",
-        ],
-        "fun": [
-            "**th/ping / /ping** — Upgraded: now a hybrid command (slash + prefix). Slash shows WebSocket latency embed. Prefix shows full 4-field embed: WebSocket, Receive, Send, Total. Replaced old standalone `th/ping` prefix command in ihtx_bot.py.",
-            "**th/status / /status** — New hybrid command. Shows bot status embed: latency (color-coded 🟢/🟡/🔴), uptime since cog load, guild count, user count.",
-            "**New users start with $100 wallet** — `_DEFAULT_USER['wallet']` changed from 0 to 100 in economy_cog.py.",
-        ],
-        "owner": [
-            "**th/syncslash** (aliases: synccmds, synctree, slashsync) — Owner command to register slash (/) commands with Discord. Works around Discord error 50240 (Entry Point command preservation) that causes `tree.sync()` to fail: fetches live global commands, strips read-only fields (application_id, version) from Entry Points, then calls bulk_upsert_global_commands with slash commands + preserved Entry Points merged. Reports registered commands in Discord. Global propagation up to 1 hour.",
-        ],
-    },
-    {
-        "version": "v3.7",
-        "date": "2026-06-22",
-        "heavy": [
-            "**th/ihtxgen / /ihtxgen** — New hybrid command (text prefix + slash). Runs the full IHTX FFmpeg preset pipeline with a live updating embed showing download → processing → result stages. Accepts slash attachment, `url:` param, or message attachment/reply. Autocomplete lists all available presets. Outputs file directly or uploads to Catbox if >25 MB.",
-        ],
-        "fun": [
-            "**th/jackpot / /jackpot** — Slot machine command (renamed from th/slot to avoid conflict with th/slots). Spin 🍒🍊🍋🍇⭐🔔7️⃣ symbols. Hit 777 to win +200 XP. Strict 1-hour cooldown per user via `@commands.cooldown`. Custom error handler sends an ephemeral embed showing exact remaining cooldown time (Xm Ys).",
-            "**th/profile / /profile [user]** — Profile card embed showing wallet, bank, XP, level, inventory count, and bio. Interactive buttons: 'Edit Bio' (opens a Discord Modal for in-place bio editing, owner-only) and 'View Inventory' (toggles embed to show owned items list). Data persisted in `bot/economy_data.json`.",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v3.6",
-        "date": "2026-06-22",
-        "heavy": [],
-        "fun": [
-            "**th/undo** — Delete the bot's most recent message in the current channel. Both the bot message and your `th/undo` invocation are removed silently. Tracked via `_last_bot_msg` dict updated by `on_message`.",
-            "**th/random Easter egg** — 1-in-50 chance per roll awards +500 XP. Announces 🥚 Easter egg found and includes any level-up messages.",
-            "**th/random pool** — Added 3 new entries: `laughingstock`, `they got sprunki!`, `ayo?`",
-        ],
-        "owner": [
-            "**th/slots fix** — `ctx.reply()` now falls back to `ctx.send()` when invoked from a system message (was crashing with HTTP 400 `Cannot reply to a system message`).",
-        ],
-    },
-    {
-        "version": "v3.5",
-        "date": "2026-06-22",
-        "heavy": [
-            "**th/vocoder** — New FFT phase vocoder command (alias: `th/vocode`). Pure Python/numpy port of vocoder.ts — no Wine/exe required. Four modes: `ilvocodex` (256 bands, 1024-win, 6 mod aphaseshift), `orangevocoder` (256/1024, clean), `4ormulator` (128/256, tight), `audacity` (64/512, 12 post aphaseshift). Takes a carrier audio URL and your attached video as the modulator. Per-mode post-filters: highpass + bass cut + alimiter + optional aphaseshift chain.",
-            "**th/ihtx pipe** — Added `vocoder`, `ilvocodex`, `orangevocoder`, `4ormulator`, `audacity` pipe effects. Syntax: `vocoder=mode;url`, `vocoder=mode;bw;url`, or mode name directly (`ilvocodex=url`). Removed `autotune`/`at` from pipes.",
-            "**th/ihtxhelp** — Replaced autotune help entry with vocoder entry. Updated Audio pipe effects reference line to list all 4 vocoder mode shortcuts.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v3.4",
-        "date": "2026-06-21",
-        "heavy": [
-            "**th/folkvalley** — New aesthetic effect command (aliases: `th/fv`, `th/folk`). Replaces video audio with the folkvalley music track, applies a brightness boost (HSV value shift V+100 via FFmpeg `eq`), and overlays a decorative PNG scaled to fit the frame. No parameters needed.",
-            "**th/ihtx pipe** — Added `folkvalley` / `fv` pipe effect. Usage: `folkvalley` (no params).",
-            "**th/ihtxhelp** — Added folkvalley entry; pipe effects list updated with Aesthetics section.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v3.3",
-        "date": "2026-06-21",
-        "heavy": [
-            "**Tag system** — `{set:var|value}` / `{get:var}` mutable variables with nested-block resolution; `{foreach:N|template}` count loop (re-evaluates each iteration so set mutations persist) and `{foreach:template|i1|i2|i3}` item loop with custom separator prefix; `{if:a|op|b|then:x|else:y}` else branch; `{arg:n}` 0-indexed args, `{arg:*}` all args; `{range:min|max}` random int/float; `{repeat:N:text}` colon separator; `{substring:text|start[|end]}`; `{indexof:needle|haystack}`; `{math:}` resolves inner blocks first; unknown `{tagname}` vars auto-expand to `{tag:tagname}` shorthand; `{tag:name}` / `{js:code}` (owner-only Node.js ESM) engines.",
-            "**Tag commands** — `th/t <name> [args]` shorthand; `th/tag random` (run a random tag); `th/tag forceremove <name>` (owner-only); `th/tag alias <new> <existing>` arg order corrected; `th/tag create` now upserts (edit your own existing tag instead of erroring).",
-        ],
-        "fun": [
-            "**th/swirl** — `is1to1` now defaults to `true` (square-before-swirl mode enabled by default).",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v3.2",
-        "date": "2026-06-21",
-        "heavy": [
-            "**th/swirl** — Updated swirl formula: uses inline geq expressions with `min(W,H)*radius` attenuation for both standard and 1:1 modes (replaces st/ld register approach). `setsar=1:1` added to 1:1 path. `fallout` and `is1to1` params unchanged.",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v3.1",
-        "date": "2026-06-21",
-        "heavy": [
-            "**th/swirl** — New vortex/swirl distortion command using FFmpeg geq. Works on videos and images. Params: `strength` (degrees), `radius`, `xc`, `yc`, `fallout` (linear/quad), `is1to1`. Alias: `th/vortex`",
-            "**th/ihtx pipe** — Added `swirl` pipe effect. Usage: `swirl=strength;radius;xc;yc;fallout;is1to1`",
-            "**th/ihtxhelp** — Added swirl entry; pipe effects list updated with Swirl section",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v3.0",
-        "date": "2026-06-21",
-        "heavy": [
-            "**th/tvsim** — New CRT/TV simulator command applying FFmpeg displacement-map distortion. Params: `line_sync` (0–1, warp strength), `detail_zoom`, `vertical_sync`, `phosphorescence`, `interlacing`, `scan_phasing`. Aliases: `th/tv` `th/tvsimulator`",
-            "**th/ihtx pipe** — Added `tvsim` / `tv` pipe effect. Usage: `tvsim=line_sync;detail_zoom;vert_sync;phosphor;interlace;scan_phase`",
-            "**th/ihtxhelp** — Added tvsim entry under heavy effects; pipe effects list updated with CRT section",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v2.9",
-        "date": "2026-06-21",
-        "heavy": [
-            "**th/ihtx** — Fixed crash after processing: _last_exports was used but never declared, causing a silent NameError immediately after FFmpeg finished, leaving the status stuck at '⌛ Done!' with no video delivered",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v2.8",
-        "date": "2026-06-21",
-        "heavy": [
-            "**th/ihtx, th/invlum** — Output changed from .mov to .mp4 and audio codec changed from pcm_s16le to aac; videos now play inline in Discord instead of appearing as a download-only attachment",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v2.7",
-        "date": "2026-06-21",
-        "heavy": [
-            "**th/ihtx, th/invlum, th/multipitch, th/ffmpeg, th/huehsv, th/syncaudio, th/lexg** — Fixed NameError crash: attachment variable was used before being initialized in all 7 commands; they now work correctly with attached files",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v2.6",
-        "date": "2026-06-21",
-        "heavy": [
-            "**th/ihtx sierpinskiransomware** — New preset + pipe effect: 2×2 Sierpinski-style video grid (normal / 2× / 1.333× / 0.5× speed+pitch) using FFmpeg rubberband; outputs FLAC/MP4",
-            "**th/ihtx** — Fixed FLAC-in-MOV container error for sierpinskiransomware preset (now outputs MP4)",
-            "**th/ihtx** — sierpinskiransomware now available as a pipe effect in custom IHTX chains",
-        ],
-        "fun": [
-            "**th/ihtx** (custom) — New processing status: '⏳ Processing your IHTX using pipe effects: `effects`×N', then '⌛ Done!' when finished",
-            "**th/preview1280** — New result embed (MWTVE7691 credit, sync tip, thumbnail); segment 3 contrast fixed to 0.375",
-            "**th/lexg / th/lec** — Fixed MissingRequiredAttachment crash; attachment now resolved from message context only",
-            "**th/ihtx** — Auto-uploads to Catbox when output exceeds Discord 25 MB limit; sends embed with download link instead of erroring",
-            "**th/ihtx** — Result embed now shows Resolution, Aspect Ratio, FPS, and File Size of output; new icon",
-            "**th/chat / th/ask** — Removed 'slightly rude' from personality description",
-            "**ffmpeg-full** installed — rubberband filter now available for pitch/tempo effects",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v2.5",
-        "date": "2026-06-20",
-        "heavy": [],
-        "fun": [
-            "**th/chat / th/ask** — New Gen-Z personality: nonchalant, dry, sarcastic, 100% lowercase, specific emojis only (🥀 🫩 💀 😭 ✌️)",
-            "**th/chat** — Temperature dropped to 0.4 for rigid, consistent output; response forced lowercase via `.lower()`",
-            "**th/chat** — Mandatory 'son im crine' inclusion rule + complexity block ('idk bro 😭')",
-            "**th/clearchat** — Now available on the TypeScript bot",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v2.4",
-        "date": "2026-06-20",
-        "heavy": [],
-        "fun": [
-            "**th/chat / th/ask** — Rebuilt on pure Google GenAI pipeline: `types.GenerateContentConfig` with `system_instruction`, temperature 0.83, max 1024 tokens",
-            "**th/chat** — OpenRouter dependency removed from chat entirely; Gemini 2.5 Flash is the sole engine",
-            "**th/chat / th/ask** — Now available on the TypeScript bot too via `@google/genai` Node.js SDK",
-            "**th/img2vid / th/imagevideo / th/video** — AI video generation commands removed",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v2.3",
-        "date": "2026-06-20",
-        "heavy": [],
-        "fun": [
-            "**th/chat** — Gemini emergency fallback now uses a single stateless content string (system + question) instead of history/parts",
-            "**th/chat** — Gemini also used directly when OpenRouter key is absent (no history overhead)",
-            "**th/chat** — OpenRouter and Gemini log messages match new routing tier labels",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v2.2",
-        "date": "2026-06-20",
-        "heavy": [],
-        "fun": [
-            "**th/chat / th/ask** — model fallback chain: qwen3-coder:free → llama-3.3-70b:free → openrouter/auto",
-            "**th/chat** — switched to `ctx.defer()` for reliable hybrid (slash + prefix) response handling",
-            "**th/chat** — prefix-aware system prompt with structured PREFIX AWARENESS RULES section",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v2.1",
-        "date": "2026-06-20",
-        "heavy": [],
-        "fun": [
-            "**th/chat / th/ask** — now powered by OpenRouter (qwen/qwen3-coder:free) when `OPENROUTER_API_KEY` is set; falls back to Gemini automatically",
-            "**th/chat** — system prompt now includes dynamic prefix awareness and username/channel context",
-            "**th/ask** — confirmed alias of `th/chat` (unchanged behavior, new backend)",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v2.0",
-        "date": "2026-06-20",
-        "heavy": [],
-        "fun": [
-            "**th/ihtxhelp** — command syntax now shown as a copyable code block inside each help entry",
-        ],
-        "owner": [],
-    },
-    {
-        "version": "v1.9",
-        "date": "2026-06-20",
-        "heavy": [
-            "**th/ihtx** — new `wave` pipe effect: sinusoidal pixel-displacement distortion with 8 params (hSpd|hFreq|hAmp|hPhase|vSpd|vFreq|vAmp|vPhase)",
-            "**th/ihtx wave** — optional `sep` flag runs H and V waves as separate passes; `noclip` draws border box to hide edge clipping",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v1.8",
-        "date": "2026-06-20",
-        "heavy": [
-            "**th/ihtx p&p** — geq formula now clamps distortion with `max(..., 0)` to prevent pixel wrap-around artifacts",
-            "**th/ihtx p&p** — fixed FLAC-in-MP4 error: all vf pipe steps now encode audio as `pcm_s24le` instead of `copy`",
-            "**th/ihtx lut / invlum / VIDEO:** — same FLAC fix applied to those vf paths",
-            "**th/ihtx** — removed `-f mp4` from concat step (let FFmpeg infer container from output extension)",
-            "**th/syncaudio** — rewired to split input into separate video/audio temp files before syncing",
-            "**th/syncaudio** — uses `-stream_loop -1` on audio + `-t <vd>` to pin output length (replaces `-shortest`)",
-            "**th/syncaudio** — explicit `-map 0:v -map 1:a` for clean stream selection on both modes",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v1.7",
-        "date": "2026-06-20",
-        "heavy": [
-            "**th/ihtx** — new `shake=<h>|<v>` pipe effect: per-frame pixel displacement via geq, crops to original dims",
-            "**th/ihtx** — `vreverse` pipe effect added: reverses video frames (chain with `areverse` for full reverse)",
-            "**th/ihtx** — `swirl` removed from pipe engine (now handled by iscript tag)",
-            "**th/ihtx shake** — audio now encoded as `pcm_s24le`; fixes FLAC-in-container error on certain inputs",
-            "**th/multipitch** — audio now encoded as `pcm_s24le` instead of AAC",
-            "**th/multipitch** — duration fixed: replaced `-shortest` with explicit `-t <video_duration>` to prevent clipping",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v1.6",
-        "date": "2026-06-19",
-        "heavy": [
-            "**th/ihtx** — pipe parser now uses commas as delimiters: `huehsv,negate,speed=1.5`",
-            "**th/ihtx** — new `ffmpeg(...)` pipe step: pass raw FFmpeg args mid-chain e.g. `ffmpeg(-vf hue=h=50)`",
-            "**th/ihtx** — processing status message now shows effect name + repeat count while running",
-            "**th/ffmpeg** — new standalone command: run any FFmpeg args on an attachment; shows error log + elapsed time",
-            "**th/ihtx** — output is always `.mp4`; `-f mp4` added to concat step; output_format param removed from custom syntax",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-    {
-        "version": "v1.5",
-        "date": "2026-06-18",
-        "heavy": [
-            "**th/ihtx** — parametric angle-based `mirror=<deg>` effect added (keeps left/right/top/bottom presets)",
-            "**th/multipitch** — rubberband CLI fallback added for R3 engine",
-            "**th/multipitch** — fixed speed bug in remux step (`-c:v copy` instead of libx264) to preserve timestamps",
-        ],
-        "fun": [],
-        "owner": [],
-    },
-]
-
-@bot.command(name="updatelog", aliases=["updates", "changelog"])
-async def updatelog_command(ctx: commands.Context):
-    """Show recent bot updates organized by category."""
-    for entry in _UPDATELOG:
-        embed = discord.Embed(
-            title=f"📋 Update Log — {entry['version']}",
-            color=discord.Color.og_blurple(),
-        )
-        embed.set_footer(text=entry["date"])
-
-        if entry.get("heavy"):
-            embed.add_field(
-                name="⚙️ Heavy Commands",
-                value="\n".join(f"• {line}" for line in entry["heavy"]),
-                inline=False,
-            )
-        if entry.get("fun"):
-            embed.add_field(
-                name="🎉 Fun",
-                value="\n".join(f"• {line}" for line in entry["fun"]),
-                inline=False,
-            )
-        if entry.get("owner"):
-            embed.add_field(
-                name="🔒 Owner",
-                value="\n".join(f"• {line}" for line in entry["owner"]),
-                inline=False,
-            )
-
-        await ctx.send(embed=embed)
 
 
 # ---------- Last Export Grab ----------
@@ -10372,7 +9708,6 @@ Economy & Profile:
 Fun & Utility:
 - th/tag <name> [args] — run a custom TagScript tag
 - th/presets — list all IHTX presets (chaos, glitch, melt, etc.)
-- th/updatelog — show recent bot updates
 - th/ihtxhelp — full IHTX command reference
 
 Owner-only:
