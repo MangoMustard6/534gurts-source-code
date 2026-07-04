@@ -5872,7 +5872,7 @@ def _ihtxsap_layer_bungee(input_wav: str, out_wav: str, semitones: float) -> tup
     import shutil
     if shutil.which("bungee"):
         args = ["bungee", "--pitch", str(semitones), input_wav, out_wav]
-        return _run_ffmpeg_raw(args, timeout=120, cmd_name="bungee")
+        return _run_ffmpeg_raw(args, timeout=120)
     # High-quality fallback: asetrate shifts pitch, aresample restores rate, aphaser flavour
     ratio = math.pow(2, semitones / 12)
     af = f"asetrate=44100*{ratio:.9f},aresample=44100,aphaser=type=t:speed=0.5:decay=0.4"

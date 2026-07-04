@@ -54,7 +54,7 @@ python3 main.py
 | `th/unblockuser <id\|mention>` | Unblock a user |
 | `th/blockchannel [id\|mention]` | Block a channel (current channel if omitted) |
 | `th/unblockchannel [id\|mention]` | Unblock a channel |
-| `g!say <message>` | Send a plain message as the bot |
+| `th/say <message>` | Send a plain message as the bot |
 | `th/sayembed <title> \| <description>` | Send an embed as the bot |
 
 ## Presets
@@ -214,7 +214,7 @@ Negative values are supported: `th/multipitch -3;0;5`
 - `MAX_DURATION` — 600 seconds
 - `MAX_REPETITIONS` — 100
 - `HEAVY_LIMIT_DEFAULT` — 10 heavy commands per 24h for non-owners
-- Command prefix: `g!`
+- Command prefix: `th/`
 
 ## Docker
 
