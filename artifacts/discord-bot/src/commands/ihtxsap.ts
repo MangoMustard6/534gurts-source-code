@@ -183,25 +183,32 @@ async function layerRubberband(
   ], { timeout: PROCESS_TIMEOUTS.RUBBERBAND_MS });
 }
 
+async function isSoundtouchAvailable(): Promise<boolean> {
+  try {
+    const r = await spawnAsync('soundstretch', [], { timeout: 3_000 });
+    // soundstretch prints usage and exits non-zero when called with no args — that's fine
+    return r.code === 0 || r.stderr.length > 0 || r.stdout.length > 0;
+  } catch { return false; }
+}
+
+/**
+ * SoundTouch style: uses the real `soundstretch` binary (same as th/ssmp).
+ * -pitch=<semitones>  — semitone pitch shift
+ * -tempo=<percent>    — tempo change: (duration_ratio - 1) * 100
+ *   e.g. duration=0.7 → -tempo=-30  (30% slower)
+ *        duration=1.5 → -tempo=50   (50% faster)
+ */
 async function layerSoundtouch(
   inputWav: string, out: string,
   semitones: number, duration: number,
 ): Promise<{ code: number; stderr: string }> {
-  const ratio   = stToRatio(semitones);
-  // asetrate shifts pitch but also changes speed by ratio.
-  // atempo corrects: multiply by duration and divide by ratio.
-  const tempo   = duration / ratio;
-  const af = [
-    `asetrate=44100*${ratio.toFixed(9)}`,
-    `aresample=44100`,
-    atempoChain(tempo),
-  ].join(',');
-  return spawnAsync('ffmpeg', [
-    '-y', '-i', inputWav,
-    '-af', af,
-    '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2',
+  const tempoPercent = (duration - 1) * 100;
+  return spawnAsync('soundstretch', [
+    inputWav,
     out,
-  ], { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
+    `-pitch=${semitones.toFixed(4)}`,
+    `-tempo=${tempoPercent.toFixed(4)}`,
+  ], { timeout: PROCESS_TIMEOUTS.RUBBERBAND_MS });
 }
 
 async function layerBungeeFallback(
@@ -273,14 +280,20 @@ async function runSap(
     return null;
   }
 
-  // 3. Detect Bungee once if needed
+  // 3. Binary availability checks
   let bungeeOk = false;
   if (opts.style === 'bungee') {
     bungeeOk = await isBungeeAvailable();
     if (!bungeeOk) {
       await setStatus('⚠️ `bungee` binary not found — using high-quality FFmpeg fallback…');
-      // small pause so the user sees the message before it's overwritten
       await new Promise((r) => setTimeout(r, 800));
+    }
+  }
+  if (opts.style === 'soundtouch') {
+    const ssOk = await isSoundtouchAvailable();
+    if (!ssOk) {
+      await setStatus('❌ `soundstretch` binary not found — install the SoundTouch package.');
+      return null;
     }
   }
 
