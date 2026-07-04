@@ -48,17 +48,19 @@ interface SapOpts {
   repetitions: number;     // concat repeats (default 5)
   pitches:     number[];   // semitone shifts per parallel layer
   style:       StyleValue;
+  volume:      number;     // output volume multiplier applied after mix (default 1)
 }
 
 const PREFIX_USAGE = [
-  '**Usage:** `th/ihtxsap <repetitions> <duration> <pitches> [style]`',
+  '**Usage:** `th/ihtxsap <repetitions> <duration> <pitches> [style] [volume=<n>]`',
   '',
   '  `repetitions` — integer 1–100, how many times the mix is looped (default: `5`)',
   '  `duration`    — float 0.01–10, time-ratio multiplier (`0.7` = 70% speed)',
   '  `pitches`     — semicolon-separated semitone shifts: `-7;5;6`',
   '  `style`       — optional, in quotes: `"Rubberband R2"` (default), `"Rubberband R3"`, `"Soundtouch"`, `"Bungee"`',
+  '  `volume=<n>`  — optional float, output volume multiplier after mix (e.g. `volume=8`)',
   '',
-  '**Example:** `th/ihtxsap 5 0.7 -7;5;6 "Rubberband R3"`',
+  '**Example:** `th/ihtxsap 5 0.7 -7;5;6 "Rubberband R3" volume=8`',
   'Attach a video or audio file, reply to one, or have one in recent channel history.',
 ].join('\n');
 
@@ -155,17 +157,34 @@ function parsePrefixArgs(raw: string): SapOpts | string {
   if (pitches.some((p) => Math.abs(p) > 120))
     return `❌ Pitch shifts must be within ±120 semitones.`;
 
+  // Remaining tokens (index ≥ 3): pull out volume=N first, rest is style
   let style: StyleValue = 'rubberband_r2';
-  if (tokens.length >= 4) {
-    const s = tokens.slice(3).join(' ').toLowerCase().trim();
+  let volume = 1;
+  const extraTokens = tokens.slice(3);
+  const styleTokens: string[] = [];
+
+  for (const tok of extraTokens) {
+    const lower = tok.toLowerCase();
+    if (lower.startsWith('volume=')) {
+      const v = parseFloat(tok.slice(7));
+      if (isNaN(v) || v <= 0 || v > 100)
+        return `❌ \`volume\` must be a positive float ≤ 100 (got \`${tok.slice(7)}\`).`;
+      volume = v;
+    } else {
+      styleTokens.push(tok);
+    }
+  }
+
+  if (styleTokens.length > 0) {
+    const s = styleTokens.join(' ').toLowerCase().trim();
     if      (s.includes('r3'))         style = 'rubberband_r3';
     else if (s.includes('soundtouch')) style = 'soundtouch';
     else if (s.includes('bungee'))     style = 'bungee';
     else if (s.includes('r2'))         style = 'rubberband_r2';
-    else return `❌ Unknown style "${tokens.slice(3).join(' ')}". Options: Rubberband R2, Rubberband R3, Soundtouch, Bungee.`;
+    else return `❌ Unknown style "${styleTokens.join(' ')}". Options: Rubberband R2, Rubberband R3, Soundtouch, Bungee.`;
   }
 
-  return { duration: dur, repetitions: reps, pitches, style };
+  return { duration: dur, repetitions: reps, pitches, style, volume };
 }
 
 // ── Per-layer processors ─────────────────────────────────────────────────────
@@ -332,9 +351,10 @@ async function runSap(
   const mixedWav = path.join(tmpDir, 'mixed.wav');
   const mixArgs: string[] = ['-y'];
   for (const lp of layerPaths) mixArgs.push('-i', lp);
+  const volFilter = opts.volume !== 1 ? `,volume=${opts.volume.toFixed(6)}` : '';
   const mixFilter = layerPaths.length === 1
-    ? 'alimiter=limit=0.99:level=false'
-    : `amix=inputs=${layerPaths.length}:duration=longest:normalize=0,alimiter=limit=0.99:level=false`;
+    ? `alimiter=limit=0.99:level=false${volFilter}`
+    : `amix=inputs=${layerPaths.length}:duration=longest:normalize=0,alimiter=limit=0.99:level=false${volFilter}`;
   mixArgs.push(
     '-filter_complex', mixFilter,
     '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2',
@@ -387,7 +407,8 @@ function summaryLine(opts: SapOpts, bungeeOk = false): string {
   const engine   = opts.style === 'bungee' && !bungeeOk
     ? 'Bungee (FFmpeg fallback)'
     : styleLabel(opts.style);
-  return `Pitches: **${pitchStr}** · ${opts.repetitions}× · ratio ×${opts.duration} · ${engine}`;
+  const volPart  = opts.volume !== 1 ? ` · vol ×${opts.volume}` : '';
+  return `Pitches: **${pitchStr}** · ${opts.repetitions}× · ratio ×${opts.duration} · ${engine}${volPart}`;
 }
 
 // ── Prefix entry point ───────────────────────────────────────────────────────
@@ -421,9 +442,10 @@ export async function handleIhtxSap(message: Message): Promise<void> {
     return;
   }
 
+  const volDesc = parsed.volume !== 1 ? `, vol ×${parsed.volume}` : '';
   const status = await message.reply(
     `⏳ IHTX-Sap — **${parsed.pitches.length}** layer${parsed.pitches.length > 1 ? 's' : ''}, ` +
-    `**${parsed.repetitions}×** loop, ratio **×${parsed.duration}**, **${styleLabel(parsed.style)}**`,
+    `**${parsed.repetitions}×** loop, ratio **×${parsed.duration}**, **${styleLabel(parsed.style)}**${volDesc}`,
   );
 
   let last = '';
@@ -499,15 +521,22 @@ export async function handleIhtxSapInteraction(slash: ChatInputCommandInteractio
     return;
   }
 
-  const opts: SapOpts = { duration, repetitions: reps, pitches, style: styleRaw };
+  const volumeRaw = slash.options.getNumber('volume') ?? 1;
+  if (volumeRaw <= 0 || volumeRaw > 100) {
+    await slash.editReply('❌ `volume` must be a positive number ≤ 100.');
+    return;
+  }
+
+  const opts: SapOpts = { duration, repetitions: reps, pitches, style: styleRaw, volume: volumeRaw };
 
   const setStatus = async (s: string) => {
     try { await slash.editReply(s); } catch { /* ignore */ }
   };
 
+  const volDesc = volumeRaw !== 1 ? `, vol ×${volumeRaw}` : '';
   await setStatus(
     `⏳ IHTX-Sap — **${pitches.length}** layer${pitches.length > 1 ? 's' : ''}, ` +
-    `**${reps}×** loop, ratio **×${duration}**, **${styleLabel(styleRaw)}**`,
+    `**${reps}×** loop, ratio **×${duration}**, **${styleLabel(styleRaw)}**${volDesc}`,
   );
 
   const tmpDir = makeTempDir('ihtxsap');

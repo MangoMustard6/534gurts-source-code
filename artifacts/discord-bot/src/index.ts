@@ -72,6 +72,9 @@ const SLASH_COMMANDS = [
         .setRequired(false)
         .addChoices(...IHTXSAP_STYLE_CHOICES.map((c) => ({ name: c.name, value: c.value }))),
     )
+    .addNumberOption((opt) =>
+      opt.setName('volume').setDescription('Output volume multiplier after mix, e.g. 8 (default: 1)').setRequired(false),
+    )
     .toJSON(),
 ];
 
