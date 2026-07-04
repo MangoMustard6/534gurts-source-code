@@ -5855,34 +5855,32 @@ def _ihtxsap_parse_args(raw: str):
     return {"reps": reps, "duration": duration, "pitches": pitches, "style": style, "volume": volume}, None
 
 
-def _ihtxsap_layer_rubberband(input_wav: str, out_wav: str, semitones: float, engine_flag: str) -> tuple[bool, str]:
-    """Apply rubberband pitch shift (engine_flag: '-2' for R2, '-3' for R3)."""
-    args = ["rubberband", engine_flag, "--pitch", str(semitones), input_wav, out_wav]
-    return _run_ffmpeg_raw(args, timeout=120)
-
-
-def _ihtxsap_layer_soundtouch(input_wav: str, out_wav: str, semitones: float) -> tuple[bool, str]:
-    """Apply soundstretch pitch shift (SoundTouch style, matching th/ssmp)."""
-    args = ["soundstretch", input_wav, out_wav, f"-pitch={semitones:.4f}"]
-    return _run_ffmpeg_raw(args, timeout=120)
-
-
-def _ihtxsap_layer_bungee(input_wav: str, out_wav: str, semitones: float) -> tuple[bool, str]:
-    """Bungee binary, or fall back to asetrate+aresample+aphaser if unavailable."""
-    import shutil
-    if shutil.which("bungee"):
-        args = ["bungee", "--pitch", str(semitones), input_wav, out_wav]
-        return _run_ffmpeg_raw(args, timeout=120)
-    # High-quality fallback: asetrate shifts pitch, aresample restores rate, aphaser flavour
-    ratio = math.pow(2, semitones / 12)
-    af = f"asetrate=44100*{ratio:.9f},aresample=44100,aphaser=type=t:speed=0.5:decay=0.4"
-    ok, err = _run_ffmpeg_raw([
-        "ffmpeg", "-y", "-i", input_wav,
-        "-af", af,
+def _ihtxsap_mix_layers(layer_paths: list[str], tmpdir: str, volume: float = 1.0) -> tuple[bool, str, str]:
+    """amix N WAV layers → mixed.wav. Returns (ok, err, path)."""
+    mixed_wav = os.path.join(tmpdir, "mixed.wav")
+    if len(layer_paths) == 1 and volume == 1.0:
+        import shutil as _sh
+        _sh.copy2(layer_paths[0], mixed_wav)
+        return True, "", mixed_wav
+    mix_cmd = ["ffmpeg", "-y"]
+    for lp in layer_paths:
+        mix_cmd += ["-i", lp]
+    if len(layer_paths) == 1:
+        fc = "alimiter=limit=0.99:level=false"
+    else:
+        fc = (
+            f"amix=inputs={len(layer_paths)}:duration=longest:normalize=0"
+            f",alimiter=limit=0.99:level=false"
+        )
+    if volume != 1.0:
+        fc += f",volume={volume:.6f}"
+    mix_cmd += [
+        "-filter_complex", fc,
         "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-        out_wav,
-    ], timeout=120)
-    return ok, err
+        mixed_wav,
+    ]
+    ok, err = _run_ffmpeg_raw(mix_cmd, timeout=180)
+    return ok, err, mixed_wav
 
 
 def _run_ihtxsap(
@@ -5895,15 +5893,19 @@ def _run_ihtxsap(
     volume: float,
 ) -> tuple[bool, str]:
     """
-    Pipeline:
+    Audio-only IHTX pipeline — same proven approach as th/multipitch.
+
       1. Extract first `duration` seconds as 16-bit PCM WAV, stripping video.
-      2. For each pitch, run the selected style engine on the WAV.
-      3. amix all layers together (+ optional volume boost).
-      4. Concat the mix `reps` times.
-      5. Encode to MP3 (libmp3lame -q:a 2).
+      2. Apply pitch layers using the selected style engine:
+           rubberband_r2/r3 → _run_fileaa_with_fallback (fileaa → rubberband → FFmpeg rubberband filter)
+           soundtouch        → soundstretch binary per layer, amix result
+           bungee            → bungee binary per layer (FFmpeg asetrate fallback), amix result
+      3. amix all layers + optional volume boost → mixed.wav
+      4. Concat mixed.wav `reps` times end-to-end.
+      5. Encode final WAV to MP3 (libmp3lame -q:a 2).
     """
     with tempfile.TemporaryDirectory() as tmpdir:
-        # ── 1. Extract audio snippet ──────────────────────────────────────────
+        # ── 1. Extract audio snippet (strip all video) ────────────────────────
         base_wav = os.path.join(tmpdir, "base.wav")
         ok, err = _run_ffmpeg_raw([
             "ffmpeg", "-y",
@@ -5916,48 +5918,92 @@ def _run_ihtxsap(
         if not ok:
             return False, f"Audio extraction failed: {err}"
 
-        # ── 2. Render each pitch layer ────────────────────────────────────────
-        layer_paths: list[str] = []
-        for i, st in enumerate(pitches):
-            out_layer = os.path.join(tmpdir, f"layer_{i}.wav")
-            if style == "rubberband_r2":
-                ok, err = _ihtxsap_layer_rubberband(base_wav, out_layer, st, "-2")
-            elif style == "rubberband_r3":
-                ok, err = _ihtxsap_layer_rubberband(base_wav, out_layer, st, "-3")
-            elif style == "soundtouch":
-                ok, err = _ihtxsap_layer_soundtouch(base_wav, out_layer, st)
-            else:  # bungee
-                ok, err = _ihtxsap_layer_bungee(base_wav, out_layer, st)
+        # ── 2. Apply pitch layers ─────────────────────────────────────────────
+        if style in ("rubberband_r2", "rubberband_r3"):
+            # Use the exact same pipeline as th/multipitch (_run_multipitch_rb3):
+            # fileaa binary → rubberband CLI fallback → FFmpeg rubberband filter fallback.
+            # All pitches are passed as a comma-separated list; the chain produces one
+            # mixed WAV with all voices already amixed.
+            pitch_arg = ",".join(
+                str(int(s)) if s == int(s) else str(s) for s in pitches
+            )
+            pitched_wav = os.path.join(tmpdir, "pitched.wav")
+            ok, err = _run_fileaa_with_fallback(
+                base_wav, pitched_wav, pitch_arg, tmpdir,
+                prefix="sap", timeout=300,
+            )
             if not ok:
-                return False, f"Layer {i + 1} (pitch {st:+}st) failed: {err}"
-            layer_paths.append(out_layer)
+                return False, f"Pitch processing failed: {err}"
+            # Apply volume on top if requested
+            if volume != 1.0:
+                vol_wav = os.path.join(tmpdir, "vol.wav")
+                ok, err = _run_ffmpeg_raw([
+                    "ffmpeg", "-y", "-i", pitched_wav,
+                    "-af", f"volume={volume:.6f}",
+                    "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+                    vol_wav,
+                ], timeout=120)
+                if not ok:
+                    return False, f"Volume adjustment failed: {err}"
+                source_wav = vol_wav
+            else:
+                source_wav = pitched_wav
 
-        # ── 3. Mix layers ─────────────────────────────────────────────────────
-        mixed_wav = os.path.join(tmpdir, "mixed.wav")
-        mix_cmd = ["-y"]
-        for lp in layer_paths:
-            mix_cmd += ["-i", lp]
-        if len(layer_paths) == 1:
-            fc = "alimiter=limit=0.99:level=false"
-        else:
-            fc = f"amix=inputs={len(layer_paths)}:duration=longest:normalize=0,alimiter=limit=0.99:level=false"
-        if volume != 1.0:
-            fc += f",volume={volume:.6f}"
-        mix_cmd += [
-            "-filter_complex", fc,
-            "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-            mixed_wav,
-        ]
-        ok, err = _run_ffmpeg_raw(["ffmpeg"] + mix_cmd, timeout=120)
-        if not ok:
-            return False, f"Mix failed: {err}"
+        elif style == "soundtouch":
+            # soundstretch binary: one call per pitch layer, then amix
+            layer_paths: list[str] = []
+            for i, st in enumerate(pitches):
+                out_layer = os.path.join(tmpdir, f"layer_{i}.wav")
+                ok, err = _run_ffmpeg_raw(
+                    ["soundstretch", base_wav, out_layer, f"-pitch={st:.4f}"],
+                    timeout=120,
+                )
+                if not ok:
+                    return False, f"Soundtouch layer {i + 1} (pitch {st:+}st) failed: {err}"
+                layer_paths.append(out_layer)
+            ok, err, source_wav = _ihtxsap_mix_layers(layer_paths, tmpdir, volume)
+            if not ok:
+                return False, f"Soundtouch mix failed: {err}"
 
-        # ── 4. Concat reps times ──────────────────────────────────────────────
+        else:  # bungee
+            import shutil as _shutil
+            bungee_ok = bool(_shutil.which("bungee"))
+            layer_paths = []
+            for i, st in enumerate(pitches):
+                out_layer = os.path.join(tmpdir, f"layer_{i}.wav")
+                if bungee_ok:
+                    ok, err = _run_ffmpeg_raw(
+                        ["bungee", "--pitch", str(st), base_wav, out_layer],
+                        timeout=120,
+                    )
+                else:
+                    # FFmpeg fallback: asetrate shifts pitch, aresample restores rate
+                    ratio = math.pow(2, st / 12)
+                    af = (
+                        f"asetrate=44100*{ratio:.9f},"
+                        f"aresample=44100,"
+                        f"aphaser=type=t:speed=0.5:decay=0.4"
+                    )
+                    ok, err = _run_ffmpeg_raw([
+                        "ffmpeg", "-y", "-i", base_wav,
+                        "-af", af,
+                        "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+                        out_layer,
+                    ], timeout=120)
+                if not ok:
+                    bungee_label = "bungee" if bungee_ok else "bungee fallback"
+                    return False, f"{bungee_label} layer {i + 1} (pitch {st:+}st) failed: {err}"
+                layer_paths.append(out_layer)
+            ok, err, source_wav = _ihtxsap_mix_layers(layer_paths, tmpdir, volume)
+            if not ok:
+                return False, f"Bungee mix failed: {err}"
+
+        # ── 3. Concat `reps` times end-to-end ────────────────────────────────
         if reps > 1:
             concat_list = os.path.join(tmpdir, "concat.txt")
             with open(concat_list, "w") as f:
                 for _ in range(reps):
-                    f.write(f"file '{mixed_wav}'\n")
+                    f.write(f"file '{source_wav}'\n")
             repeated_wav = os.path.join(tmpdir, "repeated.wav")
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y",
@@ -5968,9 +6014,9 @@ def _run_ihtxsap(
                 return False, f"Concat failed: {err}"
             final_wav = repeated_wav
         else:
-            final_wav = mixed_wav
+            final_wav = source_wav
 
-        # ── 5. Encode to MP3 ──────────────────────────────────────────────────
+        # ── 4. Encode to MP3 ─────────────────────────────────────────────────
         ok, err = _run_ffmpeg_raw([
             "ffmpeg", "-y",
             "-i", final_wav,
