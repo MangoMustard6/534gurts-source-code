@@ -196,8 +196,8 @@ async function layerRubberband(
 ): Promise<{ code: number; stderr: string }> {
   return spawnAsync('rubberband', [
     flag,
-    '--time-ratio', String(duration),
-    '--pitch', String(semitones),
+    `--time`, String(duration),   // -t / --time: stretch to X× original duration
+    `--pitch`, String(semitones), // -p / --pitch: shift by X semitones
     inputWav, out,
   ], { timeout: PROCESS_TIMEOUTS.RUBBERBAND_MS });
 }
