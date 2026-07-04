@@ -104,6 +104,18 @@ export async function handleHelp(message: Message, ownerId: string): Promise<voi
           value: `\`${PREFIX}realgmajor4\` *realgm4 rgm4* — Solarization curve + dual rubberband audio mix (×1.335) + vol×2. Attach or reply-to a video.`,
         },
         {
+          name: '🎵 TypeScript: ihtxsap  `/ihtxsap`',
+          value: [
+            `\`${PREFIX}ihtxsap <reps> <duration> <pitches> [style]\` *sap* — parallel pitch-layer processor, audio-only output (.mp3)`,
+            `**Slash:** \`/ihtxsap file=<att> duration=<n> pitches=<s> [repetitions=<n>] [style=<s>]\``,
+            `**Prefix pitches:** semicolon-separated semitones, e.g. \`-7;5;6\``,
+            `**Slash pitches:** space-separated, e.g. \`-7 5 6\``,
+            `**duration:** time-ratio multiplier (e.g. \`0.7\` = 70% speed)`,
+            `**Styles:** \`Rubberband R2\` (default) · \`Rubberband R3\` · \`Soundtouch\` · \`Bungee\``,
+            `**Example:** \`${PREFIX}ihtxsap 5 0.7 -7;5;6 "Rubberband R3"\``,
+          ].join('\n'),
+        },
+        {
           name: '🎮 Games  *(both bots)*',
           value: [
             '`t!coinflip` *flip coin cf* — Flip a coin',

@@ -8305,6 +8305,15 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 
 _UPDATELOG: list[dict] = [
     {
+        "version": "v8.3",
+        "date": "2026-07-04",
+        "heavy": [
+            "**ihtxsap command (TypeScript bot)** — new `/ihtxsap` slash + `th/ihtxsap` prefix command. Strips all video, applies N parallel semitone-shifted pitch layers (amix), repeats the mix `repetitions` times, outputs pure MP3. Style engine: Rubberband R2/R3 (rubberband binary, --time-ratio), Soundtouch (FFmpeg asetrate+atempo chain), Bungee (bungee binary; graceful FFmpeg aphaser fallback). Prefix: `th/ihtxsap <reps> <dur> <pitch;pitch;...> [\"Style\"]`; slash: file/duration/pitches/repetitions/style options.",
+            "**gardenclear command** — `th/gardenclear [plot]` / `th/gclear` clears dead plots. Single plot: validates state is dead; all plots: sweeps all dead plots and clears pending pest state. Error if plot is alive, growing, or ready.",
+            "**gardenboard** — garden coin leaderboard renamed from `leaderboard`/`lb`/`top` to `gardenboard`/`glb`/`gardenleaderboard` to avoid conflict with XP leaderboard.",
+        ],
+    },
+    {
         "version": "v8.2",
         "date": "2026-07-03",
         "heavy": [

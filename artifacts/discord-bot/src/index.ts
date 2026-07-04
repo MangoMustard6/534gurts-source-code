@@ -29,6 +29,7 @@ import { handleBytebeat, handleBytebeatInteraction } from './commands/bytebeat.j
 import { handleFfmpegProcess } from './commands/ffmpegprocess.js';
 import { handleRealGMajor4 } from './commands/realgmajor4.js';
 import { handleMultipitch2 } from './commands/multipitch2.js';
+import { handleIhtxSap, handleIhtxSapInteraction, IHTXSAP_STYLE_CHOICES } from './commands/ihtxsap.js';
 
 if (!BOT_TOKEN) {
   console.error('ERROR: DISCORD_TOKEN environment variable is not set.');
@@ -46,6 +47,30 @@ const SLASH_COMMANDS = [
         .setName('formula')
         .setDescription('Formula using t (sample index 0–39 999), e.g. t*(t>>5|t>>8)')
         .setRequired(true),
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('ihtxsap')
+    .setDescription('IHTX-Sap: pitch-layer audio processor — strips video, outputs pure MP3')
+    .addAttachmentOption((opt) =>
+      opt.setName('file').setDescription('Audio or video file to process (images rejected)').setRequired(true),
+    )
+    .addNumberOption((opt) =>
+      opt.setName('duration').setDescription('Time-ratio multiplier, e.g. 0.7 = 70% speed').setRequired(true),
+    )
+    .addStringOption((opt) =>
+      opt.setName('pitches').setDescription('Space-separated semitone shifts, e.g. "-7 5 6"').setRequired(true),
+    )
+    .addIntegerOption((opt) =>
+      opt.setName('repetitions').setDescription('Times the mix loops end-to-end (default: 5, max: 100)').setRequired(false),
+    )
+    .addStringOption((opt) =>
+      opt
+        .setName('style')
+        .setDescription('Processing engine (default: Rubberband R2)')
+        .setRequired(false)
+        .addChoices(...IHTXSAP_STYLE_CHOICES.map((c) => ({ name: c.name, value: c.value }))),
     )
     .toJSON(),
 ];
@@ -68,7 +93,7 @@ client.once('clientReady', async (c) => {
   console.log(`[IHTX-TS] Logged in as ${c.user.tag}`);
   console.log(`[IHTX-TS] Prefix: ${PREFIX}`);
   console.log(`[IHTX-TS] Owner ID: ${BOT_OWNER_ID || '(not set)'}`);
-  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitchihtx, multipitch2, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, bytebeat, ffmpegprocess, realgmajor4`);
+  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitchihtx, multipitch2, ihtxsap, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, bytebeat, ffmpegprocess, realgmajor4`);
 
   // Register slash commands.
   // Set BOT_GUILD_ID env var for instant guild-level registration (dev),
@@ -213,6 +238,11 @@ client.on('messageCreate', async (message: Message) => {
         await handleMultipitch2(message, rest);
         break;
 
+      case 'ihtxsap':
+      case 'sap':
+        await handleIhtxSap(message);
+        break;
+
       default:
         break;
     }
@@ -235,6 +265,9 @@ client.on('interactionCreate', async (interaction: Interaction) => {
     switch (slash.commandName) {
       case 'bytebeat':
         await handleBytebeatInteraction(slash);
+        break;
+      case 'ihtxsap':
+        await handleIhtxSapInteraction(slash);
         break;
       default:
         break;
