@@ -44,7 +44,7 @@ export const IHTXSAP_STYLE_CHOICES = [
 type StyleValue = typeof IHTXSAP_STYLE_CHOICES[number]['value'];
 
 interface SapOpts {
-  duration:    number;     // time-ratio multiplier (e.g. 0.7 = 70% of original speed)
+  duration:    number;     // snip end in seconds — only the first N seconds of audio are used
   repetitions: number;     // concat repeats (default 5)
   pitches:     number[];   // semitone shifts per parallel layer
   style:       StyleValue;
@@ -55,12 +55,12 @@ const PREFIX_USAGE = [
   '**Usage:** `th/ihtxsap <repetitions> <duration> <pitches> [style] [volume=<n>]`',
   '',
   '  `repetitions` — integer 1–100, how many times the mix is looped (default: `5`)',
-  '  `duration`    — float 0.01–10, time-ratio multiplier (`0.7` = 70% speed)',
+  '  `duration`    — seconds to snip from the start of the audio (e.g. `5` = first 5 s)',
   '  `pitches`     — semicolon-separated semitone shifts: `-7;5;6`',
   '  `style`       — optional, in quotes: `"Rubberband R2"` (default), `"Rubberband R3"`, `"Soundtouch"`, `"Bungee"`',
   '  `volume=<n>`  — optional float, output volume multiplier after mix (e.g. `volume=8`)',
   '',
-  '**Example:** `th/ihtxsap 5 0.7 -7;5;6 "Rubberband R3" volume=8`',
+  '**Example:** `th/ihtxsap 5 3 -7;5;6 "Rubberband R3" volume=8`',
   'Attach a video or audio file, reply to one, or have one in recent channel history.',
 ].join('\n');
 
@@ -148,8 +148,8 @@ function parsePrefixArgs(raw: string): SapOpts | string {
     return `❌ \`repetitions\` must be an integer 1–100 (got \`${tokens[0]}\`).`;
 
   const dur = parseFloat(tokens[1]);
-  if (isNaN(dur) || dur < 0.01 || dur > 10)
-    return `❌ \`duration\` must be a float 0.01–10 (got \`${tokens[1]}\`).`;
+  if (isNaN(dur) || dur <= 0 || dur > 3600)
+    return `❌ \`duration\` must be a positive number of seconds (max 3600, got \`${tokens[1]}\`).`;
 
   const pitches = tokens[2].split(';').map((p) => parseFloat(p.trim()));
   if (pitches.some(isNaN) || pitches.length < 1)
@@ -191,13 +191,12 @@ function parsePrefixArgs(raw: string): SapOpts | string {
 
 async function layerRubberband(
   inputWav: string, out: string,
-  semitones: number, duration: number,
+  semitones: number,
   flag: '-2' | '-3',
 ): Promise<{ code: number; stderr: string }> {
   return spawnAsync('rubberband', [
     flag,
-    `--time`, String(duration),   // -t / --time: stretch to X× original duration
-    `--pitch`, String(semitones), // -p / --pitch: shift by X semitones
+    `--pitch`, String(semitones),
     inputWav, out,
   ], { timeout: PROCESS_TIMEOUTS.RUBBERBAND_MS });
 }
@@ -219,28 +218,24 @@ async function isSoundtouchAvailable(): Promise<boolean> {
  */
 async function layerSoundtouch(
   inputWav: string, out: string,
-  semitones: number, duration: number,
+  semitones: number,
 ): Promise<{ code: number; stderr: string }> {
-  const tempoPercent = (duration - 1) * 100;
   return spawnAsync('soundstretch', [
     inputWav,
     out,
     `-pitch=${semitones.toFixed(4)}`,
-    `-tempo=${tempoPercent.toFixed(4)}`,
   ], { timeout: PROCESS_TIMEOUTS.RUBBERBAND_MS });
 }
 
 async function layerBungeeFallback(
   inputWav: string, out: string,
-  semitones: number, duration: number,
+  semitones: number,
 ): Promise<{ code: number; stderr: string }> {
-  // High-quality FFmpeg fallback: asetrate + atempo + aphaser (elastic stretch feel)
+  // Pitch-only FFmpeg fallback: asetrate shifts pitch (compensated by aresample) + aphaser
   const ratio = stToRatio(semitones);
-  const tempo = duration / ratio;
   const af = [
     `asetrate=44100*${ratio.toFixed(9)}`,
     `aresample=44100`,
-    atempoChain(tempo),
     `aphaser=type=t:speed=0.5:decay=0.4`,
   ].join(',');
   return spawnAsync('ffmpeg', [
@@ -253,11 +248,10 @@ async function layerBungeeFallback(
 
 async function layerBungee(
   inputWav: string, out: string,
-  semitones: number, duration: number,
+  semitones: number,
 ): Promise<{ code: number; stderr: string }> {
   return spawnAsync('bungee', [
     '--pitch', String(semitones),
-    '--time-ratio', String(duration),
     inputWav, out,
   ], { timeout: PROCESS_TIMEOUTS.RUBBERBAND_MS });
 }
@@ -285,11 +279,12 @@ async function runSap(
   const inputRaw = path.join(tmpDir, `input.${fileExt}`);
   await downloadUrl(fileUrl, inputRaw);
 
-  // 2. Extract audio → WAV (drop all video tracks)
-  await setStatus('⏳ Extracting audio track (discarding video)…');
+  // 2. Extract audio → WAV, snipping at duration seconds (drop all video tracks)
+  await setStatus(`⏳ Extracting first ${opts.duration}s of audio…`);
   const inputWav = path.join(tmpDir, 'input.wav');
   const extract = await spawnAsync('ffmpeg', [
     '-y', '-i', inputRaw,
+    '-t', String(opts.duration),
     '-vn',
     '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2',
     inputWav,
@@ -327,13 +322,13 @@ async function runSap(
 
     let result: { code: number; stderr: string };
     switch (opts.style) {
-      case 'rubberband_r2': result = await layerRubberband(inputWav, out, st, opts.duration, '-2'); break;
-      case 'rubberband_r3': result = await layerRubberband(inputWav, out, st, opts.duration, '-3'); break;
-      case 'soundtouch':    result = await layerSoundtouch(inputWav, out, st, opts.duration);       break;
+      case 'rubberband_r2': result = await layerRubberband(inputWav, out, st, '-2'); break;
+      case 'rubberband_r3': result = await layerRubberband(inputWav, out, st, '-3'); break;
+      case 'soundtouch':    result = await layerSoundtouch(inputWav, out, st);       break;
       case 'bungee':
         result = bungeeOk
-          ? await layerBungee(inputWav, out, st, opts.duration)
-          : await layerBungeeFallback(inputWav, out, st, opts.duration);
+          ? await layerBungee(inputWav, out, st)
+          : await layerBungeeFallback(inputWav, out, st);
         break;
     }
 
@@ -408,7 +403,7 @@ function summaryLine(opts: SapOpts, bungeeOk = false): string {
     ? 'Bungee (FFmpeg fallback)'
     : styleLabel(opts.style);
   const volPart  = opts.volume !== 1 ? ` · vol ×${opts.volume}` : '';
-  return `Pitches: **${pitchStr}** · ${opts.repetitions}× · ratio ×${opts.duration} · ${engine}${volPart}`;
+  return `Pitches: **${pitchStr}** · snip **${opts.duration}s** · ${opts.repetitions}× · ${engine}${volPart}`;
 }
 
 // ── Prefix entry point ───────────────────────────────────────────────────────
