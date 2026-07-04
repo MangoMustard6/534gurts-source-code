@@ -57,7 +57,7 @@ const SLASH_COMMANDS = [
       opt.setName('file').setDescription('Audio or video file to process (images rejected)').setRequired(true),
     )
     .addNumberOption((opt) =>
-      opt.setName('duration').setDescription('Seconds to snip from the start of the audio, e.g. 5 = first 5 s').setRequired(true),
+      opt.setName('duration').setDescription('How many seconds of the input to use, e.g. 0.7 = first 0.7 s').setRequired(true),
     )
     .addStringOption((opt) =>
       opt.setName('pitches').setDescription('Space-separated semitone shifts, e.g. "-7 5 6"').setRequired(true),

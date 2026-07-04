@@ -38,23 +38,24 @@ python3 main.py
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `g!ihtx [preset]` | `g!effect`, `g!destroy` | Apply a preset effect to an attached video/image |
-| `g!ihtx effect=value,... [rep] [dur]` | | Chain custom effects with repetitions and duration |
-| `g!preview1280 [start] [dur]` | `g!p1280` | 12-segment TV-simulator montage |
-| `g!multipitch <pitches>` | `g!mp`, `g!multi` | Multi-voice pitch shift (semicolon-separated semitones) |
-| `g!presets` | `g!effects`, `g!list` | List all available effect presets |
-| `g!ihtxhelp` | `g!bothelp` | Show help embed with full effect reference |
+| `th/ihtx [preset]` | `th/effect`, `th/destroy` | Apply a preset effect to an attached video/image |
+| `th/ihtx effect=value,... [rep] [dur]` | | Chain custom effects with repetitions and duration |
+| `th/preview1280 [start] [dur]` | `th/p1280` | 12-segment TV-simulator montage |
+| `th/multipitch <pitches>` | `th/mp`, `th/multi` | Multi-voice pitch shift (semicolon-separated semitones) |
+| `th/ihtxsap <reps> [dur] [pitches]` | `th/sap` | Audio-only th/ihtx: strip video, repeat N times, optional multipitch |
+| `th/presets` | `th/effects`, `th/list` | List all available effect presets |
+| `th/ihtxhelp` | `th/bothelp` | Show help embed with full effect reference |
 
 ### Owner-Only Commands
 
 | Command | Description |
 |---------|-------------|
-| `g!blockuser <id\|mention>` | Block a user from using the bot |
-| `g!unblockuser <id\|mention>` | Unblock a user |
-| `g!blockchannel [id\|mention]` | Block a channel (current channel if omitted) |
-| `g!unblockchannel [id\|mention]` | Unblock a channel |
+| `th/blockuser <id\|mention>` | Block a user from using the bot |
+| `th/unblockuser <id\|mention>` | Unblock a user |
+| `th/blockchannel [id\|mention]` | Block a channel (current channel if omitted) |
+| `th/unblockchannel [id\|mention]` | Unblock a channel |
 | `g!say <message>` | Send a plain message as the bot |
-| `g!sayembed <title> \| <description>` | Send an embed as the bot |
+| `th/sayembed <title> \| <description>` | Send an embed as the bot |
 
 ## Presets
 
@@ -70,11 +71,11 @@ python3 main.py
 
 ## Custom Effect Chains
 
-Use `g!ihtx` with comma-separated `effect=value` pairs. Sub-parameters use semicolons (including multipitch pitch values).
+Use `th/ihtx` with comma-separated `effect=value` pairs. Sub-parameters use semicolons (including multipitch pitch values).
 
-**Usage:** `g!ihtx effect=value,effect=value,... [rep] [dur]`
+**Usage:** `th/ihtx effect=value,effect=value,... [rep] [dur]`
 
-**Example:** `g!ihtx mirror=45,hue=90,multipitch=5 3 10`
+**Example:** `th/ihtx mirror=45,hue=90,multipitch=5 3 10`
 
 ### Video Effects
 
@@ -147,7 +148,7 @@ Use `g!ihtx` with comma-separated `effect=value` pairs. Sub-parameters use semic
 
 ## Preview1280
 
-The `g!preview1280` command creates a 12-segment TV-simulator montage with:
+The `th/preview1280` command creates a 12-segment TV-simulator montage with:
 
 - Hue shifts using Hald CLUTs (54°, 180°, 22°, 108°+saturation boost)
 - Horizontal flips and mirror compositions
@@ -157,13 +158,13 @@ The `g!preview1280` command creates a 12-segment TV-simulator montage with:
 
 **Requirements:** ImageMagick (`magick` command), FFmpeg with `rubberband` filter support, and the `tvsimulator.mov` displacement map at `bot/displacemaps/tvsimulator.mov`.
 
-**Usage:** `g!preview1280 [start_offset] [segment_duration]`
+**Usage:** `th/preview1280 [start_offset] [segment_duration]`
 
 Defaults: start=1.85s, duration=0.85s per segment.
 
 ## Multipitch
 
-The `g!multipitch` command (aliases: `g!mp`, `g!multi`) applies multi-voice pitch shifting using FFmpeg\'s `rubberband` audio filter with `filter_complex` + `amix`. Each semicolon-separated semitone value creates a separate pitch-shifted copy of the audio, and all copies are mixed together simultaneously.
+The `th/multipitch` command (aliases: `th/mp`, `th/multi`) applies multi-voice pitch shifting using FFmpeg\'s `rubberband` audio filter with `filter_complex` + `amix`. Each semicolon-separated semitone value creates a separate pitch-shifted copy of the audio, and all copies are mixed together simultaneously.
 
 **Pipeline:**
 ```
@@ -174,11 +175,11 @@ The `g!multipitch` command (aliases: `g!mp`, `g!multi`) applies multi-voice pitc
 -map 0:v -map "[outa]" -c:v ffv1 -c:a pcm_s16le
 ```
 
-**Usage:** `g!multipitch <semitones;separated;by;semicolon>`
+**Usage:** `th/multipitch <semitones;separated;by;semicolon>`
 
-**Example:** `g!multipitch 1;4;7` — all three pitches play simultaneously, mixed together.
+**Example:** `th/multipitch 1;4;7` — all three pitches play simultaneously, mixed together.
 
-Negative values are supported: `g!multipitch -3;0;5`
+Negative values are supported: `th/multipitch -3;0;5`
 
 **In effect chains:** `multipitch=1;4;7` uses rubberband with summed pitch values for a single-pass shift (full amix requires `filter_complex` which is only in the standalone command).
 

@@ -137,7 +137,7 @@ def _is_bot_mod(ctx: commands.Context) -> bool:
 _load_owner_ids()
 
 # Heavy command rate limiting
-HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "preview1280", "p1280", "oppositep1280", "op1280", "preview1280with640x360resize", "p1280ff!3", "p1280w16:9r", "multipitch", "mp", "multi", "lexg", "chat", "ask", "ai"}
+HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "preview1280", "p1280", "oppositep1280", "op1280", "preview1280with640x360resize", "p1280ff!3", "p1280w16:9r", "multipitch", "mp", "multi", "lexg", "chat", "ask", "ai", "ihtxsap", "sap"}
 HEAVY_LIMIT_DEFAULT = 20
 HEAVY_LIMIT_OWNER = 5340
 LIMITS_FILE = Path("bot/limits.json")
@@ -5737,6 +5737,357 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
             await status_msg.edit(content=f"❌ Failed to upload result: {e}")
 
 
+# ---------- th/ihtxsap — audio-only pitch-layer repeater ----------
+
+_IHTXSAP_MAX_REPS = 100
+_IHTXSAP_MAX_DUR  = 3600.0
+_IHTXSAP_MAX_PITCHES = 20
+
+_IHTXSAP_AUDIO_EXTS = {
+    ".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a", ".opus", ".wma", ".aiff", ".aif",
+    ".mp4", ".mov", ".mkv", ".webm", ".avi", ".mts", ".m2ts",
+}
+
+_IHTXSAP_USAGE = (
+    "**th/ihtxsap** — audio-only version of th/ihtx\n\n"
+    "**Usage:** `th/ihtxsap <reps> <duration> <pitches> [style] [volume=N]`\n\n"
+    "  `reps`      — integer 1–100: how many times the mix loops\n"
+    "  `duration`  — seconds of audio to use per loop (e.g. `0.7`)\n"
+    "  `pitches`   — semicolon-separated semitone shifts: `-7;5;6`\n"
+    "  `style`     — optional (default `Rubberband R2`): `Rubberband R2`, `Rubberband R3`, `Soundtouch`, `Bungee`\n"
+    "  `volume=N`  — optional float volume multiplier after mix (e.g. `volume=8`)\n\n"
+    "**Example:** `th/ihtxsap 5 0.7 -7;5;6 \"Rubberband R3\" volume=4`\n"
+    "Attach a video/audio file, reply to one, or have one in recent channel history."
+)
+
+_IHTXSAP_STYLE_NAMES = {
+    "rubberband_r2": "Rubberband R2",
+    "rubberband_r3": "Rubberband R3",
+    "soundtouch":    "Soundtouch",
+    "bungee":        "Bungee",
+}
+
+
+def _ihtxsap_parse_args(raw: str):
+    """Parse prefix args for th/ihtxsap. Returns (opts_dict, error_str)."""
+    tokens: list[str] = []
+    cur = ""
+    in_quote = False
+    q_char = ""
+    for ch in raw.strip():
+        if in_quote:
+            if ch == q_char:
+                in_quote = False
+                tokens.append(cur)
+                cur = ""
+            else:
+                cur += ch
+        elif ch in ('"', "'"):
+            in_quote = True
+            q_char = ch
+        elif ch in (" ", "\t"):
+            if cur:
+                tokens.append(cur)
+                cur = ""
+        else:
+            cur += ch
+    if cur:
+        tokens.append(cur)
+
+    if len(tokens) < 3:
+        return None, f"❌ Not enough arguments.\n\n{_IHTXSAP_USAGE}"
+
+    try:
+        reps = int(tokens[0])
+        if not (1 <= reps <= _IHTXSAP_MAX_REPS):
+            raise ValueError
+    except ValueError:
+        return None, f"❌ `reps` must be an integer 1–{_IHTXSAP_MAX_REPS} (got `{tokens[0]}`)."
+
+    try:
+        duration = float(tokens[1])
+        if not (0.01 <= duration <= _IHTXSAP_MAX_DUR):
+            raise ValueError
+    except ValueError:
+        return None, f"❌ `duration` must be a positive number of seconds (got `{tokens[1]}`)."
+
+    raw_pitches = tokens[2].split(";")
+    pitches: list[float] = []
+    for p in raw_pitches:
+        p = p.strip()
+        if not p:
+            continue
+        try:
+            val = float(p)
+            if not math.isfinite(val) or abs(val) > 120:
+                raise ValueError
+        except ValueError:
+            return None, f"❌ Invalid pitch value `{p}` — must be a finite number within ±120 semitones."
+        pitches.append(val)
+    if not pitches:
+        return None, "❌ `pitches` must be semicolon-separated numbers, e.g. `-7;5;6`."
+    if len(pitches) > _IHTXSAP_MAX_PITCHES:
+        return None, f"❌ Too many pitch values (max {_IHTXSAP_MAX_PITCHES})."
+
+    style = "rubberband_r2"
+    volume = 1.0
+    for tok in tokens[3:]:
+        lower = tok.lower()
+        if lower.startswith("volume="):
+            try:
+                volume = float(tok[7:])
+                if not (0 < volume <= 100):
+                    raise ValueError
+            except ValueError:
+                return None, f"❌ `volume` must be a positive float ≤ 100 (got `{tok[7:]}`)."
+        else:
+            if "r3" in lower:
+                style = "rubberband_r3"
+            elif "soundtouch" in lower:
+                style = "soundtouch"
+            elif "bungee" in lower:
+                style = "bungee"
+            elif "r2" in lower:
+                style = "rubberband_r2"
+            else:
+                return None, f"❌ Unknown style `{tok}`. Options: `Rubberband R2`, `Rubberband R3`, `Soundtouch`, `Bungee`."
+
+    return {"reps": reps, "duration": duration, "pitches": pitches, "style": style, "volume": volume}, None
+
+
+def _ihtxsap_layer_rubberband(input_wav: str, out_wav: str, semitones: float, engine_flag: str) -> tuple[bool, str]:
+    """Apply rubberband pitch shift (engine_flag: '-2' for R2, '-3' for R3)."""
+    args = ["rubberband", engine_flag, "--pitch", str(semitones), input_wav, out_wav]
+    return _run_ffmpeg_raw(args, timeout=120)
+
+
+def _ihtxsap_layer_soundtouch(input_wav: str, out_wav: str, semitones: float) -> tuple[bool, str]:
+    """Apply soundstretch pitch shift (SoundTouch style, matching th/ssmp)."""
+    args = ["soundstretch", input_wav, out_wav, f"-pitch={semitones:.4f}"]
+    return _run_ffmpeg_raw(args, timeout=120)
+
+
+def _ihtxsap_layer_bungee(input_wav: str, out_wav: str, semitones: float) -> tuple[bool, str]:
+    """Bungee binary, or fall back to asetrate+aresample+aphaser if unavailable."""
+    import shutil
+    if shutil.which("bungee"):
+        args = ["bungee", "--pitch", str(semitones), input_wav, out_wav]
+        return _run_ffmpeg_raw(args, timeout=120, cmd_name="bungee")
+    # High-quality fallback: asetrate shifts pitch, aresample restores rate, aphaser flavour
+    ratio = math.pow(2, semitones / 12)
+    af = f"asetrate=44100*{ratio:.9f},aresample=44100,aphaser=type=t:speed=0.5:decay=0.4"
+    ok, err = _run_ffmpeg_raw([
+        "ffmpeg", "-y", "-i", input_wav,
+        "-af", af,
+        "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+        out_wav,
+    ], timeout=120)
+    return ok, err
+
+
+def _run_ihtxsap(
+    input_path: str,
+    output_path: str,
+    reps: int,
+    duration: float,
+    pitches: list[float],
+    style: str,
+    volume: float,
+) -> tuple[bool, str]:
+    """
+    Pipeline:
+      1. Extract first `duration` seconds as 16-bit PCM WAV, stripping video.
+      2. For each pitch, run the selected style engine on the WAV.
+      3. amix all layers together (+ optional volume boost).
+      4. Concat the mix `reps` times.
+      5. Encode to MP3 (libmp3lame -q:a 2).
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # ── 1. Extract audio snippet ──────────────────────────────────────────
+        base_wav = os.path.join(tmpdir, "base.wav")
+        ok, err = _run_ffmpeg_raw([
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-t", str(duration),
+            "-vn",
+            "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+            base_wav,
+        ], timeout=120)
+        if not ok:
+            return False, f"Audio extraction failed: {err}"
+
+        # ── 2. Render each pitch layer ────────────────────────────────────────
+        layer_paths: list[str] = []
+        for i, st in enumerate(pitches):
+            out_layer = os.path.join(tmpdir, f"layer_{i}.wav")
+            if style == "rubberband_r2":
+                ok, err = _ihtxsap_layer_rubberband(base_wav, out_layer, st, "-2")
+            elif style == "rubberband_r3":
+                ok, err = _ihtxsap_layer_rubberband(base_wav, out_layer, st, "-3")
+            elif style == "soundtouch":
+                ok, err = _ihtxsap_layer_soundtouch(base_wav, out_layer, st)
+            else:  # bungee
+                ok, err = _ihtxsap_layer_bungee(base_wav, out_layer, st)
+            if not ok:
+                return False, f"Layer {i + 1} (pitch {st:+}st) failed: {err}"
+            layer_paths.append(out_layer)
+
+        # ── 3. Mix layers ─────────────────────────────────────────────────────
+        mixed_wav = os.path.join(tmpdir, "mixed.wav")
+        mix_cmd = ["-y"]
+        for lp in layer_paths:
+            mix_cmd += ["-i", lp]
+        if len(layer_paths) == 1:
+            fc = "alimiter=limit=0.99:level=false"
+        else:
+            fc = f"amix=inputs={len(layer_paths)}:duration=longest:normalize=0,alimiter=limit=0.99:level=false"
+        if volume != 1.0:
+            fc += f",volume={volume:.6f}"
+        mix_cmd += [
+            "-filter_complex", fc,
+            "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+            mixed_wav,
+        ]
+        ok, err = _run_ffmpeg_raw(["ffmpeg"] + mix_cmd, timeout=120)
+        if not ok:
+            return False, f"Mix failed: {err}"
+
+        # ── 4. Concat reps times ──────────────────────────────────────────────
+        if reps > 1:
+            concat_list = os.path.join(tmpdir, "concat.txt")
+            with open(concat_list, "w") as f:
+                for _ in range(reps):
+                    f.write(f"file '{mixed_wav}'\n")
+            repeated_wav = os.path.join(tmpdir, "repeated.wav")
+            ok, err = _run_ffmpeg_raw([
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0", "-i", concat_list,
+                "-c", "copy", repeated_wav,
+            ], timeout=300)
+            if not ok:
+                return False, f"Concat failed: {err}"
+            final_wav = repeated_wav
+        else:
+            final_wav = mixed_wav
+
+        # ── 5. Encode to MP3 ──────────────────────────────────────────────────
+        ok, err = _run_ffmpeg_raw([
+            "ffmpeg", "-y",
+            "-i", final_wav,
+            "-acodec", "libmp3lame", "-q:a", "2",
+            output_path,
+        ], timeout=180)
+        if not ok:
+            return False, f"MP3 encoding failed: {err}"
+
+    return True, ""
+
+
+@bot.command(name="ihtxsap", aliases=["sap"])
+async def ihtxsap_command(ctx: commands.Context, *, args: str = ""):
+    """Audio-only IHTX: strip video, apply multipitch layers, repeat N times, output MP3.
+
+    Usage:
+      th/ihtxsap <reps> <duration> <pitches> [style] [volume=N]
+      th/sap 5 0.7 -7;5;6 "Rubberband R3" volume=4
+
+    reps      — integer 1–100: how many times the mix loops
+    duration  — seconds of audio per loop (e.g. 0.7)
+    pitches   — semicolon-separated semitone shifts: -7;5;6
+    style     — Rubberband R2 (default), Rubberband R3, Soundtouch, Bungee
+    volume    — optional float volume multiplier (e.g. volume=8)
+    """
+    if not args:
+        await ctx.reply(_IHTXSAP_USAGE)
+        return
+
+    opts, err_str = _ihtxsap_parse_args(args)
+    if err_str:
+        await ctx.reply(err_str)
+        return
+
+    # ── Resolve attachment ────────────────────────────────────────────────────
+    attachment = None
+    if ctx.message.attachments:
+        attachment = ctx.message.attachments[0]
+    elif ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref.attachments:
+                attachment = ref.attachments[0]
+        except Exception:
+            pass
+    if attachment is None:
+        try:
+            async for msg in ctx.channel.history(limit=30, before=ctx.message):
+                if msg.attachments:
+                    ext = Path(msg.attachments[0].filename).suffix.lower()
+                    if ext in _IHTXSAP_AUDIO_EXTS:
+                        attachment = msg.attachments[0]
+                        break
+        except Exception:
+            pass
+
+    if not attachment:
+        await ctx.reply(f"❌ No audio/video file found. Attach one, reply to one, or have one in recent history.\n\n{_IHTXSAP_USAGE}")
+        return
+
+    suffix = Path(attachment.filename).suffix.lower()
+    if suffix not in _IHTXSAP_AUDIO_EXTS:
+        await ctx.reply(f"❌ Unsupported file type `{suffix}`. Attach an audio or video file.")
+        return
+
+    if attachment.size > MAX_FILE_SIZE:
+        await ctx.reply(f"❌ File too large (max {MAX_FILE_SIZE // 1024 // 1024} MB).")
+        return
+
+    # ── Status message ────────────────────────────────────────────────────────
+    style_label = _IHTXSAP_STYLE_NAMES[opts["style"]]
+    pitch_str   = ";".join((f"+{p}" if p >= 0 else str(p)) for p in opts["pitches"])
+    vol_part    = f" · vol ×{opts['volume']}" if opts["volume"] != 1.0 else ""
+    status = await ctx.reply(
+        f"⏳ IHTX-Sap — **{len(opts['pitches'])}** layer(s), **{opts['reps']}×** loop, "
+        f"**{opts['duration']}s** snip, **{style_label}**{vol_part}…"
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path  = os.path.join(tmpdir, f"input{suffix}")
+        output_path = os.path.join(tmpdir, "ihtxsap.mp3")
+        try:
+            await download_attachment(attachment, input_path)
+        except Exception as e:
+            await status.edit(content=f"❌ Download failed: {e}")
+            return
+
+        loop = asyncio.get_event_loop()
+        ok, err = await loop.run_in_executor(
+            None, _run_ihtxsap,
+            input_path, output_path,
+            opts["reps"], opts["duration"],
+            opts["pitches"], opts["style"], opts["volume"],
+        )
+
+        if not ok:
+            await status.edit(content=f"❌ IHTX-Sap failed:\n```\n{err[-1500:]}\n```")
+            return
+
+        out_size = os.path.getsize(output_path)
+        if out_size > MAX_FILE_SIZE:
+            await status.edit(content="❌ Output file too large for Discord (>25 MB). Try fewer reps or a shorter duration.")
+            return
+
+        safe_pitches = pitch_str.replace("+", "p").replace("-", "n").replace(";", "_")
+        out_name = f"ihtxsap_{safe_pitches}_{opts['reps']}x.mp3"
+        try:
+            await ctx.reply(
+                content=f"✅ **IHTX-Sap** done! Pitches: **{pitch_str}** · **{opts['reps']}×** · {style_label}{vol_part}",
+                file=discord.File(output_path, filename=out_name),
+            )
+            await status.delete()
+        except discord.HTTPException as e:
+            await status.edit(content=f"❌ Upload failed: {e}")
+
+
 # ---------- th/ffmpeg — raw FFmpeg command ----------
 
 @bot.command(name="ffmpeg")
@@ -8308,7 +8659,7 @@ _UPDATELOG: list[dict] = [
         "version": "v8.3",
         "date": "2026-07-04",
         "heavy": [
-            "**ihtxsap command (TypeScript bot)** — new `/ihtxsap` slash + `th/ihtxsap` prefix command. Strips all video, applies N parallel semitone-shifted pitch layers (amix), repeats the mix `repetitions` times, outputs pure MP3. Style engine: Rubberband R2/R3 (rubberband binary, --time-ratio), Soundtouch (FFmpeg asetrate+atempo chain), Bungee (bungee binary; graceful FFmpeg aphaser fallback). Prefix: `th/ihtxsap <reps> <dur> <pitch;pitch;...> [\"Style\"]`; slash: file/duration/pitches/repetitions/style options.",
+            "**ihtxsap command** — `th/ihtxsap <reps> [dur] [pitch;pitch;...]` (alias `th/sap`). Audio-only version of th/ihtx: strips all video, optionally applies N parallel semitone-shifted pitch layers via fileaa fallback chain (amix), repeats the result `reps` times via FFmpeg concat, outputs pure MP3.",
             "**gardenclear command** — `th/gardenclear [plot]` / `th/gclear` clears dead plots. Single plot: validates state is dead; all plots: sweeps all dead plots and clears pending pest state. Error if plot is alive, growing, or ready.",
             "**gardenboard** — garden coin leaderboard renamed from `leaderboard`/`lb`/`top` to `gardenboard`/`glb`/`gardenleaderboard` to avoid conflict with XP leaderboard.",
         ],

@@ -507,8 +507,8 @@ export async function handleIhtxSapInteraction(slash: ChatInputCommandInteractio
     await slash.editReply('❌ Pitch shifts must be within ±120 semitones.');
     return;
   }
-  if (duration < 0.01 || duration > 10) {
-    await slash.editReply('❌ `duration` must be between 0.01 and 10.');
+  if (duration < 0.01 || duration > 3600) {
+    await slash.editReply('❌ `duration` must be between 0.01 and 3600 seconds.');
     return;
   }
   if (reps < 1 || reps > 100) {
