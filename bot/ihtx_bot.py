@@ -776,31 +776,54 @@ def _run_nparisonffmpeg(
                 mkv_files.append(mkv_out)
             prev = mkv_out
 
-        # Build xstack (+ optional amix) filter_complex.
-        # Reset PTS on every stream so duration/timestamp mismatches
-        # (common when audio effects change length) don't crash xstack.
+        # Probe the shortest video duration across all iteration outputs so we
+        # can hard-trim every stream to the same length before xstack.
+        # This is the only reliable fix for the "best_input >= 0" assertion,
+        # which fires whenever streams have even slightly different durations
+        # (e.g. when -af effects like rubberband change audio length).
+        min_dur: float | None = None
+        for mf in mkv_files:
+            try:
+                _dp = subprocess.run(
+                    ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                     "-show_entries", "stream=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", mf],
+                    capture_output=True, text=True, timeout=10,
+                )
+                _d = float(_dp.stdout.strip())
+                if min_dur is None or _d < min_dur:
+                    min_dur = _d
+            except Exception:
+                pass
+
+        # Build filter_complex: trim every video stream to min_dur, reset PTS,
+        # then xstack.  Audio uses aresample+atrim to match the same window.
         inp_flags: list[str] = []
         for tf in mkv_files:
             inp_flags += ["-i", tf]
-        # Per-stream PTS reset → labelled video streams
-        pts_resets = "".join(
-            f"[{k}:v]setpts=PTS-STARTPTS[pv{k}];"
-            for k in range(powers)
-        )
+
+        trim_v = f"trim=duration={min_dur:.4f}," if min_dur is not None else ""
+        fc_segments: list[str] = []
+        for k in range(powers):
+            fc_segments.append(f"[{k}:v]{trim_v}setpts=PTS-STARTPTS[pv{k}]")
         stacked_v = "".join(f"[pv{k}]" for k in range(powers))
-        fc_parts = [
-            pts_resets.rstrip(";"),
+        fc_segments.append(
             f"{stacked_v}xstack=inputs={powers}:grid={gridx}x{gridy},"
-            f"scale=iw/{gridx}:ih/{gridy}:flags=lanczos[v]",
-        ]
+            f"scale=iw/{gridx}:ih/{gridy}:flags=lanczos[v]"
+        )
+
         map_extra: list[str] = []
         acodec_args: list[str] = []
         if has_audio:
-            fa = "".join(f"[{k}:a]" for k in range(powers))
-            fc_parts.append(f"{fa}amix={powers}:normalize=0[a]")
+            trim_a = f"atrim=duration={min_dur:.4f},asetpts=PTS-STARTPTS," if min_dur is not None else ""
+            for k in range(powers):
+                fc_segments.append(f"[{k}:a]{trim_a}aresample=async=1[pa{k}]")
+            pa_joined = "".join(f"[pa{k}]" for k in range(powers))
+            fc_segments.append(f"{pa_joined}amix={powers}:normalize=0[a]")
             map_extra = ["-map", "[a]"]
             acodec_args = ["-c:a", "aac", "-b:a", "192k"]
-        fc = ";".join(fc_parts)
+
+        fc = ";".join(fc_segments)
         timeout = 120 + powers * 60
         cmd = (
             ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
@@ -809,7 +832,7 @@ def _run_nparisonffmpeg(
             + ["-c:v", "libx264", "-preset", "fast", "-crf", "23",
                "-pix_fmt", "yuv420p"]
             + acodec_args
-            + ["-shortest", output_path]
+            + [output_path]
         )
         ok, err = _run_ffmpeg_raw(cmd, timeout=timeout)
         if not ok:
