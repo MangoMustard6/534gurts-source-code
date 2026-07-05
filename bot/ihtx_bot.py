@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-05: Wired gradientmap/gmap as a th/ihtx pipe effect and added th/gradientmap (alias th/gm) standalone command.
 - 2026-07-05: Added radar, timecode, wmm3dripple, and wave2 pipe effects.
 """
 
@@ -730,6 +731,7 @@ def _build_gradientmap_filter(params: list[str]) -> tuple[bool, str, str]:
 
     Each param is a color point string: "R,G,B"  "R,G,B,A"  or "R,G,B,A,pos"
     where R/G/B/A are 0-255 integers and pos is 0.0-1.0 (default: evenly spaced).
+    Colons and underscores are also accepted as separators for pipe syntax.
     At least 2 points are required.
     """
     if len(params) < 2:
@@ -737,13 +739,20 @@ def _build_gradientmap_filter(params: list[str]) -> tuple[bool, str, str]:
 
     points: list[tuple[int, int, int, int, float | None]] = []
     for p in params:
-        parts = [x.strip() for x in p.split(",")]
+        # Support comma (standalone) or colon/underscore (pipe) separators
+        parts = [x.strip() for x in re.split(r"[,:_]", p.strip())]
+        if len(parts) < 3:
+            return False, f"gradientmap: invalid color point '{p}' — use R,G,B or R,G,B,A or R,G,B,A,pos", ""
         try:
             r = int(parts[0]); g = int(parts[1]); b = int(parts[2])
             a   = int(parts[3])   if len(parts) > 3 else 255
             pos = float(parts[4]) if len(parts) > 4 else None
         except (ValueError, IndexError):
             return False, f"gradientmap: invalid color point '{p}' — use R,G,B or R,G,B,A or R,G,B,A,pos", ""
+        if not (0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255 and 0 <= a <= 255):
+            return False, f"gradientmap: color values in '{p}' must be between 0 and 255", ""
+        if pos is not None and not (0.0 <= pos <= 1.0):
+            return False, f"gradientmap: position in '{p}' must be between 0.0 and 1.0", ""
         points.append((r, g, b, a, pos))
 
     n = len(points)
@@ -3074,6 +3083,14 @@ def _apply_pipe_effects(
                 ok, err = _run_ffmpeg_raw(cmd, timeout=180)
                 if not ok:
                     return False, f"mirror (split-inner) failed: {err}"
+                current = out
+                continue
+
+            # gradientmap / gmap — gradient map via curves + alphamerge overlay
+            if name in ("gradientmap", "gmap"):
+                ok, err = _run_gradientmap(current, out, params)
+                if not ok:
+                    return False, f"gradientmap failed: {err}"
                 current = out
                 continue
 
@@ -8193,6 +8210,114 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
                     f"strength={strength}° · radius={radius} · center=({xc},{yc}) · "
                     f"fallout={fallout} · 1:1={is1to1}"
                 ),
+                color=4886754,
+            )
+            embed.set_thumbnail(url="https://files.catbox.moe/xli8jw.png")
+            embed.add_field(name="File Size", value=f"{out_size/(1024*1024):.2f} MB", inline=True)
+            await ctx.reply(embed=embed, file=discord.File(output_path, filename=out_filename))
+            await status_msg.delete()
+        except discord.HTTPException as e:
+            await status_msg.edit(content=f"❌ Failed to upload result: {e}")
+
+
+@bot.command(name="gradientmap", aliases=["gm"])
+async def gradientmap_command(ctx: commands.Context, *, args: str = ""):
+    """Apply a gradient map to an attached video or image.
+
+    Usage:
+      th/gradientmap <point1> [point2] ...
+
+    Each point is a color stop: R,G,B or R,G,B,A or R,G,B,A,pos
+      R,G,B     — 0-255 color values (required)
+      A         — alpha 0-255 (default 255)
+      pos       — position on the gradient 0.0-1.0 (default evenly spaced)
+
+    Examples:
+      th/gradientmap 0,0,0 255,255,255
+      th/gradientmap 0,0,0,255,0.0 255,0,0,255,0.5 255,255,255,128,1.0
+      th/gradientmap 0:0:0:255:0;255:0:0:255:0.5;255:255:255:128:1
+    """
+    tokens = [p.strip() for p in re.split(r"[;|\s]+", args.strip()) if p.strip()] if args.strip() else []
+    if not tokens:
+        await ctx.reply(
+            "**th/gradientmap** — apply a color gradient map via FFmpeg curves\n"
+            "Attach a video or image and provide color stops.\n\n"
+            "**Usage:** `th/gradientmap R,G,B [A] [pos] ...`\n"
+            "**Examples:**\n"
+            "`th/gradientmap 0,0,0 255,255,255`\n"
+            "`th/gradientmap 0,0,0,255,0.0 255,0,0,255,0.5 255,255,255,128,1.0`\n"
+            "**As pipe effect:** `th/ihtx 1 5 - mp4 gradientmap=0:0:0:255:0;255:0:0:255:0.5`\n"
+            "Alias: `th/gm`"
+        )
+        return
+
+    attachment = None
+    if ctx.message and ctx.message.attachments:
+        attachment = ctx.message.attachments[0]
+    elif ctx.message and ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref.attachments:
+                attachment = ref.attachments[0]
+        except Exception:
+            pass
+
+    if not attachment:
+        await ctx.reply(
+            "❌ Attach a video or image to use `th/gradientmap`.\n"
+            "**Usage:** `th/gradientmap R,G,B [A] [pos] ...`"
+        )
+        return
+
+    if attachment.size > MAX_FILE_SIZE:
+        await ctx.reply("❌ File too large (max 25 MB).")
+        return
+
+    suffix = Path(attachment.filename).suffix.lower()
+    is_video = suffix in VIDEO_EXTENSIONS
+    is_image = suffix in IMAGE_EXTENSIONS
+    if not is_video and not is_image:
+        await ctx.reply(f"❌ Unsupported file type `{suffix}`. Attach a video or image.")
+        return
+
+    status_msg = await ctx.reply(f"⏳ Applying gradient map ({len(tokens)} color stops)…")
+
+    out_suffix = suffix if is_image else ".mp4"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = os.path.join(tmpdir, f"input{suffix}")
+        output_path = os.path.join(tmpdir, f"gradientmap{out_suffix}")
+
+        try:
+            await download_attachment(attachment, input_path)
+        except Exception as e:
+            await status_msg.edit(content=f"❌ Failed to download: {e}")
+            return
+
+        loop = asyncio.get_event_loop()
+        ok, err = await loop.run_in_executor(
+            None, _run_gradientmap, input_path, output_path, tokens,
+        )
+
+        if not ok:
+            await status_msg.edit(content=f"❌ Gradient map failed:\n```\n{err[-1500:]}\n```")
+            return
+
+        out_size = os.path.getsize(output_path)
+        if out_size > MAX_FILE_SIZE:
+            await status_msg.edit(content="⬆️ Output too large — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ **Gradient map** done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
+            return
+
+        out_filename = f"gradientmap_{Path(attachment.filename).stem}{out_suffix}"
+        try:
+            embed = discord.Embed(
+                title="IHTX Bot — th/gradientmap",
+                description=f"color stops: {len(tokens)}",
                 color=4886754,
             )
             embed.set_thumbnail(url="https://files.catbox.moe/xli8jw.png")
