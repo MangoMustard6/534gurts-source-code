@@ -776,14 +776,22 @@ def _run_nparisonffmpeg(
                 mkv_files.append(mkv_out)
             prev = mkv_out
 
-        # Build xstack (+ optional amix) filter_complex
+        # Build xstack (+ optional amix) filter_complex.
+        # Reset PTS on every stream so duration/timestamp mismatches
+        # (common when audio effects change length) don't crash xstack.
         inp_flags: list[str] = []
         for tf in mkv_files:
             inp_flags += ["-i", tf]
-        fv = "".join(f"[{k}:v]" for k in range(powers))
+        # Per-stream PTS reset → labelled video streams
+        pts_resets = "".join(
+            f"[{k}:v]setpts=PTS-STARTPTS[pv{k}];"
+            for k in range(powers)
+        )
+        stacked_v = "".join(f"[pv{k}]" for k in range(powers))
         fc_parts = [
-            f"{fv}xstack=inputs={powers}:grid={gridx}x{gridy},"
-            f"scale=iw/{gridx}:ih/{gridy}:flags=lanczos[v]"
+            pts_resets.rstrip(";"),
+            f"{stacked_v}xstack=inputs={powers}:grid={gridx}x{gridy},"
+            f"scale=iw/{gridx}:ih/{gridy}:flags=lanczos[v]",
         ]
         map_extra: list[str] = []
         acodec_args: list[str] = []
@@ -801,7 +809,7 @@ def _run_nparisonffmpeg(
             + ["-c:v", "libx264", "-preset", "fast", "-crf", "23",
                "-pix_fmt", "yuv420p"]
             + acodec_args
-            + [output_path]
+            + ["-shortest", output_path]
         )
         ok, err = _run_ffmpeg_raw(cmd, timeout=timeout)
         if not ok:
