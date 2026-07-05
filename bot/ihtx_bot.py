@@ -722,6 +722,71 @@ def _run_ffmpeg_raw(cmd: list[str], timeout: int = 180) -> tuple[bool, str]:
         return False, str(e)
 
 
+def _build_gradientmap_filter(params: list[str]) -> tuple[bool, str, str]:
+    """Parse color-point params and return (ok, error, vf_filter_string).
+
+    Each param is a color point string: "R,G,B"  "R,G,B,A"  or "R,G,B,A,pos"
+    where R/G/B/A are 0-255 integers and pos is 0.0-1.0 (default: evenly spaced).
+    At least 2 points are required.
+    """
+    if len(params) < 2:
+        return False, "gradientmap requires at least 2 color points (e.g. 0,0,0 255,255,255)", ""
+
+    points: list[tuple[int, int, int, int, float | None]] = []
+    for p in params:
+        parts = [x.strip() for x in p.split(",")]
+        try:
+            r = int(parts[0]); g = int(parts[1]); b = int(parts[2])
+            a   = int(parts[3])   if len(parts) > 3 else 255
+            pos = float(parts[4]) if len(parts) > 4 else None
+        except (ValueError, IndexError):
+            return False, f"gradientmap: invalid color point '{p}' — use R,G,B or R,G,B,A or R,G,B,A,pos", ""
+        points.append((r, g, b, a, pos))
+
+    n = len(points)
+
+    def _pos(pt: tuple, idx: int) -> float:
+        return pt[4] if pt[4] is not None else idx / (n - 1)
+
+    def _curve(channel: int) -> str:
+        return " ".join(
+            f"{_pos(pt, i):.4f}/{pt[channel] / 255:.4f}"
+            for i, pt in enumerate(points)
+        )
+
+    r_c = _curve(0); g_c = _curve(1); b_c = _curve(2); a_c = _curve(3)
+
+    vf = (
+        f"split=3[_gm_a][_gm_b][_gm_t];"
+        f"[_gm_a]format=rgb24,curves=r='{r_c}':g='{g_c}':b='{b_c}'[_gm_aa];"
+        f"[_gm_b]format=gray,curves=all='{a_c}'[_gm_bb];"
+        f"[_gm_aa][_gm_bb]alphamerge[_gm_c];"
+        f"[_gm_t][_gm_c]overlay"
+    )
+    return True, "", vf
+
+
+def _run_gradientmap(
+    input_path: str,
+    output_path: str,
+    params: list[str],
+) -> tuple[bool, str]:
+    """Apply gradientmap effect standalone. Returns (ok, error)."""
+    ok, err, vf = _build_gradientmap_filter(params)
+    if not ok:
+        return False, err
+    cmd = [
+        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+        "-i", input_path,
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "copy",
+        output_path,
+    ]
+    return _run_ffmpeg_raw(cmd, timeout=180)
+
+
 def _run_nparisonffmpeg(
     input_path: str,
     output_path: str,
@@ -1972,6 +2037,7 @@ PIPE_EFFECT_NAMES = {
     "avflip",
     "nepeta",
     "nparisonffmpeg", "nineparisonffmpeg",
+    "gradientmap", "gmap",
 }
 
 def _split_effect_params(value: str) -> list[str]:
