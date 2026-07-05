@@ -26,9 +26,9 @@ import { PROCESS_TIMEOUTS } from '../config.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-// fileaa binary — same binary used by the Python bot (bot/fileaa).
-// Supports --bungee and --rubberband-args flags for multi-pitch processing.
-const FILEAA_BIN = path.resolve(process.cwd(), 'bot', 'fileaa');
+// fileaa binary — shared with the Python bot at <workspace-root>/bot/fileaa.
+// The TS bot's cwd is artifacts/discord-bot, so go up two levels.
+const FILEAA_BIN = path.resolve(process.cwd(), '../../bot/fileaa');
 
 const IMAGE_EXTENSIONS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'svg', 'ico', 'avif', 'heic',
