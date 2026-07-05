@@ -759,25 +759,26 @@ def _run_nparisonffmpeg(
         if not ok:
             return False, f"lossless encode failed: {err}"
 
-        # Steps 1..powers+1 — collect 1..powers as grid inputs
-        ts_files: list[str] = []
+        # Steps 1..powers+1 — collect 1..powers as grid inputs.
+        # Use .mkv (not .ts) so any audio/video codec combination works.
+        mkv_files: list[str] = []
         prev = step0
         for step in range(1, powers + 2):
-            ts_out = os.path.join(tmpdir, f"np_{step}.ts")
+            mkv_out = os.path.join(tmpdir, f"np_{step}.mkv")
             ok, err = _run_ffmpeg_raw(
                 ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                 "-i", prev] + user_args + ["-movflags", "+faststart", ts_out],
+                 "-i", prev] + user_args + [mkv_out],
                 timeout=180,
             )
             if not ok:
                 return False, f"iteration {step} failed: {err}"
             if step <= powers:
-                ts_files.append(ts_out)
-            prev = ts_out
+                mkv_files.append(mkv_out)
+            prev = mkv_out
 
         # Build xstack (+ optional amix) filter_complex
         inp_flags: list[str] = []
-        for tf in ts_files:
+        for tf in mkv_files:
             inp_flags += ["-i", tf]
         fv = "".join(f"[{k}:v]" for k in range(powers))
         fc_parts = [
