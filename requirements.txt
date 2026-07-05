@@ -1,13 +1,9 @@
 aiohttp>=3.14.0
-anthropic
+catboxpy
 discord.py>=2.7.1
-fal-client
 flask
-google-genai>=1.0.0
 groq
-openai>=2.0.0
 Pillow
 python-dotenv
-replicate
 uvloop
 yt-dlp>=2026.3.17

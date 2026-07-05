@@ -40,20 +40,6 @@ except ImportError:
     _PIL_Image = None
 
 try:
-    from google import genai as _genai_lib
-    from google.genai import types as _genai_types
-    _gemini_api_key = os.environ.get("GEMINI_API_KEY")
-    if _gemini_api_key:
-        _genai_client = _genai_lib.Client(api_key=_gemini_api_key)
-        print(f"[genai] Gemini client initialized ✓")
-    else:
-        _genai_client = None
-        print("[genai] GEMINI_API_KEY not set — Gemini disabled")
-except Exception as _genai_init_err:
-    _genai_client = None
-    print(f"[genai] Failed to initialize Gemini client: {_genai_init_err}")
-
-try:
     import groq as _groq_lib
     _groq_api_key = os.environ.get("GROQ_API_KEY")
     if _groq_api_key:
@@ -66,18 +52,6 @@ except Exception as _groq_init_err:
     _groq_client = None
     print(f"[groq] Failed to initialize Groq client: {_groq_init_err}")
 
-try:
-    from openai import OpenAI as _OpenAI_lib
-    _openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
-    if _openrouter_api_key:
-        _openrouter_client = _OpenAI_lib(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=_openrouter_api_key,
-        )
-    else:
-        _openrouter_client = None
-except ImportError:
-    _openrouter_client = None
 
 
 # ---------- Configuration & constants ----------
@@ -657,7 +631,8 @@ async def _upload_to_catbox(file_path: str) -> str | None:
         filename = Path(file_path).name
         form = aiohttp.FormData()
         form.add_field("reqtype", "fileupload")
-        form.add_field("userhash", CATBOX_USERHASH)
+        if CATBOX_USERHASH:
+            form.add_field("userhash", CATBOX_USERHASH)
         form.add_field("fileToUpload", file_bytes, filename=filename)
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -9771,41 +9746,6 @@ Owner-only:
 - th/say / th/sayembed / th/setactivity
 - th/syncslash — register slash commands globally"""
 
-_GEMINI_MIME_MAP = {
-    ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp",
-    ".mp4": "video/mp4", ".mov": "video/quicktime",
-    ".avi": "video/x-msvideo", ".webm": "video/webm",
-    ".mkv": "video/x-matroska",
-}
-_GEMINI_MAX_ATTACH_BYTES = 20 * 1024 * 1024  # 20 MB
-
-
-async def _build_gemini_parts(text: str, attachments) -> list[dict]:
-    """Build Gemini content parts from text + Discord attachments."""
-    parts = []
-    for att in attachments:
-        ext = Path(att.filename).suffix.lower()
-        mime = _GEMINI_MIME_MAP.get(ext)
-        if mime and att.size <= _GEMINI_MAX_ATTACH_BYTES:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(att.url) as resp:
-                        if resp.status == 200:
-                            data = await resp.read()
-                            parts.append({
-                                "inline_data": {
-                                    "data": base64.b64encode(data).decode(),
-                                    "mime_type": mime,
-                                }
-                            })
-            except Exception:
-                pass
-    if text:
-        parts.append({"text": text})
-    if not parts:
-        parts.append({"text": ""})
-    return parts
 
 
 @bot.command(name="chat", aliases=["ask", "ai"])
@@ -9824,7 +9764,7 @@ async def chat(ctx: commands.Context, *, question: str = ""):
         await ctx.send("bradar say something or attach a file 😭")
         return
 
-    if _groq_client is None and _genai_client is None:
+    if _groq_client is None:
         await ctx.send("bradar no AI keys are configured rn 😭")
         return
 
@@ -9840,36 +9780,10 @@ async def chat(ctx: commands.Context, *, question: str = ""):
     bot_response: str | None = None
 
     async with ctx.typing():
-        # ── Attachments → always route through Gemini (vision support) ──────
-        if has_attachments and _genai_client is not None:
-            try:
-                parts = await _build_gemini_parts(question, attachments)
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: _genai_client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=parts,
-                        config=_genai_types.GenerateContentConfig(
-                            system_instruction=system_identity,
-                            max_output_tokens=1024,
-                        ),
-                    ),
-                )
-                try:
-                    bot_response = response.text
-                except Exception:
-                    bot_response = None
-                if not bot_response:
-                    try:
-                        bot_response = response.candidates[0].content.parts[0].text
-                    except Exception:
-                        bot_response = None
-            except Exception as exc:
-                print(f"[genai/chat/attach] error: {type(exc).__name__}: {exc}")
-
-        # ── Text-only: Groq primary (with rolling channel history) ───────────
-        if not bot_response and not has_attachments and _groq_client is not None:
+        # ── Groq: text-only (with rolling channel history) ───────────────────
+        if has_attachments:
+            bot_response = "bradar i can't read attachments rn, text only 😭"
+        elif _groq_client is not None:
             try:
                 messages = (
                     [{"role": "system", "content": system_identity}]
@@ -9889,34 +9803,6 @@ async def chat(ctx: commands.Context, *, question: str = ""):
                 bot_response = groq_resp.choices[0].message.content
             except Exception as exc:
                 print(f"[groq] error: {type(exc).__name__}: {exc}")
-
-        # ── Fallback: Gemini text-only ────────────────────────────────────────
-        if not bot_response and _genai_client is not None:
-            try:
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: _genai_client.models.generate_content(
-                        model="gemini-2.0-flash",
-                        contents=question or "[no text]",
-                        config=_genai_types.GenerateContentConfig(
-                            system_instruction=system_identity,
-                            temperature=0.85,
-                            max_output_tokens=1024,
-                        ),
-                    ),
-                )
-                try:
-                    bot_response = response.text
-                except Exception:
-                    bot_response = None
-                if not bot_response:
-                    try:
-                        bot_response = response.candidates[0].content.parts[0].text
-                    except Exception:
-                        bot_response = None
-            except Exception as exc:
-                print(f"[genai] error: {type(exc).__name__}: {exc}")
 
     if bot_response:
         # Save this exchange to the rolling channel history
@@ -10941,7 +10827,7 @@ async def on_message(message: discord.Message):
 
     if message.author.bot:
         # Still run autoreply2 for other bots in enabled channels
-        if message.channel.id in autoreply2 and (_groq_client is not None or _genai_client is not None):
+        if message.channel.id in autoreply2 and _groq_client is not None:
             ok2, _ = _check_heavy_limit(message.author.id)
             if ok2:
                 uid2 = message.author.id
@@ -10949,7 +10835,7 @@ async def on_message(message: discord.Message):
                 has_attachments = bool(message.attachments)
                 system2 = _CHAT_SYSTEM_PROMPT + _AR2_COMMAND_REF
                 reply2_text = None
-                if _groq_client is not None and not has_attachments:
+                if not has_attachments:
                     try:
                         groq_hist2 = _ar2_groq_histories.setdefault(uid2, [])
                         groq_hist2.append({"role": "user", "content": message.content or "[empty]"})
@@ -10969,31 +10855,6 @@ async def on_message(message: discord.Message):
                         groq_hist2.append({"role": "assistant", "content": reply2_text})
                     except Exception as _groq_ar2_exc:
                         print(f"[groq/ar2/bot] error: {type(_groq_ar2_exc).__name__}: {_groq_ar2_exc}")
-                if not reply2_text and _genai_client is not None:
-                    hist2 = _chat_histories.setdefault(uid2, [])
-                    parts2 = await _build_gemini_parts(message.content, message.attachments)
-                    hist2.append({"role": "user", "parts": parts2})
-                    if len(hist2) > _CHAT_MAX_HISTORY:
-                        hist2[:] = hist2[-_CHAT_MAX_HISTORY:]
-                    try:
-                        loop2 = asyncio.get_event_loop()
-                        resp2 = await loop2.run_in_executor(
-                            None,
-                            lambda: _genai_client.models.generate_content(
-                                model="gemini-2.5-flash",
-                                contents=hist2,
-                                config=_genai_types.GenerateContentConfig(
-                                    system_instruction=system2,
-                                    max_output_tokens=1024,
-                                ),
-                            ),
-                        )
-                        reply2_text = resp2.text
-                        text_only2 = [p for p in parts2 if "text" in p] or [{"text": "[media]"}]
-                        hist2[-1] = {"role": "user", "parts": text_only2}
-                        hist2.append({"role": "model", "parts": [{"text": reply2_text}]})
-                    except Exception:
-                        pass
                 if reply2_text:
                     await asyncio.sleep(random.uniform(5, 7.5))
                     chunks2 = [reply2_text[i:i+1900] for i in range(0, len(reply2_text), 1900)]
@@ -11020,7 +10881,7 @@ async def on_message(message: discord.Message):
                 break
 
         # Autoreply2 — AI reply to every message in enabled channels
-        if message.channel.id in autoreply2 and (_groq_client is not None or _genai_client is not None):
+        if message.channel.id in autoreply2 and _groq_client is not None:
             ok2, _ = _check_heavy_limit(message.author.id)
             if ok2:
                 uid2 = message.author.id
@@ -11034,8 +10895,8 @@ async def on_message(message: discord.Message):
 
                 reply2_text = None
 
-                # ── Primary: Groq (text-only messages) ───────────────────────
-                if _groq_client is not None and not has_attachments:
+                # ── Groq (text-only messages) ─────────────────────────────────
+                if not has_attachments:
                     try:
                         groq_hist2 = _ar2_groq_histories.setdefault(uid2, [])
                         groq_hist2.append({"role": "user", "content": message.content or "[empty]"})
@@ -11055,33 +10916,6 @@ async def on_message(message: discord.Message):
                         groq_hist2.append({"role": "assistant", "content": reply2_text})
                     except Exception as _groq_ar2_exc:
                         print(f"[groq/ar2] error: {type(_groq_ar2_exc).__name__}: {_groq_ar2_exc}")
-
-                # ── Fallback: Gemini (also handles image attachments) ─────────
-                if not reply2_text and _genai_client is not None:
-                    hist2 = _chat_histories.setdefault(uid2, [])
-                    parts2 = await _build_gemini_parts(message.content, message.attachments)
-                    hist2.append({"role": "user", "parts": parts2})
-                    if len(hist2) > _CHAT_MAX_HISTORY:
-                        hist2[:] = hist2[-_CHAT_MAX_HISTORY:]
-                    try:
-                        loop2 = asyncio.get_event_loop()
-                        resp2 = await loop2.run_in_executor(
-                            None,
-                            lambda: _genai_client.models.generate_content(
-                                model="gemini-2.5-flash",
-                                contents=hist2,
-                                config=_genai_types.GenerateContentConfig(
-                                    system_instruction=system2,
-                                    max_output_tokens=1024,
-                                ),
-                            ),
-                        )
-                        reply2_text = resp2.text
-                        text_only2 = [p for p in parts2 if "text" in p] or [{"text": "[media]"}]
-                        hist2[-1] = {"role": "user", "parts": text_only2}
-                        hist2.append({"role": "model", "parts": [{"text": reply2_text}]})
-                    except Exception:
-                        pass
 
                 if reply2_text:
                     await asyncio.sleep(random.uniform(5, 7.5))
