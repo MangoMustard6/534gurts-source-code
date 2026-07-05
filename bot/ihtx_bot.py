@@ -6,6 +6,9 @@ and the preview1280 TV-simulator montage command.
 
 Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp,
 ImageMagick/sox/etc. depending on advanced effects.
+
+_UPDATELOG (newest first):
+- 2026-07-05: Added radar, timecode, wmm3dripple, and wave2 pipe effects.
 """
 
 import discord
@@ -2041,6 +2044,7 @@ PIPE_EFFECT_NAMES = {
     "wave2",
     "wmm3dripple",
     "timecode",
+    "radar",
 }
 
 def _split_effect_params(value: str) -> list[str]:
@@ -2986,6 +2990,37 @@ def _apply_pipe_effects(
                 ok, err = _run_ffmpeg_raw(cmd, timeout=180)
                 if not ok:
                     return False, f"timecode failed: {err}"
+                current = out
+                continue
+
+            # radar — 2×2 video analysis meter wall (waveform / histogram / vectorscope)
+            if name == "radar":
+                vinfo = _ffprobe_video_info(current)
+                rW = vinfo["width"]
+                rH = vinfo["height"]
+                if not rW or not rH:
+                    return False, "radar: could not probe video dimensions"
+                fc = (
+                    f"[0:v]format=yuv444p,split=4[ra][rb][rc][rd];"
+                    f"[ra]waveform,hue=b=1.455,scale={rW}:{rH},setsar=1:1[raa];"
+                    f"[rb]scale={rW}:{rH},setsar=1:1[rbn];"  # extra scale vs. TS: guarantees every stacked branch has identical dimensions
+                    f"[rbn][raa]vstack[rV];"
+                    f"[rc]format=rgb24,histogram=colors_mode=coloronblack,hue=b=1.25,scale={rW}:{rH},setsar=1:1[rcc];"
+                    f"[rd]vectorscope=color4,hue=b=1.9,scale={rW}:{rH},setsar=1:1[rdd];"
+                    f"[rcc][rdd]vstack[rV2];"
+                    f"[rV][rV2]hstack,scale={rW}:{rH},setsar=1:1,format=yuv420p[vout]"
+                )
+                cmd = [
+                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                    "-i", current,
+                    "-filter_complex", fc,
+                    "-map", "[vout]", "-map", "0:a?",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-pix_fmt", "yuv420p", "-c:a", "copy", out,
+                ]
+                ok, err = _run_ffmpeg_raw(cmd, timeout=300)
+                if not ok:
+                    return False, f"radar failed: {err}"
                 current = out
                 continue
 
