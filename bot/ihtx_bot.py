@@ -749,8 +749,8 @@ def _run_nparisonffmpeg(
         )
         has_audio = "audio" in _probe.stdout
 
-        # Step 0: lossless encode
-        step0 = os.path.join(tmpdir, "np_0.mp4")
+        # Step 0: lossless encode — use .mkv (ffv1 is not valid in .mp4)
+        step0 = os.path.join(tmpdir, "np_0.mkv")
         s0_cmd = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                   "-i", input_path, "-c:v", "ffv1"]
         s0_cmd += ["-c:a", "flac"] if has_audio else ["-an"]
