@@ -1852,6 +1852,7 @@ PIPE_EFFECT_NAMES = {
     "acontrast", "adestroy", "audioequalizer",
     "avflip",
     "nepeta",
+    "nparisonffmpeg", "nineparisonffmpeg",
 }
 
 def _split_effect_params(value: str) -> list[str]:
@@ -3567,6 +3568,122 @@ def _apply_pipe_effects(
                 ok, err = _run_ffmpeg_raw(cmd, timeout=180)
                 if not ok:
                     return False, f"avflip: ffmpeg failed: {err}"
+                current = out
+                continue
+
+            # nparisonffmpeg / nineparisonffmpeg — iterative xstack grid filter
+            # Syntax: nparisonffmpeg(NxM <ffmpeg args>)
+            # e.g.   nparisonffmpeg(2x2 -vf negate)
+            # Applies <ffmpeg args> once per grid cell (each step chains from the
+            # previous), then stacks all `N*M` intermediate outputs in a grid.
+            if name in ("nparisonffmpeg", "nineparisonffmpeg"):
+                if not params:
+                    return False, (
+                        "nparisonffmpeg requires a grid and FFmpeg args, "
+                        "e.g. nparisonffmpeg(2x2 -vf negate)."
+                    )
+                grid_str = params[0]
+                try:
+                    _gp = grid_str.lower().split("x")
+                    _gridx = int(_gp[0])
+                    _gridy = int(_gp[1])
+                except (IndexError, ValueError):
+                    return False, (
+                        f"nparisonffmpeg: invalid grid '{grid_str}' — "
+                        "use NxM format, e.g. 2x2."
+                    )
+                if _gridx < 1 or _gridy < 1 or _gridx * _gridy < 2:
+                    return False, (
+                        "nparisonffmpeg: grid must have at least 2 cells, "
+                        "e.g. 1x2 or 2x2."
+                    )
+                _powers = _gridx * _gridy
+                if _powers > 16:
+                    return False, (
+                        f"nparisonffmpeg: grid too large ({_powers} cells) — "
+                        "max 16 cells (e.g. 4x4)."
+                    )
+                _user_args_str = " ".join(params[1:]) if len(params) > 1 else ""
+                if not _user_args_str:
+                    return False, (
+                        "nparisonffmpeg: no FFmpeg args provided after the grid — "
+                        "e.g. nparisonffmpeg(2x2 -vf negate)."
+                    )
+                try:
+                    _user_args = shlex.split(_user_args_str)
+                except ValueError as _e:
+                    return False, f"nparisonffmpeg: invalid FFmpeg args: {_e}"
+
+                # Detect whether input has an audio stream
+                _np_probe = subprocess.run(
+                    ["ffprobe", "-v", "error", "-select_streams", "a:0",
+                     "-show_entries", "stream=codec_type",
+                     "-of", "default=noprint_wrappers=1:nokey=1", current],
+                    capture_output=True, text=True, timeout=10,
+                )
+                _np_has_audio = "audio" in _np_probe.stdout
+
+                # Step 0: lossless-encode the input so iterative re-encodes are clean
+                _step0 = os.path.join(tmpdir, f"np_{i}_0.mp4")
+                _s0_cmd = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                           "-i", current, "-c:v", "ffv1"]
+                _s0_cmd += ["-c:a", "flac"] if _np_has_audio else ["-an"]
+                _s0_cmd.append(_step0)
+                ok, err = _run_ffmpeg_raw(_s0_cmd, timeout=180)
+                if not ok:
+                    return False, f"nparisonffmpeg: lossless encode failed: {err}"
+
+                # Steps 1..powers+1: each step applies user args to the previous .ts.
+                # Collect steps 1..powers as grid inputs (powers+1 is discarded).
+                _ts_files: list[str] = []
+                _prev = _step0
+                for _step in range(1, _powers + 2):
+                    _ts_out = os.path.join(tmpdir, f"np_{i}_{_step}.ts")
+                    ok, err = _run_ffmpeg_raw(
+                        ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                         "-i", _prev] + _user_args +
+                        ["-movflags", "+faststart", _ts_out],
+                        timeout=180,
+                    )
+                    if not ok:
+                        return False, f"nparisonffmpeg: iteration {_step} failed: {err}"
+                    if _step <= _powers:
+                        _ts_files.append(_ts_out)
+                    _prev = _ts_out
+
+                # Build xstack (+ optional amix) filter_complex.
+                # After xstack the frame is gridx*W x gridy*H; divide both dims to
+                # restore per-tile size.  -2 on height keeps even-pixel alignment.
+                _inp_flags: list[str] = []
+                for _tf in _ts_files:
+                    _inp_flags += ["-i", _tf]
+                _fv = "".join(f"[{_k}:v]" for _k in range(_powers))
+                _fc_parts = [
+                    f"{_fv}xstack=inputs={_powers}:grid={grid_str},"
+                    f"scale=iw/{_gridx}:ih/{_gridy}:flags=lanczos[v]"
+                ]
+                _map_extra: list[str] = []
+                _acodec_args: list[str] = []
+                if _np_has_audio:
+                    _fa = "".join(f"[{_k}:a]" for _k in range(_powers))
+                    _fc_parts.append(f"{_fa}amix={_powers}:normalize=0[a]")
+                    _map_extra = ["-map", "[a]"]
+                    _acodec_args = ["-c:a", "aac", "-b:a", "192k"]
+                _fc = ";".join(_fc_parts)
+                # Scale timeout with grid size (120 s base + 60 s per cell)
+                _np_timeout = 120 + _powers * 60
+                cmd = (
+                    ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
+                    + _inp_flags
+                    + ["-filter_complex", _fc, "-map", "[v]"] + _map_extra
+                    + ["-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                       "-pix_fmt", "yuv420p"]
+                    + _acodec_args
+                    + [out]
+                )
+                ok, err = _run_ffmpeg_raw(cmd, timeout=_np_timeout)
+                if not ok:
+                    return False, f"nparisonffmpeg: xstack failed: {err}"
                 current = out
                 continue
 
