@@ -732,13 +732,27 @@ def _build_gradientmap_filter(params: list[str]) -> tuple[bool, str, str]:
     Each param is a color point string: "R,G,B"  "R,G,B,A"  or "R,G,B,A,pos"
     where R/G/B/A are 0-255 integers and pos is 0.0-1.0 (default: evenly spaced).
     Colons and underscores are also accepted as separators for pipe syntax.
+    A single param may be an array literal: [[r,g,b,a,pos],[r,g,b,a,pos],...].
     At least 2 points are required.
     """
-    if len(params) < 2:
+
+    # Flatten JS-style array literal into a list of point strings
+    raw_points: list[str] = []
+    if len(params) == 1 and params[0].strip().startswith("[[") and params[0].strip().endswith("]]"):
+        inner = params[0].strip()[2:-2].strip()
+        # Split on '],[' allowing whitespace around the comma
+        raw_points = [
+            p.strip().lstrip("[").rstrip("]")
+            for p in re.split(r"\]\s*,\s*\[", inner)
+        ]
+    else:
+        raw_points = params
+
+    if len(raw_points) < 2:
         return False, "gradientmap requires at least 2 color points (e.g. 0,0,0 255,255,255)", ""
 
     points: list[tuple[int, int, int, int, float | None]] = []
-    for p in params:
+    for p in raw_points:
         # Support comma (standalone) or colon/underscore (pipe) separators
         parts = [x.strip() for x in re.split(r"[,:_]", p.strip())]
         if len(parts) < 3:
@@ -2066,13 +2080,15 @@ def _split_effect_params(value: str) -> list[str]:
 
 
 def _split_pipe_segments(pipe_str: str) -> list[str]:
-    """Split pipe_str on ',' while respecting parentheses.
+    """Split pipe_str on ',' while respecting parentheses and arrays.
 
-    Commas inside ``ffmpeg(...)`` or any other ``name(...)`` block are
-    treated as part of the args, not as segment delimiters.
+    Commas inside ``ffmpeg(...)`` or any other ``name(...)`` block, and
+    commas inside ``[[...]]`` array literals, are treated as part of the
+    args, not as segment delimiters.
     """
     segments: list[str] = []
     depth = 0
+    array_depth = 0
     current: list[str] = []
     for ch in pipe_str:
         if ch == "(":
@@ -2081,7 +2097,13 @@ def _split_pipe_segments(pipe_str: str) -> list[str]:
         elif ch == ")":
             depth -= 1
             current.append(ch)
-        elif ch in (",", ">") and depth == 0:
+        elif ch == "[":
+            array_depth += 1
+            current.append(ch)
+        elif ch == "]":
+            array_depth -= 1
+            current.append(ch)
+        elif ch in (",", ">") and depth == 0 and array_depth == 0:
             seg = "".join(current).strip()
             if seg:
                 segments.append(seg)
@@ -2156,7 +2178,12 @@ def _parse_pipe_effects(pipe_str: str) -> list[tuple[str, list[str]]]:
                 effects.append((current_name, current_params))
             name, value = part.split("=", 1)
             current_name = name.strip().lower()
-            if "::" in value:
+            vstrip = value.strip()
+            if current_name in ("gradientmap", "gmap") and vstrip.startswith("[[") and vstrip.endswith("]]"):
+                # Array literal: keep the whole [[...]] block as one raw param so
+                # spaces inside tuples do not get tokenized away.
+                current_params = [vstrip]
+            elif "::" in value:
                 # :: is an explicit param separator — each segment is kept verbatim
                 # as one param (no further splitting on | or spaces).
                 # Allows: mp2=-4.5|5::G-Major_17  →  params=["-4.5|5", "G-Major_17"]
@@ -8247,6 +8274,7 @@ async def gradientmap_command(ctx: commands.Context, *, args: str = ""):
             "`th/gradientmap 0,0,0 255,255,255`\n"
             "`th/gradientmap 0,0,0,255,0.0 255,0,0,255,0.5 255,255,255,128,1.0`\n"
             "**As pipe effect:** `th/ihtx 1 5 - mp4 gradientmap=0:0:0:255:0;255:0:0:255:0.5`\n"
+            "**Array syntax:** `th/ihtx 1 5 - mp4 gradientmap=[[0,0,0,0,0.25],[151,59,0,255,0.45]]`\n"
             "Alias: `th/gm`"
         )
         return
