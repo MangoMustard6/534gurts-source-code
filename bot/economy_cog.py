@@ -1010,6 +1010,9 @@ class EconomyCog(commands.Cog, name="Economy"):
                     None, _run_nparisonffmpeg,
                     input_path, output_path, gridx, gridy, user_args,
                 )
+            except Exception as exc:
+                import traceback
+                ok, err = False, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
             finally:
                 _done.set()
                 tick_task.cancel()
