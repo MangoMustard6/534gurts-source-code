@@ -17,6 +17,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { execFileSync } from 'child_process';
 import { Message, ChatInputCommandInteraction, Guild } from 'discord.js';
 import { spawnAsync } from '../utils/spawn.js';
 import { makeTempDir, cleanupDir, downloadUrl } from '../utils/temp.js';
@@ -24,6 +25,10 @@ import { getUploadLimitBytes, formatBytes } from '../utils/limits.js';
 import { PROCESS_TIMEOUTS } from '../config.js';
 
 // ── Constants ────────────────────────────────────────────────────────────────
+
+// fileaa binary — same binary used by the Python bot (bot/fileaa).
+// Supports --bungee and --rubberband-args flags for multi-pitch processing.
+const FILEAA_BIN = path.resolve(process.cwd(), 'bot', 'fileaa');
 
 const IMAGE_EXTENSIONS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'svg', 'ico', 'avif', 'heic',
@@ -246,21 +251,22 @@ async function layerBungeeFallback(
   ], { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
 }
 
-async function layerBungee(
-  inputWav: string, out: string,
-  semitones: number,
+/**
+ * Bungee tier 1: fileaa --bungee handles ALL pitches in one call and
+ * writes a pre-mixed WAV directly to `out`.
+ * pitchesCsv e.g. "-7,8" — comma-separated semitone values.
+ */
+async function runFileaaBungee(
+  inputWav: string,
+  out: string,
+  pitchesCsv: string,
 ): Promise<{ code: number; stderr: string }> {
-  return spawnAsync('bungee', [
-    '--pitch', String(semitones),
-    inputWav, out,
-  ], { timeout: PROCESS_TIMEOUTS.RUBBERBAND_MS });
-}
-
-async function isBungeeAvailable(): Promise<boolean> {
-  try {
-    const r = await spawnAsync('bungee', ['--version'], { timeout: 3_000 });
-    return r.code === 0;
-  } catch { return false; }
+  if (!fs.existsSync(FILEAA_BIN)) {
+    return { code: 1, stderr: 'fileaa binary not found' };
+  }
+  try { execFileSync('chmod', ['+x', FILEAA_BIN]); } catch { /* ignore */ }
+  return spawnAsync(FILEAA_BIN, [inputWav, out, pitchesCsv, '--bungee'],
+    { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
 }
 
 // ── Core pipeline ────────────────────────────────────────────────────────────
@@ -294,15 +300,7 @@ async function runSap(
     return null;
   }
 
-  // 3. Binary availability checks
-  let bungeeOk = false;
-  if (opts.style === 'bungee') {
-    bungeeOk = await isBungeeAvailable();
-    if (!bungeeOk) {
-      await setStatus('⚠️ `bungee` binary not found — using high-quality FFmpeg fallback…');
-      await new Promise((r) => setTimeout(r, 800));
-    }
-  }
+  // 3. Binary / soundtouch availability check
   if (opts.style === 'soundtouch') {
     const ssOk = await isSoundtouchAvailable();
     if (!ssOk) {
@@ -311,54 +309,108 @@ async function runSap(
     }
   }
 
-  // 4. Render each pitch layer
-  const layerPaths: string[] = [];
-  for (let i = 0; i < opts.pitches.length; i++) {
-    const st  = opts.pitches[i];
-    const out = path.join(tmpDir, `layer_${i}.wav`);
-    await setStatus(
-      `⏳ Layer ${i + 1}/${opts.pitches.length} — pitch ${st >= 0 ? '+' : ''}${st} st (${styleLabel(opts.style)})…`,
-    );
+  // Build pitches CSV once (used by fileaa for bungee)
+  const pitchesCsv = opts.pitches
+    .map((p) => (Number.isInteger(p) ? String(p) : p.toFixed(4)))
+    .join(',');
 
-    let result: { code: number; stderr: string };
-    switch (opts.style) {
-      case 'rubberband_r2': result = await layerRubberband(inputWav, out, st, '-2'); break;
-      case 'rubberband_r3': result = await layerRubberband(inputWav, out, st, '-3'); break;
-      case 'soundtouch':    result = await layerSoundtouch(inputWav, out, st);       break;
-      case 'bungee':
-        result = bungeeOk
-          ? await layerBungee(inputWav, out, st)
-          : await layerBungeeFallback(inputWav, out, st);
-        break;
+  const mixedWav = path.join(tmpDir, 'mixed.wav');
+
+  // ── Bungee: fileaa --bungee (one call, all pitches → pre-mixed WAV) ─────
+  if (opts.style === 'bungee') {
+    await setStatus(`⏳ Bungee pitch processing (${opts.pitches.length} voice${opts.pitches.length > 1 ? 's' : ''})…`);
+    const fileaaResult = await runFileaaBungee(inputWav, mixedWav, pitchesCsv);
+    if (fileaaResult.code !== 0) {
+      // Fallback: per-pitch asetrate + amix
+      console.log(`[ihtxsap] fileaa --bungee failed (${fileaaResult.stderr.slice(-200)}), using asetrate fallback`);
+      await setStatus(`⏳ Bungee fallback — processing ${opts.pitches.length} voice${opts.pitches.length > 1 ? 's' : ''} via FFmpeg…`);
+      const layerPaths: string[] = [];
+      for (let i = 0; i < opts.pitches.length; i++) {
+        const st    = opts.pitches[i];
+        const ratio = stToRatio(st);
+        const lp    = path.join(tmpDir, `bungee_layer_${i}.wav`);
+        const af = [
+          `asetrate=44100*${ratio.toFixed(9)}`,
+          `aresample=44100`,
+          `aphaser=type=t:speed=0.5:decay=0.4`,
+        ].join(',');
+        const r = await spawnAsync('ffmpeg', [
+          '-y', '-i', inputWav, '-af', af,
+          '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2', lp,
+        ], { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
+        if (r.code !== 0) {
+          await setStatus(`❌ Bungee layer ${i + 1} failed.\n\`\`\`\n${r.stderr.slice(-400)}\n\`\`\``);
+          return null;
+        }
+        layerPaths.push(lp);
+      }
+      // amix fallback layers
+      const volFilter = opts.volume !== 1 ? `,volume=${opts.volume.toFixed(6)}` : '';
+      const mixArgs: string[] = ['-y'];
+      for (const lp of layerPaths) mixArgs.push('-i', lp);
+      const inputs = layerPaths.map((_, i) => `[${i}:a]`).join('');
+      const fc = layerPaths.length === 1
+        ? `[0:a]alimiter=limit=0.99:level=false${volFilter}[out]`
+        : `${inputs}amix=inputs=${layerPaths.length}:duration=longest:normalize=0,alimiter=limit=0.99:level=false${volFilter}[out]`;
+      mixArgs.push('-filter_complex', fc, '-map', '[out]',
+        '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2', mixedWav);
+      const mix = await spawnAsync('ffmpeg', mixArgs, { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
+      if (mix.code !== 0) {
+        await setStatus(`❌ Bungee mix failed.\n\`\`\`\n${mix.stderr.slice(-400)}\n\`\`\``);
+        return null;
+      }
+    }
+    // Apply volume to the pre-mixed fileaa output if needed
+    if (fileaaResult.code === 0 && opts.volume !== 1) {
+      const volWav = path.join(tmpDir, 'mixed_vol.wav');
+      const vr = await spawnAsync('ffmpeg', [
+        '-y', '-i', mixedWav, '-af', `volume=${opts.volume.toFixed(6)}`,
+        '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2', volWav,
+      ], { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
+      if (vr.code === 0) fs.renameSync(volWav, mixedWav);
+    }
+  } else {
+    // 4. Render each pitch layer (R2 / R3 / SoundTouch)
+    const layerPaths: string[] = [];
+    for (let i = 0; i < opts.pitches.length; i++) {
+      const st  = opts.pitches[i];
+      const out = path.join(tmpDir, `layer_${i}.wav`);
+      await setStatus(
+        `⏳ Layer ${i + 1}/${opts.pitches.length} — pitch ${st >= 0 ? '+' : ''}${st} st (${styleLabel(opts.style)})…`,
+      );
+
+      let result: { code: number; stderr: string };
+      switch (opts.style) {
+        case 'rubberband_r2': result = await layerRubberband(inputWav, out, st, '-2'); break;
+        case 'rubberband_r3': result = await layerRubberband(inputWav, out, st, '-3'); break;
+        case 'soundtouch':    result = await layerSoundtouch(inputWav, out, st);       break;
+      }
+
+      if (result!.code !== 0) {
+        await setStatus(
+          `❌ Layer ${i + 1} failed.\n\`\`\`\n${result!.stderr.slice(-400)}\n\`\`\``,
+        );
+        return null;
+      }
+      layerPaths.push(out);
     }
 
-    if (result!.code !== 0) {
-      await setStatus(
-        `❌ Layer ${i + 1} failed.\n\`\`\`\n${result!.stderr.slice(-400)}\n\`\`\``,
-      );
+    // 5. Mix all layers → mixed.wav
+    await setStatus(`⏳ Mixing ${layerPaths.length} layer${layerPaths.length > 1 ? 's' : ''}…`);
+    const mixArgs: string[] = ['-y'];
+    for (const lp of layerPaths) mixArgs.push('-i', lp);
+    const volFilter = opts.volume !== 1 ? `,volume=${opts.volume.toFixed(6)}` : '';
+    const inputs = layerPaths.map((_, i) => `[${i}:a]`).join('');
+    const fc = layerPaths.length === 1
+      ? `[0:a]alimiter=limit=0.99:level=false${volFilter}[out]`
+      : `${inputs}amix=inputs=${layerPaths.length}:duration=longest:normalize=0,alimiter=limit=0.99:level=false${volFilter}[out]`;
+    mixArgs.push('-filter_complex', fc, '-map', '[out]',
+      '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2', mixedWav);
+    const mix = await spawnAsync('ffmpeg', mixArgs, { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
+    if (mix.code !== 0) {
+      await setStatus(`❌ Mix failed.\n\`\`\`\n${mix.stderr.slice(-400)}\n\`\`\``);
       return null;
     }
-    layerPaths.push(out);
-  }
-
-  // 5. Mix all layers → mixed.wav
-  await setStatus(`⏳ Mixing ${layerPaths.length} layer${layerPaths.length > 1 ? 's' : ''}…`);
-  const mixedWav = path.join(tmpDir, 'mixed.wav');
-  const mixArgs: string[] = ['-y'];
-  for (const lp of layerPaths) mixArgs.push('-i', lp);
-  const volFilter = opts.volume !== 1 ? `,volume=${opts.volume.toFixed(6)}` : '';
-  const mixFilter = layerPaths.length === 1
-    ? `alimiter=limit=0.99:level=false${volFilter}`
-    : `amix=inputs=${layerPaths.length}:duration=longest:normalize=0,alimiter=limit=0.99:level=false${volFilter}`;
-  mixArgs.push(
-    '-filter_complex', mixFilter,
-    '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2',
-    mixedWav,
-  );
-  const mix = await spawnAsync('ffmpeg', mixArgs, { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
-  if (mix.code !== 0) {
-    await setStatus(`❌ Mix failed.\n\`\`\`\n${mix.stderr.slice(-400)}\n\`\`\``);
-    return null;
   }
 
   // 6. Repeat (concat) N times
@@ -397,13 +449,10 @@ async function runSap(
   return outputMp3;
 }
 
-function summaryLine(opts: SapOpts, bungeeOk = false): string {
+function summaryLine(opts: SapOpts): string {
   const pitchStr = opts.pitches.map((p) => (p >= 0 ? '+' : '') + p).join(', ');
-  const engine   = opts.style === 'bungee' && !bungeeOk
-    ? 'Bungee (FFmpeg fallback)'
-    : styleLabel(opts.style);
   const volPart  = opts.volume !== 1 ? ` · vol ×${opts.volume}` : '';
-  return `Pitches: **${pitchStr}** · snip **${opts.duration}s** · ${opts.repetitions}× · ${engine}${volPart}`;
+  return `Pitches: **${pitchStr}** · snip **${opts.duration}s** · ${opts.repetitions}× · ${styleLabel(opts.style)}${volPart}`;
 }
 
 // ── Prefix entry point ───────────────────────────────────────────────────────
