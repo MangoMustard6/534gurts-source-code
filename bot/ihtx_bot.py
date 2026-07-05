@@ -722,6 +722,93 @@ def _run_ffmpeg_raw(cmd: list[str], timeout: int = 180) -> tuple[bool, str]:
         return False, str(e)
 
 
+def _run_nparisonffmpeg(
+    input_path: str,
+    output_path: str,
+    gridx: int,
+    gridy: int,
+    user_args: list[str],
+) -> tuple[bool, str]:
+    """Iterative xstack grid: apply *user_args* once per cell, stack results.
+
+    Each cell receives one additional application of the FFmpeg args (chained
+    from the previous cell).  The final grid is scaled back to per-tile size.
+    Returns (ok, error_message).
+    """
+    powers = gridx * gridy
+    if powers > 16:
+        return False, f"Grid too large ({powers} cells) — max 16 (e.g. 4×4)."
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Detect audio
+        _probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=codec_type",
+             "-of", "default=noprint_wrappers=1:nokey=1", input_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        has_audio = "audio" in _probe.stdout
+
+        # Step 0: lossless encode
+        step0 = os.path.join(tmpdir, "np_0.mp4")
+        s0_cmd = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                  "-i", input_path, "-c:v", "ffv1"]
+        s0_cmd += ["-c:a", "flac"] if has_audio else ["-an"]
+        s0_cmd.append(step0)
+        ok, err = _run_ffmpeg_raw(s0_cmd, timeout=180)
+        if not ok:
+            return False, f"lossless encode failed: {err}"
+
+        # Steps 1..powers+1 — collect 1..powers as grid inputs
+        ts_files: list[str] = []
+        prev = step0
+        for step in range(1, powers + 2):
+            ts_out = os.path.join(tmpdir, f"np_{step}.ts")
+            ok, err = _run_ffmpeg_raw(
+                ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                 "-i", prev] + user_args + ["-movflags", "+faststart", ts_out],
+                timeout=180,
+            )
+            if not ok:
+                return False, f"iteration {step} failed: {err}"
+            if step <= powers:
+                ts_files.append(ts_out)
+            prev = ts_out
+
+        # Build xstack (+ optional amix) filter_complex
+        inp_flags: list[str] = []
+        for tf in ts_files:
+            inp_flags += ["-i", tf]
+        fv = "".join(f"[{k}:v]" for k in range(powers))
+        fc_parts = [
+            f"{fv}xstack=inputs={powers}:grid={gridx}x{gridy},"
+            f"scale=iw/{gridx}:ih/{gridy}:flags=lanczos[v]"
+        ]
+        map_extra: list[str] = []
+        acodec_args: list[str] = []
+        if has_audio:
+            fa = "".join(f"[{k}:a]" for k in range(powers))
+            fc_parts.append(f"{fa}amix={powers}:normalize=0[a]")
+            map_extra = ["-map", "[a]"]
+            acodec_args = ["-c:a", "aac", "-b:a", "192k"]
+        fc = ";".join(fc_parts)
+        timeout = 120 + powers * 60
+        cmd = (
+            ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
+            + inp_flags
+            + ["-filter_complex", fc, "-map", "[v]"] + map_extra
+            + ["-c:v", "libx264", "-preset", "fast", "-crf", "23",
+               "-pix_fmt", "yuv420p"]
+            + acodec_args
+            + [output_path]
+        )
+        ok, err = _run_ffmpeg_raw(cmd, timeout=timeout)
+        if not ok:
+            return False, f"xstack failed: {err}"
+
+    return True, ""
+
+
 def _probe_video_info(input_path: str) -> tuple[float, float]:
     """Return (duration_seconds, fps) for a video file via ffprobe."""
     result = subprocess.run(
