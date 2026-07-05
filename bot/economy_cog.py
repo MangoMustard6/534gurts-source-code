@@ -831,6 +831,248 @@ class EconomyCog(commands.Cog, name="Economy"):
                 await ctx.invoke(self.ihtxgen, effect=first or "chaos")
 
     # -----------------------------------------------------------------------
+    # roxi nparisonffmpeg — standalone iterative xstack grid command
+    # -----------------------------------------------------------------------
+
+    @commands.command(name="nparisonffmpeg", aliases=["nparison"])
+    async def nparisonffmpeg_cmd(self, ctx: commands.Context, *, args: str = "") -> None:
+        """Apply an FFmpeg filter N×M times and xstack all versions into a grid.
+
+        Usage: roxi nparisonffmpeg <grid> <ffmpeg args>
+        Example: roxi nparisonffmpeg 2x2 -vf negate
+                 roxi nparisonffmpeg 2x3 -vf hue=h=90
+        Attach a video or reply to one.  Max grid: 4×4 (16 cells).
+        """
+        import shlex as _shlex
+        from bot.ihtx_bot import (
+            _run_nparisonffmpeg,
+            _upload_to_catbox,
+            _ffprobe_video_info,
+            MAX_FILE_SIZE,
+        )
+
+        # Parse args: first token is grid (NxM), rest are ffmpeg args
+        parts = args.strip().split(None, 1)
+        if len(parts) < 2:
+            await ctx.reply(
+                embed=discord.Embed(
+                    title="❌ Usage",
+                    description=(
+                        "**`roxi nparisonffmpeg <grid> <ffmpeg args>`**\n\n"
+                        "Example: `roxi nparisonffmpeg 2x2 -vf negate`\n"
+                        "Attach a video or reply to a message containing one."
+                    ),
+                    color=0xED4245,
+                ),
+                mention_author=False,
+            )
+            return
+
+        grid_str = parts[0].lower()
+        ffmpeg_args_str = parts[1].strip()
+
+        try:
+            gp = grid_str.split("x")
+            gridx = int(gp[0])
+            gridy = int(gp[1])
+        except (IndexError, ValueError):
+            await ctx.reply(
+                embed=discord.Embed(
+                    description=f"❌ Invalid grid `{grid_str}` — use `NxM` format, e.g. `2x2`.",
+                    color=0xED4245,
+                ),
+                mention_author=False,
+            )
+            return
+
+        if gridx < 1 or gridy < 1 or gridx * gridy < 2:
+            await ctx.reply(
+                embed=discord.Embed(
+                    description="❌ Grid must have at least 2 cells (e.g. `1x2`, `2x2`).",
+                    color=0xED4245,
+                ),
+                mention_author=False,
+            )
+            return
+
+        if gridx * gridy > 16:
+            await ctx.reply(
+                embed=discord.Embed(
+                    description=f"❌ Grid too large ({gridx * gridy} cells) — max 16 (e.g. `4x4`).",
+                    color=0xED4245,
+                ),
+                mention_author=False,
+            )
+            return
+
+        try:
+            user_args = _shlex.split(ffmpeg_args_str)
+        except ValueError as exc:
+            await ctx.reply(
+                embed=discord.Embed(
+                    description=f"❌ Invalid FFmpeg args: `{exc}`",
+                    color=0xED4245,
+                ),
+                mention_author=False,
+            )
+            return
+
+        # Resolve media
+        media_url: str | None = None
+        media_filename = "input.mp4"
+        if ctx.message.attachments:
+            a = ctx.message.attachments[0]
+            media_url = a.url
+            media_filename = a.filename
+        elif ctx.message.reference:
+            try:
+                ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+                if ref.attachments:
+                    a = ref.attachments[0]
+                    media_url = a.url
+                    media_filename = a.filename
+            except Exception:
+                pass
+
+        if not media_url:
+            await ctx.reply(
+                embed=discord.Embed(
+                    description="❌ Attach a video or reply to a message containing one.",
+                    color=0xED4245,
+                ),
+                mention_author=False,
+            )
+            return
+
+        _IHTX_COLOR = 0x001080
+        _IHTX_FOOTER_ICON = "https://files.catbox.moe/4snvbu.gif"
+        _user_tag = str(ctx.author)
+        _avatar_url = ctx.author.display_avatar.url
+        _start_time = time.monotonic()
+
+        def _make_embed(color: int = _IHTX_COLOR) -> discord.Embed:
+            e = discord.Embed(color=color, timestamp=discord.utils.utcnow())
+            e.set_author(name=_user_tag, icon_url=_avatar_url)
+            e.set_footer(text="nparisonffmpeg", icon_url=_IHTX_FOOTER_ICON)
+            return e
+
+        loading = _make_embed()
+        loading.add_field(name="Status:", value="⏳ Downloading media…", inline=False)
+        loading.add_field(name="Grid:", value=f"`{grid_str}` ({gridx * gridy} cells)", inline=True)
+        loading.add_field(name="Args:", value=f"`{ffmpeg_args_str[:200]}`", inline=True)
+        status_msg = await ctx.reply(embed=loading, mention_author=False)
+
+        async def _update(text: str, color: int = _IHTX_COLOR) -> None:
+            e = _make_embed(color)
+            e.add_field(name="Status:", value=text, inline=False)
+            try:
+                await status_msg.edit(embed=e)
+            except Exception:
+                pass
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            suffix = Path(media_filename).suffix.lower() or ".mp4"
+            input_path = os.path.join(tmpdir, f"input{suffix}")
+            output_path = os.path.join(tmpdir, "nparison_out.mp4")
+
+            # Download
+            try:
+                async with __import__("aiohttp").ClientSession() as session:
+                    async with session.get(media_url) as resp:
+                        if resp.status != 200:
+                            await _update(f"❌ Download failed (HTTP {resp.status}).", 0xED4245)
+                            return
+                        data = await resp.read()
+                with open(input_path, "wb") as fh:
+                    fh.write(data)
+            except Exception as exc:
+                await _update(f"❌ Download error: `{exc}`", 0xED4245)
+                return
+
+            # Process
+            loop = asyncio.get_event_loop()
+            _done = asyncio.Event()
+
+            async def _tick() -> None:
+                while not _done.is_set():
+                    elapsed = int(time.monotonic() - _start_time)
+                    await _update(
+                        f"🔧 Building `{grid_str}` grid…\n⏱️ **{elapsed}s elapsed**"
+                    )
+                    try:
+                        await asyncio.wait_for(_done.wait(), timeout=4.0)
+                    except asyncio.TimeoutError:
+                        pass
+
+            tick_task = asyncio.create_task(_tick())
+            try:
+                ok, err = await loop.run_in_executor(
+                    None, _run_nparisonffmpeg,
+                    input_path, output_path, gridx, gridy, user_args,
+                )
+            finally:
+                _done.set()
+                tick_task.cancel()
+                try:
+                    await tick_task
+                except asyncio.CancelledError:
+                    pass
+
+            if not ok:
+                await _update(f"❌ nparisonffmpeg failed:\n```\n{err[-1200:]}\n```", 0xED4245)
+                return
+
+            out_size = os.path.getsize(output_path)
+            elapsed = time.monotonic() - _start_time
+            size_str = (
+                f"{out_size / 1048576:.2f} MB" if out_size >= 1048576
+                else f"{out_size / 1024:.2f} KB"
+            )
+
+            try:
+                vinfo = _ffprobe_video_info(output_path)
+                w, h = int(vinfo["width"]), int(vinfo["height"])
+                res_str = f"{w}×{h}"
+            except Exception:
+                res_str = "N/A"
+
+            result_embed = _make_embed()
+            result_embed.add_field(name="Grid:", value=f"`{grid_str}`", inline=True)
+            result_embed.add_field(name="Args:", value=f"`{ffmpeg_args_str[:200]}`", inline=True)
+            result_embed.add_field(name="Resolution:", value=res_str, inline=True)
+            result_embed.add_field(
+                name="File Info:",
+                value=f"{size_str}, took {elapsed:.2f}s",
+                inline=False,
+            )
+
+            stem = Path(media_filename).stem
+            out_filename = f"nparison_{grid_str}_{stem}.mp4"
+
+            if out_size > MAX_FILE_SIZE:
+                await _update("⬆️ Output >25 MB — uploading to Catbox…")
+                catbox_url = await _upload_to_catbox(output_path)
+                if catbox_url:
+                    result_embed.add_field(
+                        name="Download:",
+                        value=f"🔗 [Catbox]({catbox_url})\n`{catbox_url}`",
+                        inline=False,
+                    )
+                    await status_msg.edit(embed=result_embed)
+                else:
+                    await _update("❌ Output too large for Discord and Catbox upload failed.", 0xED4245)
+                return
+
+            try:
+                await status_msg.edit(
+                    embed=result_embed,
+                    attachments=[discord.File(output_path, filename=out_filename)],
+                )
+            except discord.HTTPException:
+                await status_msg.edit(embed=result_embed)
+                await ctx.send(file=discord.File(output_path, filename=out_filename))
+
+    # -----------------------------------------------------------------------
     # /ping and /status — latency and health
     # -----------------------------------------------------------------------
 
