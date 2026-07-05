@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-05: Added freakzingatesteffect as a th/ihtx pipe effect and a th/freakzingatesteffect (alias th/fzte) standalone command.
 - 2026-07-05: Wired gradientmap/gmap as a th/ihtx pipe effect and added th/gradientmap (alias th/gm) standalone command.
 - 2026-07-05: Added radar, timecode, wmm3dripple, and wave2 pipe effects.
 """
@@ -811,6 +812,198 @@ def _run_gradientmap(
         output_path,
     ]
     return _run_ffmpeg_raw(cmd, timeout=180)
+
+
+def _run_freakzinga_test_effect(
+    input_path: str,
+    output_path: str,
+    params: list[str] | None = None,
+) -> tuple[bool, str]:
+    """Freakzinga test effect — ports the provided TS/FFmpeg pipeline.
+
+    Downloads a 3D LUT cube, a displacement-map video, and a multi-pitch
+    binary, then applies a complex FFmpeg filter graph and pitch-shifted audio.
+
+    The downloaded displacement map is input 0 and loops indefinitely; the
+    user's video is input 1.  Defaults mirror the original constants (1920×1080,
+    44100 Hz, fixed pitch list).  Optional params can override:
+
+        freakzingatesteffect=1280|720|48000
+        freakzingatesteffect=1280|720|48000|-12|-7|0|5|12
+
+    Aliases in pipe syntax: fzte, freaktest.
+    """
+    import urllib.request
+
+    params = params or []
+    w, h, sr = 1920, 1080, 44100
+    pitch_values = "-20,-17,-13,-8,-5,-1,4,7,11,16,19,23"
+
+    if params:
+        try:
+            joined = " ".join(params)
+            parts = [p.strip() for p in re.split(r"[;|,_\s]+", joined) if p.strip()]
+            if len(parts) >= 2:
+                w = int(parts[0])
+                h = int(parts[1])
+            if len(parts) >= 3:
+                sr = int(parts[2])
+            if len(parts) >= 4:
+                pitch_values = ",".join(parts[3:])
+        except Exception:
+            # Keep defaults on any parse error.
+            pass
+
+    # Font fallback for drawtext
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    if not os.path.exists(font_path):
+        for candidate in (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+        ):
+            if os.path.exists(candidate):
+                font_path = candidate
+                break
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        lut_path = os.path.join(tmpdir, "a.cube")
+        disp_path = os.path.join(tmpdir, "tv_sim_displacement_map.mov")
+        pitch_bin_path = os.path.join(tmpdir, "program")
+        intermediate = os.path.join(tmpdir, "a001.mkv")
+        audio_wav = os.path.join(tmpdir, "h001.wav")
+        shifted_wav = os.path.join(tmpdir, "out001.wav")
+
+        # 1. Download LUT cube
+        try:
+            req = urllib.request.Request(
+                "https://file.garden/aRsVTo5zvgxNjaSF/a.cube",
+                headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"},
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                with open(lut_path, "wb") as f:
+                    f.write(resp.read())
+        except Exception as e:
+            return False, f"Failed to download LUT cube: {e}"
+
+        # 2. Download displacement map video
+        try:
+            req = urllib.request.Request(
+                "https://file.garden/aTXso15ukD3mnuPI/tv_sim_displacement_map.mov",
+                headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"},
+            )
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                with open(disp_path, "wb") as f:
+                    f.write(resp.read())
+        except Exception as e:
+            return False, f"Failed to download displacement map: {e}"
+
+        # Detect whether the input has an audio stream
+        _probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=codec_type",
+             "-of", "default=noprint_wrappers=1:nokey=1", input_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        has_audio = "audio" in _probe.stdout
+
+        # 3. Complex video filter graph
+        filter_complex = (
+            "[0]lut3d={lut_path},format=yuv420p,rotate=-45/180*PI,format=yuv420p,scale=854:854,format=bgr32[00];"
+            "[1]format=yuv444p,geq='p(mod(X,W),mod(Y/4,H))',scale=854:854,eq=contrast='(1-0.9)*2.366666':eval=frame,format=bgr32,hue=b=-0.033[x];"
+            "color=s=854x854:c=#808080,format=bgr32[y];"
+            "[00][x][y]displace=edge=wrap,scale={w}:{h},setsar=1,format=yuv444p,format=yuv444p,scale=640:640,"
+            "geq='p(X-((sin((T*5*0+(0*15))+(Y/H)*(PI*0)))*(-15*0)),Y-((sin((T*5*0+(0.34666*15))+(X/W)*(PI*15)))*(-15*0.8)))',"
+            "scale={w}:{h},format=yuv420p,rotate=45/180*PI,format=yuv420p,hflip,"
+            "crop={w}*0.840:{h}:{w}*0.840:0,split[right][tmp];"
+            "[tmp]hflip[left];"
+            "[left][right]hstack,crop={w}:{h}:{w}*0.840:0,hflip,scroll=0:0:.5,frei0r=mirr0r:.5,"
+            "scroll=0:0:0:.5,frei0r=mirr0r:'0|.5',negate,"
+            "drawtext=fontfile={font_path}:text='%{{n}}.000':text_align=R:fontcolor=white:fontsize=w/24:"
+            "box=1:boxcolor=black:boxborderw=7*(text_h):x=(w/2)-(text_w/2):y=(h-text_h)/1.12,negate"
+        ).format(lut_path=lut_path, w=w, h=h, font_path=font_path)
+
+        cmd = [
+            "ffmpeg", "-y", "-stream_loop", "-1",
+            "-i", disp_path,
+            "-i", input_path,
+            "-filter_complex", filter_complex,
+            "-shortest",
+        ]
+        if has_audio:
+            cmd += ["-map", "1:a"]
+        cmd += [
+            "-preset", "ultrafast",
+            "-c:v", "ffv1",
+            "-c:a", "pcm_s16le" if has_audio else "copy",
+            intermediate,
+        ]
+        ok, err = _run_ffmpeg_raw(cmd, timeout=300)
+        if not ok:
+            return False, f"Freakzinga video pass failed: {err}"
+
+        if not has_audio:
+            ok, err = _run_ffmpeg_raw([
+                "ffmpeg", "-y", "-i", intermediate,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-pix_fmt", "yuv420p",
+                "-an",
+                output_path,
+            ], timeout=180)
+            if not ok:
+                return False, f"Freakzinga final encode failed: {err}"
+            return True, ""
+
+        # 4. Download multi-pitch binary
+        # Security note: this downloads and executes an external binary.  A pinned
+        # checksum is recommended for production; here we require a non-empty file.
+        try:
+            req = urllib.request.Request(
+                "https://file.garden/aTXso15ukD3mnuPI/multipitch",
+                headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"},
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                with open(pitch_bin_path, "wb") as f:
+                    f.write(resp.read())
+            if os.path.getsize(pitch_bin_path) == 0:
+                return False, "Downloaded pitch shifter is empty."
+            os.chmod(pitch_bin_path, 0o755)
+        except Exception as e:
+            return False, f"Failed to download pitch shifter: {e}"
+
+        # 5. Extract and down-sample audio
+        ok, err = _run_ffmpeg_raw([
+            "ffmpeg", "-y", "-i", intermediate,
+            "-af", f"asetrate={sr}/2",
+            "-c:a", "pcm_s16le",
+            audio_wav,
+        ], timeout=120)
+        if not ok:
+            return False, f"Audio extraction failed: {err}"
+
+        # 6. Process audio with the pitch-shifting binary
+        res = subprocess.run(
+            [pitch_bin_path, audio_wav, shifted_wav, pitch_values, "--backend", "signalsmith", "--no-normalize"],
+            capture_output=True, text=True, timeout=300,
+        )
+        if res.returncode != 0:
+            return False, f"Pitch shifter failed: {res.stderr[-1000:]}"
+
+        # 7. Remux processed video with processed audio into a Discord-friendly MP4
+        ok, err = _run_ffmpeg_raw([
+            "ffmpeg", "-y", "-i", intermediate, "-i", shifted_wav,
+            "-af", f"asetrate={sr}",
+            "-map", "0:v", "-map", "1:a",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k",
+            output_path,
+        ], timeout=180)
+        if not ok:
+            return False, f"Remux failed: {err}"
+
+        return True, ""
 
 
 def _run_nparisonffmpeg(
@@ -2068,6 +2261,7 @@ PIPE_EFFECT_NAMES = {
     "wmm3dripple",
     "timecode",
     "radar",
+    "freakzingatesteffect", "fzte", "freaktest",
 }
 
 def _split_effect_params(value: str) -> list[str]:
@@ -4054,6 +4248,14 @@ def _apply_pipe_effects(
                 ok, err = _run_ffmpeg_raw(cmd, timeout=_np_timeout)
                 if not ok:
                     return False, f"nparisonffmpeg: xstack failed: {err}"
+                current = out
+                continue
+
+            # Freakzinga test effect — complex LUT/displace/frei0r + multi-pitch audio
+            if name in ("freakzingatesteffect", "fzte", "freaktest"):
+                ok, err = _run_freakzinga_test_effect(current, out, params)
+                if not ok:
+                    return False, err
                 current = out
                 continue
 
@@ -8346,6 +8548,98 @@ async def gradientmap_command(ctx: commands.Context, *, args: str = ""):
             embed = discord.Embed(
                 title="IHTX Bot — th/gradientmap",
                 description=f"color stops: {len(tokens)}",
+                color=4886754,
+            )
+            embed.set_thumbnail(url="https://files.catbox.moe/xli8jw.png")
+            embed.add_field(name="File Size", value=f"{out_size/(1024*1024):.2f} MB", inline=True)
+            await ctx.reply(embed=embed, file=discord.File(output_path, filename=out_filename))
+            await status_msg.delete()
+        except discord.HTTPException as e:
+            await status_msg.edit(content=f"❌ Failed to upload result: {e}")
+
+
+@bot.command(name="freakzingatesteffect", aliases=["fzte", "freaktest"])
+async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = ""):
+    """Apply the Freakzinga test effect to an attached video.
+
+    This runs a complex FFmpeg graph (3D LUT, displacement map, frei0r mirroring,
+    scrolling, frame-numbered text) plus a multi-pitch audio shift.
+
+    Usage:
+      th/freakzingatesteffect
+      th/fzte
+      th/freaktest
+
+    Optional overrides:
+      th/freakzingatesteffect 1280|720|48000
+      th/freakzingatesteffect 1280|720|48000|-12|-7|0|5|12
+    """
+    attachment = None
+    if ctx.message and ctx.message.attachments:
+        attachment = ctx.message.attachments[0]
+    elif ctx.message and ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref.attachments:
+                attachment = ref.attachments[0]
+        except Exception:
+            pass
+
+    if not attachment:
+        await ctx.reply(
+            "**th/freakzingatesteffect** — apply the Freakzinga test effect.\n"
+            "Attach a video and run `th/freakzingatesteffect`.\n"
+            "Aliases: `th/fzte`, `th/freaktest`"
+        )
+        return
+
+    if attachment.size > MAX_FILE_SIZE:
+        await ctx.reply("❌ File too large (max 25 MB).")
+        return
+
+    suffix = Path(attachment.filename).suffix.lower()
+    if suffix not in VIDEO_EXTENSIONS:
+        await ctx.reply(f"❌ `freakzingatesteffect` requires a video file. Got `{suffix}`.")
+        return
+
+    status_msg = await ctx.reply("⚙️ Running **Freakzinga test effect**… this may take a while.")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = os.path.join(tmpdir, f"input{suffix}")
+        output_path = os.path.join(tmpdir, "freakzinga_test.mp4")
+
+        try:
+            await download_attachment(attachment, input_path)
+        except Exception as e:
+            await status_msg.edit(content=f"❌ Failed to download: {e}")
+            return
+
+        tokens = [p.strip() for p in re.split(r"[;|\s]+", args.strip()) if p.strip()] if args.strip() else []
+        loop = asyncio.get_event_loop()
+        ok, err = await loop.run_in_executor(
+            None, _run_freakzinga_test_effect, input_path, output_path, tokens,
+        )
+
+        if not ok:
+            await status_msg.edit(content=f"❌ Freakzinga test effect failed:\n```\n{err[-1500:]}\n```")
+            return
+
+        out_size = os.path.getsize(output_path)
+        if out_size > MAX_FILE_SIZE:
+            await status_msg.edit(content="⬆️ Output too large — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ **Freakzinga test effect** done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
+            return
+
+        out_filename = f"freakzinga_test_{Path(attachment.filename).stem}.mp4"
+        try:
+            embed = discord.Embed(
+                title="IHTX Bot — th/freakzingatesteffect",
+                description="LUT + displace + frei0r + multi-pitch audio",
                 color=4886754,
             )
             embed.set_thumbnail(url="https://files.catbox.moe/xli8jw.png")
