@@ -838,9 +838,9 @@ class EconomyCog(commands.Cog, name="Economy"):
     async def nparisonffmpeg_cmd(self, ctx: commands.Context, *, args: str = "") -> None:
         """Apply an FFmpeg filter N×M times and xstack all versions into a grid.
 
-        Usage: roxi nparisonffmpeg <grid> <ffmpeg args>
-        Example: roxi nparisonffmpeg 2x2 -vf negate
-                 roxi nparisonffmpeg 2x3 -vf hue=h=90
+        Usage: th/nparisonffmpeg <grid> <ffmpeg args>
+        Example: th/nparisonffmpeg 2x2 -vf negate
+                 th/nparisonffmpeg 2x3 -vf hue=h=90
         Attach a video or reply to one.  Max grid: 4×4 (16 cells).
         """
         import shlex as _shlex
