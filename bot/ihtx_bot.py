@@ -5923,50 +5923,82 @@ def _run_ihtxsap(
             return False, f"Audio extraction failed: {err}"
 
         # ── 2. apply_pitch: one iteration (src → dst WAV) ─────────────────────
+        # Each style runs one rubberband/soundstretch call per pitch voice,
+        # then amixes all voices together → dst.
+        rb_bin   = shutil.which("rubberband")
+        st_bin   = shutil.which("soundstretch")
+        _rep_ctr = [0]  # mutable counter so nested calls get unique filenames
+
         def apply_pitch(src: str, dst: str) -> tuple[bool, str]:
-            if style in ("rubberband_r2", "rubberband_r3"):
-                # Same proven pipeline as th/multipitch:
-                # fileaa binary → rubberband CLI → FFmpeg rubberband filter
-                return _run_fileaa_with_fallback(
-                    src, dst, pitch_arg, tmpdir, prefix="sap", timeout=300,
-                )
-            elif style == "soundtouch":
-                layer_paths: list[str] = []
-                for i, st in enumerate(pitches):
-                    lp = os.path.join(tmpdir, f"st_{os.path.basename(src)}_{i}.wav")
-                    ok2, err2 = _run_ffmpeg_raw(
-                        ["soundstretch", src, lp, f"-pitch={st:.4f}"], timeout=120,
+            _rep_ctr[0] += 1
+            rep = _rep_ctr[0]
+            layer_paths: list[str] = []
+
+            for i, st in enumerate(pitches):
+                lp = os.path.join(tmpdir, f"voice_{rep}_{i}.wav")
+
+                if style in ("rubberband_r2", "rubberband_r3"):
+                    # R2 = engine=faster (-2), R3 = engine=finer (-3)
+                    if not rb_bin:
+                        return False, "rubberband binary not found — install rubberband package"
+                    engine_flag = "-2" if style == "rubberband_r2" else "-3"
+                    res = subprocess.run(
+                        [rb_bin, engine_flag, f"-p{st}", src, lp],
+                        capture_output=True, text=True, timeout=300,
                     )
-                    if not ok2:
-                        return False, f"Soundtouch pitch {st:+}st: {err2}"
+                    if res.returncode != 0:
+                        return False, (
+                            f"rubberband {'R2' if style == 'rubberband_r2' else 'R3'} "
+                            f"pitch {st:+}st failed:\n{res.stderr[-400:]}"
+                        )
+
+                elif style == "soundtouch":
+                    # SoundTouch via soundstretch binary: -pitch=N semitones
+                    if not st_bin:
+                        return False, "soundstretch binary not found — install soundtouch package"
+                    res = subprocess.run(
+                        [st_bin, src, lp, f"-pitch={st}"],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    if res.returncode != 0:
+                        return False, f"soundstretch pitch {st:+}st failed:\n{res.stderr[-400:]}"
+
+                else:  # bungee — handled below the loop
+                    pass
+
+                if style != "bungee":
                     layer_paths.append(lp)
-                return _ihtxsap_amix(layer_paths, dst)
-            else:  # bungee
-                import shutil as _sh
-                has_bungee = bool(_sh.which("bungee"))
-                layer_paths = []
+
+            # ── Bungee: fileaa --bungee (all pitches, one call) → amix fallback ──
+            if style == "bungee":
+                if _ensure_multipitch_bin():
+                    res = subprocess.run(
+                        [_MULTIPITCH_BIN, "--bungee", src, dst, pitch_arg],
+                        capture_output=True, timeout=300,
+                    )
+                    if res.returncode == 0:
+                        return True, ""
+                    stderr_note = res.stderr.decode(errors="replace")[-400:]
+                    print(f"[ihtxsap] fileaa --bungee failed (exit {res.returncode}): {stderr_note}")
+
+                # Fallback: asetrate per pitch, then amix
                 for i, st in enumerate(pitches):
-                    lp = os.path.join(tmpdir, f"bg_{os.path.basename(src)}_{i}.wav")
-                    if has_bungee:
-                        ok2, err2 = _run_ffmpeg_raw(
-                            ["bungee", "--pitch", str(st), src, lp], timeout=120,
-                        )
-                    else:
-                        ratio = math.pow(2, st / 12)
-                        af = (
-                            f"asetrate=44100*{ratio:.9f},"
-                            f"aresample=44100,"
-                            f"aphaser=type=t:speed=0.5:decay=0.4"
-                        )
-                        ok2, err2 = _run_ffmpeg_raw([
-                            "ffmpeg", "-y", "-i", src, "-af", af,
-                            "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", lp,
-                        ], timeout=120)
+                    lp = os.path.join(tmpdir, f"voice_{rep}_{i}.wav")
+                    ratio = math.pow(2, st / 12)
+                    af = (
+                        f"asetrate=44100*{ratio:.9f},"
+                        f"aresample=44100,"
+                        f"aphaser=type=t:speed=0.5:decay=0.4"
+                    )
+                    ok2, err2 = _run_ffmpeg_raw([
+                        "ffmpeg", "-y", "-i", src, "-af", af,
+                        "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", lp,
+                    ], timeout=120)
                     if not ok2:
-                        label = "bungee" if has_bungee else "bungee fallback"
-                        return False, f"{label} pitch {st:+}st: {err2}"
+                        return False, f"bungee (asetrate) pitch {st:+}st failed:\n{err2}"
                     layer_paths.append(lp)
-                return _ihtxsap_amix(layer_paths, dst)
+
+            return _ihtxsap_amix(layer_paths, dst)
 
         # ── 3. Iterate reps times — each output feeds into the next ───────────
         #    Mirrors: input → 1.ts → 2.ts → … → N.ts in th/ihtx
