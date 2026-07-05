@@ -2038,6 +2038,9 @@ PIPE_EFFECT_NAMES = {
     "nepeta",
     "nparisonffmpeg", "nineparisonffmpeg",
     "gradientmap", "gmap",
+    "wave2",
+    "wmm3dripple",
+    "timecode",
 }
 
 def _split_effect_params(value: str) -> list[str]:
@@ -2880,6 +2883,109 @@ def _apply_pipe_effects(
                     )
                     if not ok:
                         return False, f"wave failed: {err}"
+                current = out
+                continue
+
+            # wave2 — sinusoidal pixel-warp (buildWaveFilter port from TS)
+            if name == "wave2":
+                def _w2p(idx, default):
+                    try:
+                        return params[idx] if idx < len(params) else default
+                    except (IndexError, TypeError):
+                        return default
+                xw     = _w2p(0, "3")
+                yw     = _w2p(1, "3")
+                xa     = _w2p(2, "20")
+                ya     = _w2p(3, "20")
+                xphase = _w2p(4, "0")
+                yphase = _w2p(5, "0")
+                speed  = _w2p(6, "0")
+                ph_x = f"2*PI*Y*{xw}/2/H+2*PI*{speed}*T+{xphase}*PI/180"
+                ph_y = f"2*PI*X*{yw}/2/W+2*PI*{speed}*T+{yphase}*PI/180"
+                dx = f"{xa}*10*sin({ph_x})" if xa != "0" else "0"
+                dy = f"{ya}*10*sin({ph_y})" if ya != "0" else "0"
+                cx = f"clip(X+{dx},0,W-1)"
+                cy = f"clip(Y+{dy},0,H-1)"
+                vf_str = (
+                    f"format=yuv444p,"
+                    f"geq='p({cx},{cy}):cb({cx},{cy}):cr({cx},{cy})',"
+                    f"scale=iw:ih,"
+                    f"format=yuv420p"
+                )
+                cmd = [
+                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                    "-i", current, "-vf", vf_str,
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s24le", out,
+                ]
+                ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                if not ok:
+                    return False, f"wave2 failed: {err}"
+                current = out
+                continue
+
+            # wmm3dripple — radial ripple distortion (probes dims + frame count)
+            if name == "wmm3dripple":
+                vinfo = _ffprobe_video_info(current)
+                rW  = vinfo["width"]  or 640
+                rH  = vinfo["height"] or 640
+                rFc = vinfo["nb_frames"]
+                if not rFc:
+                    _wmm_dur, _wmm_fps = _probe_video_info(current)
+                    rFc = max(1, round(_wmm_dur * _wmm_fps))
+                geq_str = (
+                    f"geq='p("
+                    f"mod(W*0.5+(hypot(X-W*0.5,Y-H*0.5)+sin(N/{rFc}*PI)*25*sin(2*PI*N/{rFc}*2-(0)+(-(hypot(X-W*0.5,Y-H*0.5))/90)))*cos(atan2(Y-H*0.5,X-W*0.5)),W),"
+                    f"mod(H*0.5+(hypot(X-W*0.5,Y-H*0.5)-sin(N/{rFc}*PI)*25*sin(2*PI*N/{rFc}*2-(0)+(-(hypot(X-W*0.5,Y-H*0.5))/90)))*sin(atan2(Y-H*0.5,X-W*0.5)),H)"
+                    f")'"
+                )
+                vf_str = (
+                    f"scale=640:640,"
+                    f"format=yuv444p,"
+                    f"{geq_str},"
+                    f"scale={rW}:{rH},"
+                    f"setsar=1,"
+                    f"format=yuv420p"
+                )
+                cmd = [
+                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                    "-i", current, "-vf", vf_str,
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s24le", out,
+                ]
+                ok, err = _run_ffmpeg_raw(cmd, timeout=300)
+                if not ok:
+                    return False, f"wmm3dripple failed: {err}"
+                current = out
+                continue
+
+            # timecode — burnt-in SMPTE timecode overlay (probes fps for rate=)
+            if name == "timecode":
+                _tc_dur, _tc_fps = _probe_video_info(current)
+                _tc_font = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
+                _tc_rate = str(max(1, round(_tc_fps)))
+                vf_str = (
+                    f"drawtext=fontfile='{_tc_font}'"
+                    f":timecode='00\\:00\\:00\\:00'"
+                    f":rate={_tc_rate}"
+                    f":text_align=R"
+                    f":fontcolor=white"
+                    f":fontsize=w/24"
+                    f":box=1"
+                    f":boxcolor=black"
+                    f":boxborderw=7"
+                    f":x=(w-text_w)/1.1"
+                    f":y=(h-text_h)/1.12"
+                )
+                cmd = [
+                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                    "-i", current, "-vf", vf_str,
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s24le", out,
+                ]
+                ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                if not ok:
+                    return False, f"timecode failed: {err}"
                 current = out
                 continue
 
