@@ -5923,57 +5923,78 @@ def _run_ihtxsap(
             return False, f"Audio extraction failed: {err}"
 
         # ── 2. apply_pitch: one iteration (src → dst WAV) ─────────────────────
-        # Each style runs one rubberband/soundstretch call per pitch voice,
-        # then amixes all voices together → dst.
-        rb_bin   = shutil.which("rubberband")
-        st_bin   = shutil.which("soundstretch")
-        _rep_ctr = [0]  # mutable counter so nested calls get unique filenames
+        # Tier 1 (R2/R3/Bungee): fileaa binary — all pitches in one call.
+        #   R2:     fileaa input output pitches --rubberband-args "-2"
+        #   R3:     fileaa input output pitches --rubberband-args "-3"
+        #   Bungee: fileaa input output pitches --bungee
+        # Tier 2 (R2/R3 fallback): rubberband CLI per pitch + amix.
+        # Tier 2 (Bungee fallback): FFmpeg asetrate per pitch + amix.
+        # SoundTouch: soundstretch per pitch + amix (no fileaa equivalent).
+        rb_bin = shutil.which("rubberband")
+        st_bin = shutil.which("soundstretch")
+        _rep_ctr = [0]  # mutable counter for unique per-rep temp filenames
 
         def apply_pitch(src: str, dst: str) -> tuple[bool, str]:
             _rep_ctr[0] += 1
             rep = _rep_ctr[0]
-            layer_paths: list[str] = []
 
-            for i, st in enumerate(pitches):
-                lp = os.path.join(tmpdir, f"voice_{rep}_{i}.wav")
+            # ── Rubberband R2 / R3 ─────────────────────────────────────────────
+            if style in ("rubberband_r2", "rubberband_r3"):
+                rb_arg = "-2" if style == "rubberband_r2" else "-3"
+                label  = "R2" if style == "rubberband_r2" else "R3"
 
-                if style in ("rubberband_r2", "rubberband_r3"):
-                    # R2 = engine=faster (-2), R3 = engine=finer (-3)
-                    if not rb_bin:
-                        return False, "rubberband binary not found — install rubberband package"
-                    engine_flag = "-2" if style == "rubberband_r2" else "-3"
+                # Tier 1: fileaa --rubberband-args "-2"|"-3"
+                if _ensure_multipitch_bin():
                     res = subprocess.run(
-                        [rb_bin, engine_flag, f"-p{st}", src, lp],
+                        [_MULTIPITCH_BIN, src, dst, pitch_arg,
+                         "--rubberband-args", rb_arg],
+                        capture_output=True, timeout=300,
+                    )
+                    if res.returncode == 0:
+                        return True, ""
+                    stderr_note = res.stderr.decode(errors="replace")[-400:]
+                    print(f"[ihtxsap] fileaa {label} failed (exit {res.returncode}): {stderr_note}")
+
+                # Tier 2: rubberband CLI per pitch + amix
+                if not rb_bin:
+                    return False, f"rubberband binary not found (needed for {label} fallback)"
+                layer_paths: list[str] = []
+                for i, st in enumerate(pitches):
+                    lp = os.path.join(tmpdir, f"voice_{rep}_{i}.wav")
+                    res = subprocess.run(
+                        [rb_bin, rb_arg, f"-p{st}", src, lp],
                         capture_output=True, text=True, timeout=300,
                     )
                     if res.returncode != 0:
                         return False, (
-                            f"rubberband {'R2' if style == 'rubberband_r2' else 'R3'} "
-                            f"pitch {st:+}st failed:\n{res.stderr[-400:]}"
+                            f"rubberband {label} pitch {st:+}st failed:\n"
+                            f"{res.stderr[-400:]}"
                         )
+                    layer_paths.append(lp)
+                return _ihtxsap_amix(layer_paths, dst)
 
-                elif style == "soundtouch":
-                    # SoundTouch via soundstretch binary: -pitch=N semitones
-                    if not st_bin:
-                        return False, "soundstretch binary not found — install soundtouch package"
+            # ── SoundTouch ─────────────────────────────────────────────────────
+            elif style == "soundtouch":
+                if not st_bin:
+                    return False, "soundstretch binary not found — install soundtouch package"
+                layer_paths = []
+                for i, st in enumerate(pitches):
+                    lp = os.path.join(tmpdir, f"voice_{rep}_{i}.wav")
                     res = subprocess.run(
                         [st_bin, src, lp, f"-pitch={st}"],
                         capture_output=True, text=True, timeout=120,
                     )
                     if res.returncode != 0:
                         return False, f"soundstretch pitch {st:+}st failed:\n{res.stderr[-400:]}"
-
-                else:  # bungee — handled below the loop
-                    pass
-
-                if style != "bungee":
                     layer_paths.append(lp)
+                return _ihtxsap_amix(layer_paths, dst)
 
-            # ── Bungee: fileaa --bungee (all pitches, one call) → amix fallback ──
-            if style == "bungee":
+            # ── Bungee ─────────────────────────────────────────────────────────
+            else:
+                # Tier 1: fileaa --bungee (all pitches, single call)
                 if _ensure_multipitch_bin():
                     res = subprocess.run(
-                        [_MULTIPITCH_BIN, "--bungee", src, dst, pitch_arg],
+                        [_MULTIPITCH_BIN, src, dst, pitch_arg, "--bungee"],
                         capture_output=True, timeout=300,
                     )
                     if res.returncode == 0:
@@ -5981,7 +6002,8 @@ def _run_ihtxsap(
                     stderr_note = res.stderr.decode(errors="replace")[-400:]
                     print(f"[ihtxsap] fileaa --bungee failed (exit {res.returncode}): {stderr_note}")
 
-                # Fallback: asetrate per pitch, then amix
+                # Tier 2: FFmpeg asetrate per pitch + amix
+                layer_paths = []
                 for i, st in enumerate(pitches):
                     lp = os.path.join(tmpdir, f"voice_{rep}_{i}.wav")
                     ratio = math.pow(2, st / 12)
@@ -5997,8 +6019,7 @@ def _run_ihtxsap(
                     if not ok2:
                         return False, f"bungee (asetrate) pitch {st:+}st failed:\n{err2}"
                     layer_paths.append(lp)
-
-            return _ihtxsap_amix(layer_paths, dst)
+                return _ihtxsap_amix(layer_paths, dst)
 
         # ── 3. Iterate reps times — each output feeds into the next ───────────
         #    Mirrors: input → 1.ts → 2.ts → … → N.ts in th/ihtx
