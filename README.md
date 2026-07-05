@@ -1,3 +1,4 @@
+OLD README.md
 # IHTX Bot — I Hate The X FFmpeg Discord Bot
 
 A Discord bot that applies destructive FFmpeg visual effects to videos and images. Upload a file, pick a preset, chain custom effects, or generate a TV-simulator montage.
