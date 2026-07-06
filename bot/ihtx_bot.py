@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-06: fzte: fix displacement map glitch — rotate -45° now fills corners with 0x808080 (neutral) instead of black (max-negative displacement).
 - 2026-07-06: fzte: move haldclut from displacement map [0] to user video [1] to fix displacement glitch.
 - 2026-07-06: multipitch2/mp2: replaced fileaa binary + asetrate trick with rubberband filter_complex (TS "find pitch" port); added inharmonic mode and auto-scale.
 - 2026-07-06: fzte/freakzingatesteffect: replaced remote lut3d cube with on-the-fly ImageMagick hald:8 haldclut generation.
@@ -970,7 +971,7 @@ def _run_freakzinga_test_effect(
             )
 
         filter_complex = (
-            "movie={hald_path}[haldlut];[0]format=yuv420p,rotate=-45/180*PI,format=yuv420p,scale=854:854,format=bgr32[00];"
+            "movie={hald_path}[haldlut];[0]format=yuv420p,rotate=-45/180*PI:fillcolor=0x808080,format=yuv420p,scale=854:854,format=bgr32[00];"
             "[1][haldlut]haldclut,format=yuv444p,geq='p(mod(X,W),mod(Y/4,H))',scale=854:854,eq=contrast='(1-0.9)*2.366666':eval=frame,format=bgr32,hue=b=-0.033[x];"
             "color=s=854x854:c=#808080,format=bgr32[y];"
             "[00][x][y]displace=edge=wrap,scale={w}:{h},setsar=1,format=yuv444p,format=yuv444p,scale=640:640,"
