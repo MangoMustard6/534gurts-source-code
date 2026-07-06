@@ -1,9 +1,9 @@
 """Synthetic regression test for the Freakzinga test-effect filter graph.
 
-This test does not download the real LUT/displacement assets or run the pitch
-shifter.  It builds the same FFmpeg filter graph used by `_run_freakzinga_test_effect`
-using synthetic lavfi inputs and a minimal dummy 3D LUT, and asserts that FFmpeg
-accepts the graph without error.
+This test does not download the real displacement asset or run the pitch
+shifter.  It generates the same ImageMagick HALD CLUT used by
+`_run_freakzinga_test_effect`, builds the same FFmpeg filter graph with synthetic
+lavfi inputs, and asserts that FFmpeg accepts the graph without error.
 
 Run with: python3 tests/test_freakzinga_filter.py
 """
@@ -11,24 +11,15 @@ Run with: python3 tests/test_freakzinga_filter.py
 import os
 import subprocess
 import tempfile
-import textwrap
 
 
-def _make_dummy_cube(path: str) -> None:
-    """Write a minimal valid 2×2×2 3D LUT cube file."""
-    with open(path, "w") as f:
-        f.write(textwrap.dedent("""\
-            # Minimal 3D LUT for Freakzinga filter regression test
-            LUT_3D_SIZE 2
-            0 0 0
-            1 0 0
-            0 1 0
-            1 1 0
-            0 0 1
-            1 0 1
-            0 1 1
-            1 1 1
-        """))
+def _make_hald_clut(path: str) -> bool:
+    """Generate a minimal HALD CLUT using ImageMagick."""
+    result = subprocess.run(
+        ["magick", "hald:4", path],
+        capture_output=True, text=True, timeout=30,
+    )
+    return result.returncode == 0
 
 
 def _find_font() -> str | None:
