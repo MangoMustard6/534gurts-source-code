@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-06: multipitch2/mp2: replaced fileaa binary + asetrate trick with rubberband filter_complex (TS "find pitch" port); added inharmonic mode and auto-scale.
 - 2026-07-06: fzte/freakzingatesteffect: replaced remote lut3d cube with on-the-fly ImageMagick hald:8 haldclut generation.
 - 2026-07-05: Added freakzingatesteffect as a th/ihtx pipe effect and a th/freakzingatesteffect (alias th/fzte) standalone command.
 - 2026-07-05: Wired gradientmap/gmap as a th/ihtx pipe effect and added th/gradientmap (alias th/gm) standalone command.
@@ -3668,67 +3669,110 @@ def _apply_pipe_effects(
                 current = out
                 continue
 
-            # multipitch2 / mp2 — wave-hammer multi-voice pitch shift with optional surround
+            # multipitch2 / mp2 — rubberband multi-voice pitch shift (TS "find pitch" update)
+            #
+            # Params (use :: to separate pitch group from preset, or plain | per pitch):
+            #   mp2=1|7|8                       three voices at +1, +7, +8 st
+            #   mp2=i|1|7|8                     inharmonic: each voice gets a +0.12 st companion
+            #   mp2=1|7|8::G-Major_17           pitches + surround preset
+            #   mp2=i|1|7|8::Evil_Rampaging_Sorcerer
+            #
+            # Auto-scale: if |semitone| >= 120 it is assumed to be in tenths → divide by 10.
+            # Surround presets: G-Major_17 → alimiter=15, Evil_Rampaging_Sorcerer → alimiter=30.
             if name in ("multipitch2", "mp2"):
-                if not _ensure_multipitch_bin():
-                    return False, "multipitch2: multipitch binary unavailable — download failed."
+                all_params = list(params)
 
-                # params[0] = pitches (pipe/comma/space-separated semitones)
-                # params[1] = surround type: G-Major_17 | Evil_Rampaging_Sorcerer (optional)
-                # params[2] = sample rate (optional, default 44100)
-                pitches_raw = params[0] if len(params) > 0 else ""
-                if not pitches_raw:
+                # Inharmonic mode — 'i' as standalone first token
+                inharmonic_mode = False
+                if all_params and all_params[0].strip().lower() == "i":
+                    inharmonic_mode = True
+                    all_params = all_params[1:]
+
+                if not all_params:
                     return False, "multipitch2: requires at least one pitch value (e.g. `mp2=1|7|8`)."
-                surround_type = params[1] if len(params) > 1 else ""
-                try:
-                    sr_val = int(params[2]) if len(params) > 2 else 44100
-                except (ValueError, TypeError):
-                    sr_val = 44100
 
-                # Convert pipe/space-separated pitches to comma-separated for binary
-                pitches_csv = re.sub(r"[|\s]+", ",", pitches_raw.strip()).strip(",")
-                if not pitches_csv:
+                # Collect semitones; each param may itself be pipe-separated (:: style).
+                # Stop at the first non-numeric token and treat the whole param as surround_type.
+                surround_type = ""
+                raw_semitones: list[float] = []
+                for p in all_params:
+                    sub_tokens = re.split(r"[|,\s]+", p.strip())
+                    hit_non_numeric = False
+                    for tok in sub_tokens:
+                        if not tok:
+                            continue
+                        try:
+                            n = float(tok)
+                            if abs(n) >= 120:   # tenths notation auto-scale
+                                n /= 10
+                            raw_semitones.append(n)
+                        except ValueError:
+                            surround_type = p.strip()
+                            hit_non_numeric = True
+                            break
+                    if hit_non_numeric:
+                        break
+
+                if not raw_semitones:
                     return False, "multipitch2: no valid pitch values found."
 
-                # Step 1: extract downsampled audio (halved sample rate)
-                audio_down = os.path.join(tmpdir, f"mp2_h_{i}.wav")
+                # Inharmonic: pair each semitone with a +0.12 st companion for chorus texture
+                semitones: list[float] = []
+                if inharmonic_mode:
+                    for st in raw_semitones:
+                        semitones.extend([st, st + 0.12])
+                else:
+                    semitones = raw_semitones
+
+                n_voices = len(semitones)
+                pcm      = "aformat=sample_fmts=s16:sample_rates=44100,"
+                pad_pre  = "apad=pad_dur=1,"
+                rb_args  = "rubberband=tempo=1:formant=6942000/634"
+
+                if surround_type == "Evil_Rampaging_Sorcerer":
+                    post_mix = ",alimiter=30:latency=1"
+                elif surround_type == "G-Major_17":
+                    post_mix = ",alimiter=15:latency=1"
+                else:
+                    post_mix = ""
+
+                if n_voices == 1:
+                    pitch_ratio = 2 ** (semitones[0] / 12)
+                    fc_chain = (
+                        f"[0:a]{pcm}{pad_pre}"
+                        f"{rb_args}:pitch={pitch_ratio:.6f},"
+                        f"asetpts=PTS-STARTPTS{post_mix}[mp2aout]"
+                    )
+                else:
+                    labels_ps  = "".join(f"[mp2ps{j}]" for j in range(n_voices))
+                    split_part = f"[0:a]{pcm}asplit={n_voices}{labels_ps}"
+                    chain_parts = []
+                    for j, st in enumerate(semitones):
+                        pitch_ratio = 2 ** (st / 12)
+                        chain_parts.append(
+                            f"[mp2ps{j}]{pad_pre}"
+                            f"{rb_args}:pitch={pitch_ratio:.6f},"
+                            f"asetpts=PTS-STARTPTS,dynaudnorm[mp2rb{j}]"
+                        )
+                    rb_inputs = "".join(f"[mp2rb{j}]" for j in range(n_voices))
+                    mix_part  = (
+                        f"{rb_inputs}amix=inputs={n_voices}:normalize=0,"
+                        f"apad=pad_dur=0.1{post_mix}[mp2aout]"
+                    )
+                    fc_chain = ";".join([split_part] + chain_parts + [mix_part])
+
                 ok, err = _run_ffmpeg_raw([
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                     "-i", current,
-                    "-af", f"asetrate={sr_val // 2}",
-                    "-c:a", "pcm_s16le",
-                    audio_down,
-                ], timeout=120)
-                if not ok:
-                    return False, f"multipitch2: audio downsample failed: {err}"
-
-                # Step 2: run multipitch binary with all pitches in one call (+ rubberband fallback)
-                out_wav = os.path.join(tmpdir, f"mp2_out_{i}.wav")
-                ok_mp2, err_mp2 = _run_fileaa_with_fallback(
-                    audio_down, out_wav, pitches_csv, tmpdir, f"mp2_{i}", timeout=300)
-                if not ok_mp2:
-                    return False, f"multipitch2: pitch shift failed: {err_mp2}"
-
-                # Step 3: build audio filter — asetrate + optional alimiter surround
-                if surround_type == "Evil_Rampaging_Sorcerer":
-                    af_str = f"asetrate={sr_val},alimiter=30:latency=1"
-                elif surround_type == "G-Major_17":
-                    af_str = f"asetrate={sr_val},alimiter=15:latency=1"
-                else:
-                    af_str = f"asetrate={sr_val}"
-
-                # Step 4: remux — original video stream (copy, no re-encode) + processed audio
-                ok, err = _run_ffmpeg_raw([
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current, "-i", out_wav,
-                    "-map", "0:v?", "-map", "1:a",
-                    "-af", af_str,
+                    "-filter_complex", fc_chain,
+                    "-map", "0:v?",
+                    "-map", "[mp2aout]",
                     "-c:v", "copy",
                     "-c:a", "pcm_s16le",
                     out,
                 ], timeout=300)
                 if not ok:
-                    return False, f"multipitch2: remux failed: {err}"
+                    return False, f"multipitch2: rubberband pitch shift failed: {err}"
                 current = out
                 continue
 
