@@ -899,17 +899,23 @@ def _run_freakzinga_test_effect(
         except Exception as e:
             return False, f"Failed to download LUT cube: {e}"
 
-        # 2. Download displacement map video
-        try:
-            req = urllib.request.Request(
-                "https://file.garden/aTXso15ukD3mnuPI/tv_sim_displacement_map.mov",
-                headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"},
-            )
-            with urllib.request.urlopen(req, timeout=180) as resp:
-                with open(disp_path, "wb") as f:
-                    f.write(resp.read())
-        except Exception as e:
-            return False, f"Failed to download displacement map: {e}"
+        # 2. Ensure the tvsim displacement map is available.
+        # The bundled copy is the same asset used by th/tvsim; fall back to downloading
+        # it if the project has not been shipped with the bundled file.
+        bundled_tvsim = os.path.join(os.path.dirname(__file__), "displacemaps", "tvsimulator.mov")
+        if os.path.exists(bundled_tvsim):
+            disp_path = bundled_tvsim
+        else:
+            try:
+                req = urllib.request.Request(
+                    "https://file.garden/aTXso15ukD3mnuPI/tv_sim_displacement_map.mov",
+                    headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"},
+                )
+                with urllib.request.urlopen(req, timeout=180) as resp:
+                    with open(disp_path, "wb") as f:
+                        f.write(resp.read())
+            except Exception as e:
+                return False, f"Failed to download tvsim displacement map: {e}"
 
         # Detect whether the input has an audio stream
         _probe = subprocess.run(
