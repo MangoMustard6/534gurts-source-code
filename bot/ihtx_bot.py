@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-06: fzte: fix black triangles — scale 2× before un-rotate (out_w/out_h) so content covers full canvas; displacement-map rotate still uses fillcolor=0x808080.
+- 2026-07-06: fzte: fix black triangle corners — mirror-tile 2×2 (hflip/vflip) before un-rotate so corners fill with reflected content, not fill color.
 - 2026-07-06: fzte: move haldclut from displacement map [0] to user video [1] to fix displacement glitch.
 - 2026-07-06: multipitch2/mp2: replaced fileaa binary + asetrate trick with rubberband filter_complex (TS "find pitch" port); added inharmonic mode and auto-scale.
 - 2026-07-06: fzte/freakzingatesteffect: replaced remote lut3d cube with on-the-fly ImageMagick hald:8 haldclut generation.
@@ -976,7 +976,13 @@ def _run_freakzinga_test_effect(
             "color=s=854x854:c=#808080,format=bgr32[y];"
             "[00][x][y]displace=edge=wrap,scale={w}:{h},setsar=1,format=yuv444p,scale=640:640,"
             "geq='p(X-((sin((T*5*0+(0*15))+(Y/H)*(PI*0)))*(-15*0)),Y-((sin((T*5*0+(0.34666*15))+(X/W)*(PI*15)))*(-15*0.8)))',"
-            "scale={w}*2:{h}*2,rotate=45/180*PI:out_w={w}:out_h={h},format=yuv420p,hflip,"
+            "scale={w}:{h},format=yuv420p,split=4[_r0][_r1][_r2][_r3];"
+            "[_r1]hflip[_r1f];"
+            "[_r2]vflip[_r2f];"
+            "[_r3]hflip,vflip[_r3f];"
+            "[_r0][_r1f]hstack[_rtop];"
+            "[_r2f][_r3f]hstack[_rbot];"
+            "[_rtop][_rbot]vstack,rotate=45/180*PI:out_w={w}:out_h={h},format=yuv420p,hflip,"
             "crop={w}*0.840:{h}:{w}*0.840:0,split[right][tmp];"
             "[tmp]hflip[left];"
             "[left][right]hstack,crop={w}:{h}:{w}*0.840:0,hflip,"
