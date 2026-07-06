@@ -212,20 +212,6 @@ Both `VIDEO:` and `AUDIO:` blocks are optional — use either or both.
 
 ## Standalone Effect Commands
 
-### `th/invlum` / `th/il`
-
-Powers-based luma-inversion stacker. Applies `InvertLuminosity.cube` N times and concatenates all iterations.
-
-```
-th/invlum <powers> [duration] [PIPE: effect,effect,…]
-th/invlum 4
-th/invlum 3 2.0
-th/invlum 5 1.5 PIPE: negate,multipitch=-4;5
-th/invlum 4 1.0 PIPE: huehsv=0.3,multipitch=-7;0;7
-```
-
----
-
 ### `th/preview1280` / `th/p1280`
 
 12-segment TV-simulator montage. Runs the full pipeline: Hald CLUTs, horizontal flips, mirror compositions, TV displacement mapping, rubberband pitch shifts per segment, final upscale.
@@ -264,10 +250,7 @@ th/multipitch -3;0;5
 
 **Pipeline:**
 ```
-[0:a]rubberband=pitch=2^(1/12)…[a0];
-[0:a]rubberband=pitch=2^(4/12)…[a1];
-[0:a]rubberband=pitch=2^(7/12)…[a2];
-[a0][a1][a2]amix=3,volume=3,bass=g=2.5[outa]
+Its basically Rubberband R3 :/
 ```
 
 ---
@@ -391,17 +374,6 @@ Folk Valley aesthetic: replaces audio with the folk valley music track, boosts b
 
 ---
 
-### `th/autotune` / `th/autotoon`
-
-Autotune pitch correction.
-
-```
-th/autotune [scale] [amount]
-th/autotune C:maj 1.0
-```
-
----
-
 ### `th/trim`
 
 Trim media to a time range.
@@ -419,7 +391,7 @@ th/trim 10 45
 Sync audio track to video.
 
 ```
-th/syncaudio [mode]
+th/syncaudio [mode: alt or leave it blank]
 ```
 
 ---
@@ -429,7 +401,7 @@ th/syncaudio [mode]
 Run raw FFmpeg arguments directly on an attached file.
 
 ```
-th/ffmpeg -vf negate -c:v libx264
+th/ffmpeg -vf hue=h=31.415926 -c:v libx264
 ```
 
 ---
@@ -466,7 +438,7 @@ th/addsource <name> [url]
 
 ---
 
-### `th/lexg` / `th/lec`
+### `th/lexg` / `th/lec` (doesn't really work but ill fix it)
 
 Grab the last N seconds of a video export.
 
@@ -491,7 +463,7 @@ Upload an attached file to [catbox.moe](https://catbox.moe). If `CATBOX_USERHASH
 
 ### `th/undo`
 
-Delete the bot's last message in the current channel.
+Delete the bot's last message in the current channel. (reply to it)
 
 ---
 
@@ -636,7 +608,7 @@ A farming mini-game. All commands are hybrid (slash + `th/` prefix):
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DISCORD_TOKEN` | **Yes** | Discord bot token |
-| `GROQ_API_KEY` | No | Groq API key — enables `th/chat` and AI auto-reply (Llama 3.3 70B) |
+| `GROQ_API_KEY` | **Yes** | Groq API key — enables `th/chat` and AI auto-reply (Llama 3.3 70B) |
 | `CATBOX_USERHASH` | No | Catbox user hash — links uploads to your account; omit for anonymous uploads |
 
 ### Data Files (auto-created in `bot/`)
@@ -738,3 +710,4 @@ The following commands count toward the per-user daily limit (default 20/day for
 ## License
 
 Private project — all rights reserved.
+# end.
