@@ -918,8 +918,11 @@ def _run_freakzinga_test_effect(
             "scale={w}:{h},format=yuv420p,rotate=45/180*PI,format=yuv420p,hflip,"
             "crop={w}*0.840:{h}:{w}*0.840:0,split[right][tmp];"
             "[tmp]hflip[left];"
-            "[left][right]hstack,crop={w}:{h}:{w}*0.840:0,hflip,scroll=0:0:.5,frei0r=mirr0r:.5,"
-            "scroll=0:0:0:.5,frei0r=mirr0r:'0|.5',negate,"
+            "[left][right]hstack,crop={w}:{h}:{w}*0.840:0,hflip,scroll=0:0:.5,"
+            "crop=iw/2:ih:0:0,split=2[_ml1][_mr1];[_mr1]hflip[_mrf1];[_ml1][_mrf1]hstack,"
+            "scroll=0:0:0:.5,"
+            "crop=iw/2:ih:0:0,split=2[_ml2][_mr2];[_mr2]hflip[_mrf2];[_ml2][_mrf2]hstack,"
+            "negate,"
             "drawtext=fontfile={font_path}:text='%{{n}}.000':text_align=R:fontcolor=white:fontsize=w/24:"
             "box=1:boxcolor=black:boxborderw=7*(text_h):x=(w/2)-(text_w/2):y=(h-text_h)/1.12,negate"
         ).format(lut_path=lut_path, w=w, h=h, font_path=font_path)
@@ -4251,7 +4254,7 @@ def _apply_pipe_effects(
                 current = out
                 continue
 
-            # Freakzinga test effect — complex LUT/displace/frei0r + multi-pitch audio
+            # Freakzinga test effect — complex LUT/displace/native-mirror + multi-pitch audio
             if name in ("freakzingatesteffect", "fzte", "freaktest"):
                 ok, err = _run_freakzinga_test_effect(current, out, params)
                 if not ok:
@@ -8562,8 +8565,8 @@ async def gradientmap_command(ctx: commands.Context, *, args: str = ""):
 async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = ""):
     """Apply the Freakzinga test effect to an attached video.
 
-    This runs a complex FFmpeg graph (3D LUT, displacement map, frei0r mirroring,
-    scrolling, frame-numbered text) plus a multi-pitch audio shift.
+    This runs a complex FFmpeg graph (3D LUT, displacement map, native FFmpeg
+    mirroring, scrolling, frame-numbered text) plus a multi-pitch audio shift.
 
     Usage:
       th/freakzingatesteffect
@@ -8639,7 +8642,7 @@ async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = "")
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/freakzingatesteffect",
-                description="LUT + displace + frei0r + multi-pitch audio",
+                description="LUT + displace + native mirror + multi-pitch audio",
                 color=4886754,
             )
             embed.set_thumbnail(url="https://files.catbox.moe/xli8jw.png")
