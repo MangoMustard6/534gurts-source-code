@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-06: fzte/freakzingatesteffect: replaced remote lut3d cube with on-the-fly ImageMagick hald:8 haldclut generation.
 - 2026-07-05: Added freakzingatesteffect as a th/ihtx pipe effect and a th/freakzingatesteffect (alias th/fzte) standalone command.
 - 2026-07-05: Wired gradientmap/gmap as a th/ihtx pipe effect and added th/gradientmap (alias th/gm) standalone command.
 - 2026-07-05: Added radar, timecode, wmm3dripple, and wave2 pipe effects.
@@ -880,24 +881,47 @@ def _run_freakzinga_test_effect(
                 break
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        lut_path = os.path.join(tmpdir, "a.cube")
+        hald_path = os.path.join(tmpdir, "hald.ppm")
         disp_path = os.path.join(tmpdir, "tv_sim_displacement_map.mov")
         pitch_bin_path = os.path.join(tmpdir, "program")
         intermediate = os.path.join(tmpdir, "a001.mkv")
         audio_wav = os.path.join(tmpdir, "h001.wav")
         shifted_wav = os.path.join(tmpdir, "out001.wav")
 
-        # 1. Download LUT cube
+        # 1. Generate hald LUT via ImageMagick
+        magick_cmd = [
+            "magick", "hald:8",
+            "-colorspace", "lab",
+            "-channel", "r", "-negate", "+channel",
+            "-colorspace", "srgb",
+            "-define", "modulate:colorspace=hsl",
+            "-modulate", "100,100,%[fx:0.620200+100]",
+            "-colorspace", "yuv",
+            "-fx", (
+                "angle=110pi/180; "
+                "channel(u,"
+                ".5+(u.g-.5)*cos(angle)-(u.b-.5)*sin(angle),"
+                ".5+(u.g-.5)*sin(angle)+(u.b-.5)*cos(angle))"
+            ),
+            "-colorspace", "srgb",
+            "-color-matrix", "0 0 1 0 1 0 1 0 0",
+            "-colorspace", "lab",
+            "-channel", "r", "-negate", "+channel",
+            "-colorspace", "srgb",
+            hald_path,
+        ]
         try:
-            req = urllib.request.Request(
-                "https://file.garden/aRsVTo5zvgxNjaSF/a.cube",
-                headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"},
+            hald_result = subprocess.run(
+                magick_cmd, capture_output=True, text=True, timeout=60,
             )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                with open(lut_path, "wb") as f:
-                    f.write(resp.read())
+        except FileNotFoundError:
+            return False, "Failed to generate hald LUT: 'magick' not found (ImageMagick not installed)"
+        except subprocess.TimeoutExpired:
+            return False, "Failed to generate hald LUT: ImageMagick timed out after 60 s"
         except Exception as e:
-            return False, f"Failed to download LUT cube: {e}"
+            return False, f"Failed to generate hald LUT: {e}"
+        if hald_result.returncode != 0:
+            return False, f"Failed to generate hald LUT: {hald_result.stderr[-1000:]}"
 
         # 2. Ensure the tvsim displacement map is available.
         # The bundled copy is the same asset used by th/tvsim; fall back to downloading
@@ -944,7 +968,7 @@ def _run_freakzinga_test_effect(
             )
 
         filter_complex = (
-            "[0]lut3d={lut_path},format=yuv420p,rotate=-45/180*PI,format=yuv420p,scale=854:854,format=bgr32[00];"
+            "movie={hald_path}[haldlut];[0][haldlut]haldclut,format=yuv420p,rotate=-45/180*PI,format=yuv420p,scale=854:854,format=bgr32[00];"
             "[1]format=yuv444p,geq='p(mod(X,W),mod(Y/4,H))',scale=854:854,eq=contrast='(1-0.9)*2.366666':eval=frame,format=bgr32,hue=b=-0.033[x];"
             "color=s=854x854:c=#808080,format=bgr32[y];"
             "[00][x][y]displace=edge=wrap,scale={w}:{h},setsar=1,format=yuv444p,format=yuv444p,scale=640:640,"
@@ -957,7 +981,7 @@ def _run_freakzinga_test_effect(
             "negate,"
             "drawtext=fontfile={font_path}:text='%{{n}}.000':text_align=R:fontcolor=white:fontsize=w/24:"
             "box=1:boxcolor=black:boxborderw=7*(text_h):x=(w/2)-(text_w/2):y=(h-text_h)/1.12,negate"
-        ).format(lut_path=lut_path, w=w, h=h, font_path=font_path, mirror_segment=mirror_segment)
+        ).format(hald_path=hald_path, w=w, h=h, font_path=font_path, mirror_segment=mirror_segment)
 
         cmd = [
             "ffmpeg", "-y", "-stream_loop", "-1",
