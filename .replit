@@ -1,3 +1,80 @@
+<<<<<<< HEAD
+=======
+modules = ["python-3.11", "nodejs-20", "web"]
+
+[deployment]
+router = "application"
+deploymentTarget = "vm"
+run = ["python3", "main.py"]
+
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "IHTX Discord Bot"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "IHTX Discord Bot (TypeScript)"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Pipeline Visualizer"
+
+[[workflows.workflow]]
+name = "IHTX Discord Bot"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PYTHONUNBUFFERED=1 python3 -u main.py"
+
+[[workflows.workflow]]
+name = "IHTX Discord Bot (TypeScript)"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/discord-bot run dev"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "Pipeline Visualizer"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=8099 node public/serve.mjs"
+waitForPort = 8099
+
+[agent]
+stack = "BEST_EFFORT_FALLBACK"
+expertMode = true
+integrations = []
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
+
+>>>>>>> ecb35ba (Refactor bot logic and update game data files)
 [[ports]]
 localPort = 8000
 externalPort = 8000
@@ -24,4 +101,26 @@ externalPort = 3002
 
 [[ports]]
 localPort = 8099
+<<<<<<< HEAD
 externalPort = 80
+=======
+externalPort = 8099
+
+[userenv]
+
+[userenv.shared]
+PORT = "8081"
+
+[nix]
+channel = "stable-25_05"
+packages = ["freetype", "lcms2", "libimagequant", "libjpeg", "libtiff", "libuv", "libwebp", "libxcrypt", "openjpeg", "rubberband", "tcl", "tk", "zlib"]
+
+[rules]
+
+[rules.formatter]
+
+[rules.formatter.fileExtensions]
+
+[rules.formatter.fileExtensions.".json"]
+id = "module:nodejs-20/formatter:prettier"
+>>>>>>> ecb35ba (Refactor bot logic and update game data files)

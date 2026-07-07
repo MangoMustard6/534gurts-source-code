@@ -1,0 +1,148 @@
+{
+  "1355759019330895973": {
+    "coins": 225,
+    "seeds": {},
+    "harvested": {},
+    "plots": [
+      {
+        "crop": null,
+        "item_type": "crop",
+        "planted_at": null,
+        "watered": false,
+        "auto_watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false
+      },
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false,
+        "item_type": "crop",
+        "auto_watered": false
+      },
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false,
+        "item_type": "crop",
+        "auto_watered": false
+      },
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false,
+        "item_type": "crop",
+        "auto_watered": false
+      },
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false,
+        "item_type": "crop",
+        "auto_watered": false
+      }
+    ],
+    "pending_pest": null,
+    "notify_channel_id": 1496092068832088074,
+    "saplings": {},
+    "boosters": {},
+    "pet_eggs": {},
+    "equipped_pet": null,
+    "scarecrow_turns": 0
+  },
+  "1500537210473025546": {
+    "coins": 0,
+    "seeds": {
+      "corn": 2,
+      "blueberry": 1
+    },
+    "harvested": {},
+    "plots": [
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false
+      },
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false
+      },
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false
+      },
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false
+      },
+      {
+        "crop": null,
+        "planted_at": null,
+        "watered": false,
+        "water_deadline": null,
+        "grow_deadline": null,
+        "state": "empty",
+        "golden": false,
+        "ping_at": null,
+        "notify_halfway": false
+      }
+    ],
+    "pending_pest": null,
+    "notify_channel_id": 1496114769458106509
+  }
+}

@@ -1,0 +1,9 @@
+aiohttp>=3.14.0
+catboxpy
+discord.py>=2.7.1
+flask
+groq
+Pillow
+python-dotenv
+uvloop
+yt-dlp>=2026.3.17

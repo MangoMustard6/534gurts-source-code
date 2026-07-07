@@ -52,6 +52,7 @@ __pycache__/
 # Replit
 .cache/
 .local/
+<<<<<<< HEAD
 # --- Python System Files ---
 __pycache__/
 *.pyc
@@ -74,3 +75,5 @@ bot/xp_data.json
 # --- Security & Credentials ---
 # Never commit your tokens or API keys to git!
 .env
+=======
+>>>>>>> ecb35ba (Refactor bot logic and update game data files)

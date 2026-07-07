@@ -1,0 +1,90 @@
+{
+  "1496091892067209307": {
+    "tags": {
+      "hi": {
+        "name": "hi",
+        "content": "hello",
+        "owner_id": 1355759019330895973,
+        "created_at": "2026-06-20T00:23:38.598402+00:00",
+        "uses": 1,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": []
+      },
+      "sync": {
+        "name": "sync",
+        "content": "{sh:load {iv}\n\nffmpeg -i $FILE_1 -an v.mp4\nffmpeg -i $FILE_1 a.wav\n\nvd=$(ffprobe -i v.mp4 -select_streams v:0 -show_entries format=duration -v quiet -of csv=\"p=0\")\nad=$(ffprobe -i a.wav -select_streams a:0 -show_entries format=duration -v quiet -of csv=\"p=0\")\nfr=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=nokey=1:noprint_wrappers=1 $FILE_1)\n\necho '-# Use \"alt\" as the first arg to do vice-versa\n'\nif [ \"{arg:0}\" = \"alt\" ]; then\n    ffmpeg -i v.mp4 -stream_loop -1 -i a.wav -af \"atempo=$ad/$vd\" -map 0:v -map 1:a -t $vd ./output/whar.mp4\n\n    rm -f v.mp4 a.wav\n\n    diff=$(echo \"scale=6; $vd-$ad\" | bc)\n    speed=$(echo \"scale=6; $ad/$vd\" | bc)\n\n    echo \"Video: $vd\nAudio: $ad\n\nSpeed Used: $speed\nDiff: $diff\"\nelse \n    ffmpeg -i v.mp4 -stream_loop -1 -i a.wav -vf \"setpts=1/($vd/$ad)*PTS\",fps=$fr -map 0:v -map 1:a -t $vd ./output/whar.mp4\n\n    rm -f v.mp4 a.wav\n\n    diff=$(echo \"scale=6; $vd-$ad\" | bc)\n    speed=$(echo \"scale=6; $vd/$ad\" | bc)\n\n    echo \"Video: $vd\nAudio: $ad\n\nSpeed Used: $speed\nDiff: $diff\"\nfi}",
+        "owner_id": 1355759019330895973,
+        "created_at": "2026-06-20T00:26:48.127538+00:00",
+        "uses": 3,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": [],
+        "edited_at": "2026-06-20T01:35:33.634738+00:00"
+      },
+      "p1280ff3": {
+        "name": "p1280ff3",
+        "content": "Tag of `.t p1280ff!2`, but advanced and better.\nUse `.t sync+` or `.t sync+ alt` to make it synced!\nIf you wanna see the updatelog, try typing in `.t p1280ff!3updatelog`\n{eval:{text:https://pastebin.com/raw/yT5nMc72}}",
+        "owner_id": 1355759019330895973,
+        "created_at": "2026-06-20T01:54:20.429071+00:00",
+        "uses": 1,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": []
+      },
+      "test": {
+        "name": "test",
+        "content": "{iscript:load {iv} f\ndeepfry f}",
+        "owner_id": 1355759019330895973,
+        "created_at": "2026-06-20T01:58:18.303600+00:00",
+        "uses": 4,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": [],
+        "edited_at": "2026-06-25T09:53:19.391093+00:00"
+      },
+      "braxtons_gm105oldp": {
+        "name": "braxtons_gm105oldp",
+        "content": "{ihtx:1 vidlen - mp4 swirl=400.55|0.5|0.5|0.5,tvsim=0.75,swirl=-400.55|0.5|0.5|0.5,invert,huehsv=0.5,multipitch=-17|-15|0|15|17}",
+        "owner_id": 1355759019330895973,
+        "created_at": "2026-06-21T10:59:04.695885+00:00",
+        "uses": 0,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": []
+      }
+    },
+    "aliases": {}
+  },
+  "1512913008664252526": {
+    "tags": {
+      "wbwbwbwwb": {
+        "name": "wbwbwbwwb",
+        "content": "{ihtx:20 vidlen true mp4 multipitch=-10|-5|5|10}",
+        "owner_id": 1355759019330895973,
+        "created_at": "2026-06-20T00:36:43.588487+00:00",
+        "uses": 3,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": [],
+        "edited_at": "2026-06-20T08:48:35.918803+00:00"
+      }
+    },
+    "aliases": {}
+  },
+  "1517206716712878112": {
+    "tags": {
+      "gm74": {
+        "name": "gm74",
+        "content": "pinch&punch=0.5,huehsv=0.5,invert,multipitch=-10|9|14,volume=5.5",
+        "owner_id": 1286483257067700265,
+        "created_at": "2026-06-22T13:35:22.715380+00:00",
+        "uses": 1,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": []
+      }
+    },
+    "aliases": {}
+  }
+}

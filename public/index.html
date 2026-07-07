@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>t!multipitchihtx — Pipeline Visualizer</title>
+<style>
+  :root {
+    --bg: #0e0e12;
+    --panel: #16161d;
+    --border: #2a2a35;
+    --accent: #7c5cbf;
+    --accent2: #3a86ff;
+    --green: #2ecc71;
+    --red: #e74c3c;
+    --text: #e8e8f0;
+    --muted: #7a7a90;
+    --layer-h: 36px;
+    --gap: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; padding: 32px 20px 60px; }
+
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: .9rem; margin-bottom: 28px; }
+
+  /* Controls */
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 32px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px;
+  }
+  .ctrl-group { display: flex; flex-direction: column; gap: 4px; }
+  .ctrl-group label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .ctrl-group input[type=range] { width: 140px; accent-color: var(--accent); }
+  .ctrl-group input[type=number] { width: 80px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 4px 8px; font-size: .9rem; }
+  .val-display { font-size: .85rem; color: var(--accent); font-weight: 600; }
+
+  /* Pipeline */
+  .pipeline { display: flex; flex-direction: column; gap: 20px; }
+
+  .stage-row { display: flex; align-items: flex-start; gap: 16px; }
+
+  /* segment card */
+  .segment-card {
+    flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+    transition: box-shadow .3s;
+  }
+  .segment-card:hover { box-shadow: 0 0 0 1px var(--accent); }
+  .seg-header {
+    background: rgba(124,92,191,.18); border-bottom: 1px solid var(--border);
+    padding: 10px 16px; font-weight: 600; font-size: .85rem; display: flex; align-items: center; gap: 8px;
+  }
+  .seg-num { background: var(--accent); color: #fff; border-radius: 6px; padding: 2px 8px; font-size: .75rem; }
+
+  .seg-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+
+  /* pitch layers */
+  .layers-wrap { display: flex; flex-direction: column; gap: 5px; }
+  .layer-row {
+    height: var(--layer-h); background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    display: flex; align-items: center; padding: 0 10px; font-size: .78rem; gap: 8px; position: relative; overflow: hidden;
+  }
+  .layer-fill {
+    position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px;
+    background: linear-gradient(90deg, rgba(58,134,255,.25), rgba(124,92,191,.15));
+    animation: fillIn .5s ease forwards;
+    transform-origin: left;
+  }
+  @keyframes fillIn { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  .layer-tag { position: relative; z-index: 1; background: rgba(58,134,255,.2); border: 1px solid rgba(58,134,255,.4); border-radius: 4px; padding: 1px 6px; font-size: .72rem; color: var(--accent2); white-space: nowrap; }
+  .layer-label { position: relative; z-index: 1; color: var(--muted); font-size: .75rem; }
+  .layer-tool { position: relative; z-index: 1; margin-left: auto; color: var(--muted); font-size: .7rem; }
+
+  /* arrow */
+  .arrow { display: flex; justify-content: center; color: var(--muted); font-size: 1.2rem; }
+
+  /* mix box */
+  .mix-box {
+    background: rgba(46,204,113,.08); border: 1px solid rgba(46,204,113,.25); border-radius: 8px;
+    padding: 10px 14px; font-size: .82rem; display: flex; align-items: center; gap: 10px;
+  }
+  .mix-badge { background: var(--green); color: #000; font-weight: 700; border-radius: 5px; padding: 2px 8px; font-size: .72rem; }
+
+  /* export box */
+  .export-box {
+    background: rgba(231,76,60,.08); border: 1px solid rgba(231,76,60,.3); border-radius: 8px;
+    padding: 8px 14px; font-size: .82rem; display: flex; align-items: center; gap: 8px; color: var(--red);
+  }
+  .export-badge { background: var(--red); color: #fff; font-weight: 700; border-radius: 5px; padding: 2px 8px; font-size: .72rem; }
+
+  /* concat section */
+  .concat-section {
+    background: var(--panel); border: 2px solid var(--accent); border-radius: 12px; padding: 18px 20px;
+  }
+  .concat-header { font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 10px; font-size: .95rem; }
+  .concat-badge { background: var(--accent); color: #fff; border-radius: 6px; padding: 2px 10px; font-size: .8rem; }
+  .segments-strip { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .seg-chip {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 14px; font-size: .8rem; display: flex; flex-direction: column; gap: 3px; min-width: 90px;
+  }
+  .seg-chip-label { color: var(--muted); font-size: .7rem; }
+  .seg-chip-val { color: var(--accent2); font-weight: 600; }
+  .concat-arrow { text-align: center; color: var(--muted); font-size: 1.5rem; margin: 4px 0; }
+
+  /* final output */
+  .final-box {
+    background: linear-gradient(135deg, rgba(124,92,191,.2), rgba(58,134,255,.1));
+    border: 2px solid var(--accent); border-radius: 10px;
+    padding: 14px 18px; display: flex; align-items: center; gap: 14px;
+  }
+  .final-icon { font-size: 2rem; }
+  .final-info { display: flex; flex-direction: column; gap: 3px; }
+  .final-name { font-weight: 700; font-size: 1rem; }
+  .final-meta { color: var(--muted); font-size: .8rem; }
+
+  /* between-segment connector */
+  .seg-connector { display: flex; justify-content: center; align-items: center; color: var(--muted); font-size: .8rem; gap: 6px; }
+  .seg-connector::before, .seg-connector::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  /* responsive */
+  @media (max-width: 600px) { .controls { flex-direction: column; } }
+</style>
+</head>
+<body>
+
+<h1><span>t!multipitchihtx</span> — Pipeline Visualizer</h1>
+<p class="subtitle">Visualizes how pitch layers are rendered, mixed, and concatenated per segment.</p>
+
+<div class="controls">
+  <div class="ctrl-group">
+    <label>Pitch Layers (repetitions)</label>
+    <input type="range" id="reps" min="1" max="12" value="4">
+    <span class="val-display" id="reps-val">4</span>
+  </div>
+  <div class="ctrl-group">
+    <label>Spread (semitones)</label>
+    <input type="range" id="spread" min="1" max="20" value="4" step="1">
+    <span class="val-display" id="spread-val">0.4 st</span>
+  </div>
+  <div class="ctrl-group">
+    <label>Concat segments</label>
+    <input type="range" id="concat" min="1" max="6" value="2">
+    <span class="val-display" id="concat-val">2</span>
+  </div>
+  <div class="ctrl-group">
+    <label>Engine</label>
+    <select id="engine" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:.9rem;">
+      <option value="r3">r3 (fine, default)</option>
+      <option value="r2">r2 (fast)</option>
+      <option value="r4">r4 (= r3)</option>
+    </select>
+  </div>
+  <div class="ctrl-group">
+    <label>Duration per layer (s)</label>
+    <input type="number" id="duration" placeholder="none" min="1" max="3600" style="width:90px">
+  </div>
+</div>
+
+<div class="pipeline" id="pipeline"></div>
+
+<script>
+const repsEl = document.getElementById('reps');
+const spreadEl = document.getElementById('spread');
+const concatEl = document.getElementById('concat');
+const engineEl = document.getElementById('engine');
+const durationEl = document.getElementById('duration');
+const repsVal = document.getElementById('reps-val');
+const spreadVal = document.getElementById('spread-val');
+const concatVal = document.getElementById('concat-val');
+
+function linspace(from, to, n) {
+  if (n === 1) return [0];
+  return Array.from({ length: n }, (_, i) => from + (to - from) / (n - 1) * i);
+}
+
+function pitchColor(val, spread) {
+  const t = (val + spread / 2) / spread;
+  const h = Math.round(200 + t * 100);
+  return `hsl(${h}, 70%, 55%)`;
+}
+
+function build() {
+  const reps = +repsEl.value;
+  const spreadRaw = +spreadEl.value;
+  const spread = spreadRaw / 10;
+  const concatN = +concatEl.value;
+  const engine = engineEl.value;
+  const duration = durationEl.value ? +durationEl.value : null;
+
+  repsVal.textContent = reps;
+  spreadVal.textContent = spread.toFixed(1) + ' st';
+  concatVal.textContent = concatN;
+
+  const offsets = linspace(-spread / 2, spread / 2, reps);
+  const pipeline = document.getElementById('pipeline');
+  pipeline.innerHTML = '';
+
+  // ── Input source ────────────────────────────────────────────────────────────
+  const srcRow = document.createElement('div');
+  srcRow.style.cssText = 'background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 18px;display:flex;align-items:center;gap:12px;font-size:.88rem;';
+  srcRow.innerHTML = `<span style="font-size:1.4rem">🎵</span><div><div style="font-weight:600">Original attachment</div><div style="color:var(--muted);font-size:.78rem">Extracted to 44100 Hz PCM WAV (shared input for all segments)</div></div>`;
+  pipeline.appendChild(srcRow);
+
+  // ── Segments ─────────────────────────────────────────────────────────────
+  const segmentChips = [];
+
+  for (let seg = 0; seg < concatN; seg++) {
+    // Connector between segments
+    if (seg > 0) {
+      const conn = document.createElement('div');
+      conn.className = 'seg-connector';
+      conn.innerHTML = `↓ segment ${seg + 1} rendered from same original ↓`;
+      pipeline.appendChild(conn);
+    } else {
+      const arr = document.createElement('div');
+      arr.className = 'arrow';
+      arr.innerHTML = seg === 0 ? (concatN > 1 ? '↓ render segment 1 of ' + concatN : '↓') : '';
+      if (arr.innerHTML) pipeline.appendChild(arr);
+    }
+
+    const card = document.createElement('div');
+    card.className = 'segment-card';
+
+    const header = document.createElement('div');
+    header.className = 'seg-header';
+    header.innerHTML = `<span class="seg-num">Segment ${seg + 1}</span> ${reps} pitch layers → amix → export WAV`;
+    card.appendChild(header);
+
+    const body = document.createElement('div');
+    body.className = 'seg-body';
+
+    // Layers
+    const layersWrap = document.createElement('div');
+    layersWrap.className = 'layers-wrap';
+
+    offsets.forEach((offset, i) => {
+      const row = document.createElement('div');
+      row.className = 'layer-row';
+      const col = pitchColor(offset, spread);
+      const sign = offset >= 0 ? '+' : '';
+      const durLabel = duration ? `, ${duration}s` : '';
+      row.innerHTML = `
+        <div class="layer-fill" style="animation-delay:${i * 0.04}s"></div>
+        <span class="layer-tag" style="color:${col};border-color:${col}40;background:${col}18">${sign}${offset.toFixed(3)} st</span>
+        <span class="layer-label">Layer ${i + 1}${durLabel}</span>
+        <span class="layer-tool">rubberband ${engine === 'r2' ? '-2' : '-3'} --pitch ${sign}${offset.toFixed(3)}</span>
+      `;
+      layersWrap.appendChild(row);
+    });
+
+    body.appendChild(layersWrap);
+
+    // Arrow + amix
+    const arrowEl = document.createElement('div');
+    arrowEl.className = 'arrow';
+    arrowEl.textContent = '↓';
+    body.appendChild(arrowEl);
+
+    const mixBox = document.createElement('div');
+    mixBox.className = 'mix-box';
+    mixBox.innerHTML = `<span class="mix-badge">amix</span> Combine all ${reps} layers — <code style="font-size:.78rem">normalize=0, alimiter=0.99</code>`;
+    body.appendChild(mixBox);
+
+    // Arrow + export
+    const arrowEl2 = document.createElement('div');
+    arrowEl2.className = 'arrow';
+    arrowEl2.textContent = '↓';
+    body.appendChild(arrowEl2);
+
+    const exportBox = document.createElement('div');
+    exportBox.className = 'export-box';
+    exportBox.innerHTML = `<span class="export-badge">WAV</span> segment_${seg}.wav exported`;
+    body.appendChild(exportBox);
+
+    segmentChips.push(`segment_${seg}.wav`);
+    card.appendChild(body);
+    pipeline.appendChild(card);
+  }
+
+  // ── Concat section ──────────────────────────────────────────────────────────
+  if (concatN > 1) {
+    const arrowEl = document.createElement('div');
+    arrowEl.className = 'arrow';
+    arrowEl.textContent = '↓';
+    pipeline.appendChild(arrowEl);
+
+    const concatSec = document.createElement('div');
+    concatSec.className = 'concat-section';
+    concatSec.innerHTML = `
+      <div class="concat-header">
+        <span class="concat-badge">ffmpeg concat</span>
+        Join ${concatN} segments end-to-end using concat demuxer (-f concat)
+      </div>
+      <div class="segments-strip">
+        ${segmentChips.map((f, i) => `
+          <div class="seg-chip">
+            <span class="seg-chip-label">Segment ${i + 1}</span>
+            <span class="seg-chip-val">${f}</span>
+          </div>
+          ${i < segmentChips.length - 1 ? '<div style="display:flex;align-items:center;color:var(--muted)">→</div>' : ''}
+        `).join('')}
+      </div>
+    `;
+    pipeline.appendChild(concatSec);
+  }
+
+  // ── Final output ────────────────────────────────────────────────────────────
+  const arrowFinal = document.createElement('div');
+  arrowFinal.className = 'arrow';
+  arrowFinal.textContent = '↓';
+  pipeline.appendChild(arrowFinal);
+
+  const finalBox = document.createElement('div');
+  finalBox.className = 'final-box';
+  const totalDesc = concatN > 1
+    ? `${concatN} × (${reps}-layer amix)` : `${reps}-layer amix`;
+  finalBox.innerHTML = `
+    <span class="final-icon">🎧</span>
+    <div class="final-info">
+      <span class="final-name">multipitchihtx.wav</span>
+      <span class="final-meta">${totalDesc} · engine: ${engine} · spread: ±${(spread/2).toFixed(2)} st${duration ? ' · ' + duration + 's/layer' : ''}</span>
+    </div>
+    <div style="margin-left:auto;background:rgba(46,204,113,.15);border:1px solid var(--green);border-radius:8px;padding:6px 14px;font-size:.8rem;color:var(--green)">
+      ✅ Upload to Discord
+    </div>
+  `;
+  pipeline.appendChild(finalBox);
+}
+
+[repsEl, spreadEl, concatEl, engineEl, durationEl].forEach(el => el.addEventListener('input', build));
+build();
+</script>
+</body>
+</html>
