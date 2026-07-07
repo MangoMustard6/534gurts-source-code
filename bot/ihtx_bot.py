@@ -11,6 +11,7 @@ _UPDATELOG (newest first):
 - 2026-07-07: fzte: rewrite to use ihtx pipe engine (lut→rotate→tvsim→wave→rotate→ffmpeg/mirror/drawtext→volume→mp→volume); no more custom filter_complex.
 - 2026-07-07: rotate pipe effect: angle now passed verbatim as FFmpeg radian expression (supports any math e.g. -45/180*PI, 50*7).
 - 2026-07-07: fzte: switch to user's requested ihtx pipeline with mirror=right/bottom instead of frei0r=mirr0r (unavailable on Nix).
+- 2026-07-07: fzte: LUT source changed to Discord CDN URL.
 - 2026-07-06: fzte: move haldclut from displacement map [0] to user video [1] to fix displacement glitch.
 - 2026-07-06: multipitch2/mp2: replaced fileaa binary + asetrate trick with rubberband filter_complex (TS "find pitch" port); added inharmonic mode and auto-scale.
 - 2026-07-06: fzte/freakzingatesteffect: replaced remote lut3d cube with on-the-fly ImageMagick hald:8 haldclut generation.
@@ -869,24 +870,24 @@ def _run_freakzinga_test_effect(
     font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
     pipe = (
-        "lut=https://file.garden/aRsVTo5zvgxNjaSF/a.cube,"
+        "lut=https://cdn.discordapp.com/attachments/1507226915847802910/1523312814834581534/a.cube?ex=6a4c4fdc&is=6a4afe5c&hm=d28f9aaab3056af2a443568fd6d7c586f27250c9f0f8a02b13bf3de121d2a72b&,"
         "rotate=-45/180*PI,"
         "tvsim=0.9|4,"
         "wave=0|15|0.8|0.34666|0|0|0|0,"
         "rotate=45/180*PI,"
-        f"ffmpeg("
-        f"-vf hflip,"
-        f'"crop={w}*0.840:{h}:{w}*0.840:0,split[right][tmp];[tmp]hflip[left];[left][right]hstack,crop={w}:{h}:{w}*0.840:0"'
-        f"),"
-        "mirror=right,"
-        "mirror=bottom,"
-        f"ffmpeg("
-        f"-vf drawtext=fontfile={font}:text='%{{n}}.000':text_align=R:fontcolor=white:fontsize=w/24:box=1:boxcolor=black:boxborderw=7*(text_h):x=(w/2)-(text_w/2):y=(h-text_h)/1.12,"
-        f"negate"
-        f"),"
-        "volume=14.4,"
-        "mp=-20|-17|-13|-8|-5|-1|4|7|11|16|19|23,"
-        "volume=1.2"
+        + f"ffmpeg("
+        + f"-vf hflip,"
+        + f'"crop={w}*0.840:{h}:{w}*0.840:0,split[right][tmp];[tmp]hflip[left];[left][right]hstack,crop={w}:{h}:{w}*0.840:0"'
+        + f"),"
+        + "mirror=right,"
+        + "mirror=bottom,"
+        + f"ffmpeg("
+        + f"-vf drawtext=fontfile={font}:text='%{{n}}.000':text_align=R:fontcolor=white:fontsize=w/24:box=1:boxcolor=black:boxborderw=7*(text_h):x=(w/2)-(text_w/2):y=(h-text_h)/1.12,"
+        + f"negate"
+        + f"),"
+        + "volume=14.4,"
+        + "mp=-20|-17|-13|-8|-5|-1|4|7|11|16|19|23,"
+        + "volume=1.2"
     )
 
     effects = _parse_pipe_effects(pipe)
