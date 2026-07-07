@@ -12,6 +12,8 @@ _UPDATELOG (newest first):
 - 2026-07-07: rotate pipe effect: angle now passed verbatim as FFmpeg radian expression (supports any math e.g. -45/180*PI, 50*7).
 - 2026-07-07: fzte: switch to user's requested ihtx pipeline with mirror=right/bottom instead of frei0r=mirr0r (unavailable on Nix).
 - 2026-07-07: fzte: LUT source reverted to file.garden URL (valid .cube file, 7 MB, 64³ LUT).
+- 2026-07-07: fzte: replaced LUT download with on-the-fly color chain: invlum,huehsv=0.62,ccshue=110,channelblend=b|g|r,invlum.
+- 2026-07-07: invlum: make InvertLuminosity.cube path relative to the bot module so it resolves regardless of cwd.
 - 2026-07-06: fzte: move haldclut from displacement map [0] to user video [1] to fix displacement glitch.
 - 2026-07-06: multipitch2/mp2: replaced fileaa binary + asetrate trick with rubberband filter_complex (TS "find pitch" port); added inharmonic mode and auto-scale.
 - 2026-07-06: fzte/freakzingatesteffect: replaced remote lut3d cube with on-the-fly ImageMagick hald:8 haldclut generation.
@@ -129,7 +131,7 @@ HEAVY_LIMIT_OWNER = 5340
 LIMITS_FILE = Path("bot/limits.json")
 USAGE_FILE = Path("bot/usage.json")
 PENDING_RESETS_FILE = Path("bot/pending_resets.json")
-INVLUM_LUT_FILE = Path("bot/InvertLuminosity.cube")
+INVLUM_LUT_FILE = Path(__file__).with_name("InvertLuminosity.cube")
 heavy_limits: dict[int, int] = {}
 heavy_usage: dict[int, list[float]] = {}
 
@@ -870,7 +872,7 @@ def _run_freakzinga_test_effect(
     font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
     pipe = (
-        "lut=https://file.garden/aRsVTo5zvgxNjaSF/a.cube,"
+        "invlum,huehsv=0.62,ccshue=110,channelblend=b|g|r,invlum,"
         "rotate=-45/180*PI,"
         "tvsim=0.9|4,"
         "wave=0|15|0.8|0.34666|0|0|0|0,"
