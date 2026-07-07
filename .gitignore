@@ -52,3 +52,25 @@ __pycache__/
 # Replit
 .cache/
 .local/
+# --- Python System Files ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# --- Bot Data Logs & Tracking Files ---
+# This prevents live data updates from causing git conflicts
+bot/__pycache__/
+bot/activity.json
+bot/chat_profiles.json
+bot/garden_data.json
+bot/usage.json
+bot/xp_data.json
+
+# --- Security & Credentials ---
+# Never commit your tokens or API keys to git!
+.env
