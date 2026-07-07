@@ -10,6 +10,7 @@ ImageMagick/sox/etc. depending on advanced effects.
 _UPDATELOG (newest first):
 - 2026-07-07: fzte: rewrite to use ihtx pipe engine (lut→rotate→tvsim→wave→rotate→ffmpeg/mirror/drawtext→volume→mp→volume); no more custom filter_complex.
 - 2026-07-07: rotate pipe effect: angle now passed verbatim as FFmpeg radian expression (supports any math e.g. -45/180*PI, 50*7).
+- 2026-07-07: fzte: switch to user's requested ihtx pipeline with mirror=right/bottom instead of frei0r=mirr0r (unavailable on Nix).
 - 2026-07-06: fzte: move haldclut from displacement map [0] to user video [1] to fix displacement glitch.
 - 2026-07-06: multipitch2/mp2: replaced fileaa binary + asetrate trick with rubberband filter_complex (TS "find pitch" port); added inharmonic mode and auto-scale.
 - 2026-07-06: fzte/freakzingatesteffect: replaced remote lut3d cube with on-the-fly ImageMagick hald:8 haldclut generation.
@@ -867,18 +868,6 @@ def _run_freakzinga_test_effect(
 
     font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-    # Native FFmpeg mirror chain that replaces the missing frei0r=mirr0r plugin.
-    mirror_h = (
-        "crop=iw/2:ih:0:0,split=2[_ml1][_mr1];"
-        "[_mr1]hflip[_mrf1];"
-        "[_ml1][_mrf1]hstack"
-    )
-    mirror_v = (
-        "crop=iw:ih/2:0:0,split=2[_mt2][_mb2];"
-        "[_mb2]vflip[_mbf2];"
-        "[_mt2][_mbf2]vstack"
-    )
-
     pipe = (
         "lut=https://file.garden/aRsVTo5zvgxNjaSF/a.cube,"
         "rotate=-45/180*PI,"
@@ -887,13 +876,12 @@ def _run_freakzinga_test_effect(
         "rotate=45/180*PI,"
         f"ffmpeg("
         f"-vf hflip,"
-        f'"crop={w}*0.840:{h}:{w}*0.840:0,split[right][tmp];[tmp]hflip[left];[left][right]hstack,crop={w}:{h}:{w}*0.840:0",'
-        f"hflip,"
-        f"scroll=hpos=0.5,"
-        f'"{mirror_h}",'
-        f"scroll=vpos=0.5,"
-        f'"{mirror_v}",'
-        f"drawtext=fontfile={font}:text='%{{n}}.000':text_align=R:fontcolor=white:fontsize=w/24:box=1:boxcolor=black:boxborderw=7*(text_h):x=(w/2)-(text_w/2):y=(h-text_h)/1.12,"
+        f'"crop={w}*0.840:{h}:{w}*0.840:0,split[right][tmp];[tmp]hflip[left];[left][right]hstack,crop={w}:{h}:{w}*0.840:0"'
+        f"),"
+        "mirror=right,"
+        "mirror=bottom,"
+        f"ffmpeg("
+        f"-vf drawtext=fontfile={font}:text='%{{n}}.000':text_align=R:fontcolor=white:fontsize=w/24:box=1:boxcolor=black:boxborderw=7*(text_h):x=(w/2)-(text_w/2):y=(h-text_h)/1.12,"
         f"negate"
         f"),"
         "volume=14.4,"
