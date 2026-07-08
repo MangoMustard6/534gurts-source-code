@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-08: multipitch2/mp2: removed all apad padding; output length now matches input video.
+- 2026-07-08: multipitch2/mp2: probe for audio stream before processing; switch intermediate audio codec to FLAC; removed apad padding.
 - 2026-07-08: Added VebCog (bot/veb_cog.py): th/veb <effects> command with veb-shorthand mapping + mention-triggered random effects.
 - 2026-07-07: fzte: rewrite to use ihtx pipe engine (lut→rotate→tvsim→wave→rotate→ffmpeg/mirror/drawtext→volume→mp→volume); no more custom filter_complex.
 - 2026-07-07: rotate pipe effect: angle now passed verbatim as FFmpeg radian expression (supports any math e.g. -45/180*PI, 50*7).
@@ -3512,6 +3512,16 @@ def _apply_pipe_effects(
             # Auto-scale: if |semitone| >= 120 it is assumed to be in tenths → divide by 10.
             # Surround presets: G-Major_17 → alimiter=15, Evil_Rampaging_Sorcerer → alimiter=30.
             if name in ("multipitch2", "mp2"):
+                # Guard: multipitch2 needs an audio stream to process.
+                audio_streams = _ffprobe(
+                    current,
+                    "-select_streams", "a",
+                    "-show_entries", "stream=index",
+                    "-of", "default=nw=1:nk=1",
+                ).strip()
+                if not audio_streams:
+                    return False, "multipitch2: input has no audio stream — attach or reply to a video with audio."
+
                 all_params = list(params)
 
                 # Inharmonic mode — 'i' as standalone first token
@@ -3599,7 +3609,7 @@ def _apply_pipe_effects(
                     "-map", "0:v?",
                     "-map", "[mp2aout]",
                     "-c:v", "copy",
-                    "-c:a", "pcm_s16le",
+                    "-c:a", "flac",
                     "-shortest",
                     out,
                 ], timeout=300)
