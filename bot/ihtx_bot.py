@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-08: multipitch2/mp2: removed all apad padding; output length now matches input video.
 - 2026-07-08: Added VebCog (bot/veb_cog.py): th/veb <effects> command with veb-shorthand mapping + mention-triggered random effects.
 - 2026-07-07: fzte: rewrite to use ihtx pipe engine (lut→rotate→tvsim→wave→rotate→ffmpeg/mirror/drawtext→volume→mp→volume); no more custom filter_complex.
 - 2026-07-07: rotate pipe effect: angle now passed verbatim as FFmpeg radian expression (supports any math e.g. -45/180*PI, 50*7).
@@ -3557,7 +3558,6 @@ def _apply_pipe_effects(
 
                 n_voices = len(semitones)
                 pcm      = "aformat=sample_fmts=s16:sample_rates=44100,"
-                pad_pre  = "apad=pad_dur=1,"
                 rb_args  = "rubberband=tempo=1:formant=6942000/634"
 
                 if surround_type == "Evil_Rampaging_Sorcerer":
@@ -3570,7 +3570,7 @@ def _apply_pipe_effects(
                 if n_voices == 1:
                     pitch_ratio = 2 ** (semitones[0] / 12)
                     fc_chain = (
-                        f"[0:a]{pcm}{pad_pre}"
+                        f"[0:a]{pcm}"
                         f"{rb_args}:pitch={pitch_ratio:.6f},"
                         f"asetpts=PTS-STARTPTS{post_mix}[mp2aout]"
                     )
@@ -3581,14 +3581,14 @@ def _apply_pipe_effects(
                     for j, st in enumerate(semitones):
                         pitch_ratio = 2 ** (st / 12)
                         chain_parts.append(
-                            f"[mp2ps{j}]{pad_pre}"
+                            f"[mp2ps{j}]"
                             f"{rb_args}:pitch={pitch_ratio:.6f},"
                             f"asetpts=PTS-STARTPTS,dynaudnorm[mp2rb{j}]"
                         )
                     rb_inputs = "".join(f"[mp2rb{j}]" for j in range(n_voices))
                     mix_part  = (
-                        f"{rb_inputs}amix=inputs={n_voices}:normalize=0,"
-                        f"apad=pad_dur=0.1{post_mix}[mp2aout]"
+                        f"{rb_inputs}amix=inputs={n_voices}:normalize=0"
+                        f"{post_mix}[mp2aout]"
                     )
                     fc_chain = ";".join([split_part] + chain_parts + [mix_part])
 
@@ -3600,6 +3600,7 @@ def _apply_pipe_effects(
                     "-map", "[mp2aout]",
                     "-c:v", "copy",
                     "-c:a", "pcm_s16le",
+                    "-shortest",
                     out,
                 ], timeout=300)
                 if not ok:
