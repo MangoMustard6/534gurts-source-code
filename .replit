@@ -1,5 +1,3 @@
-<<<<<<< HEAD
-=======
 modules = ["python-3.11", "nodejs-20", "web"]
 
 [deployment]
@@ -74,7 +72,6 @@ integrations = []
 path = "scripts/post-merge.sh"
 timeoutMs = 20000
 
->>>>>>> ecb35ba (Refactor bot logic and update game data files)
 [[ports]]
 localPort = 8000
 externalPort = 8000
@@ -101,10 +98,8 @@ externalPort = 3002
 
 [[ports]]
 localPort = 8099
-<<<<<<< HEAD
+
 externalPort = 80
-=======
-externalPort = 8099
 
 [userenv]
 
@@ -123,4 +118,4 @@ packages = ["freetype", "lcms2", "libimagequant", "libjpeg", "libtiff", "libuv",
 
 [rules.formatter.fileExtensions.".json"]
 id = "module:nodejs-20/formatter:prettier"
->>>>>>> ecb35ba (Refactor bot logic and update game data files)
+
