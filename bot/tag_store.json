@@ -52,6 +52,16 @@
         "aliases": [],
         "allowed_roles": [],
         "denied_users": []
+      },
+      "klaskysource": {
+        "name": "klaskysource",
+        "content": "{attach:https://cdn.discordapp.com/attachments/1523970163031019570/1524029247440814182/distort.resize.mp4?ex=6a4eeb17&is=6a4d9997&hm=b05bd514f8a7b79d8f5bcf35b249bcd8ed998b31699941a363f879ccf8510638&}",
+        "owner_id": 1355759019330895973,
+        "created_at": "2026-07-08T10:08:57.419657+00:00",
+        "uses": 0,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": []
       }
     },
     "aliases": {}

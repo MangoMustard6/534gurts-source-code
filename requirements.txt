@@ -3,6 +3,7 @@ catboxpy
 discord.py>=2.7.1
 flask
 groq
+numpy
 Pillow
 python-dotenv
 uvloop

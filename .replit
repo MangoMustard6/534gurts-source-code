@@ -10,7 +10,7 @@ args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
 
 [workflows]
-runButton = "Project"
+runButton = "IHTX Discord Bot"
 
 [[workflows.workflow]]
 name = "Project"
