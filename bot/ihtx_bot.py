@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-08: Added VebCog (bot/veb_cog.py): th/veb <effects> command with veb-shorthand mapping + mention-triggered random effects.
 - 2026-07-07: fzte: rewrite to use ihtx pipe engine (lut→rotate→tvsim→wave→rotate→ffmpeg/mirror/drawtext→volume→mp→volume); no more custom filter_complex.
 - 2026-07-07: rotate pipe effect: angle now passed verbatim as FFmpeg radian expression (supports any math e.g. -45/180*PI, 50*7).
 - 2026-07-07: fzte: switch to user's requested ihtx pipeline with mirror=right/bottom instead of frei0r=mirr0r (unavailable on Nix).
@@ -5579,6 +5580,14 @@ async def on_ready():
             print("GardenCog loaded.")
         except Exception as _garden_exc:
             print(f"Warning: GardenCog failed to load — {_garden_exc}")
+    # Load VEB cog — th/veb effects command + mention-triggered random effects
+    if "VEB" not in bot.cogs:
+        try:
+            from bot.veb_cog import setup as _veb_setup
+            await _veb_setup(bot)
+            print("VebCog loaded.")
+        except Exception as _veb_exc:
+            print(f"Warning: VebCog failed to load — {_veb_exc}")
     # Slash command sync is triggered manually via th/sync (owner only).
     # Automatic on_ready sync is intentionally omitted: discord.py's event
     # loop swallows exceptions from on_ready before our try/except can
