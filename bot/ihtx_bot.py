@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-09: Updated th/lexg to use the last th/ihtx export per user (persisted to output/lastexport_<user_id>.mp4) with reverse→trim→reverse. Still supports attachment/reply override.
 - 2026-07-08: Removed alimiter post-processing from multipitch2/mp2 (Evil_Rampaging_Sorcerer/G-Major_17 presets) to avoid clipping/static.
 - 2026-07-08: Added multipitch3/mp3 pipe effect — old-style Rubber Band CLI multi-voice pitch shift with FLAC audio (no static fallback).
 - 2026-07-08: Fixed th/veb to call ihtxgen.callback directly, avoiding the hybrid-command invocation path that was dropping pipe_effects and showing the ihtx preset help.
@@ -9867,117 +9868,201 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
 
 @bot.command(name="lexg", aliases=["lastexportgrab", "lec"])
 async def lexg_command(ctx: commands.Context, duration: float = 5.0):
-    """Grab the last N seconds of a video using reverse→trim→reverse.
+    """Grab the last N seconds of the last th/ihtx export using reverse→trim→reverse.
 
-    Usage: th/lexg [duration] — attach a video or reply to one.
+    Usage: th/lexg [duration] — no attachment needed; uses your last th/ihtx export.
+    You can still attach or reply to a video to override the stored export.
     Default duration is 5 seconds.
     """
-    # Resolve attachment
+    # Resolve attachment (override) first
     attachment = None
-    if attachment is None:
-        if ctx.message and ctx.message.attachments:
-            attachment = ctx.message.attachments[0]
-        elif ctx.message and ctx.message.reference:
-            try:
-                ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-                if ref.attachments:
-                    attachment = ref.attachments[0]
-            except Exception:
-                pass
-
-    if not attachment:
-        await ctx.reply(
-            "**th/lexg [duration]** — Grab the last N seconds of a video.\n"
-            "Attach a file or reply to one. Duration defaults to `5` seconds.\n"
-            "Aliases: `th/lastexportgrab` `th/lec`"
-        )
-        return
+    if ctx.message and ctx.message.attachments:
+        attachment = ctx.message.attachments[0]
+    elif ctx.message and ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref.attachments:
+                attachment = ref.attachments[0]
+        except Exception:
+            pass
 
     if duration <= 0 or duration > 3600:
         await ctx.reply("❌ Duration must be between 0 and 3600 seconds.")
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
+    if attachment:
+        if attachment.size > MAX_FILE_SIZE:
+            await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
+            return
+
+        suffix = Path(attachment.filename).suffix.lower()
+        if suffix not in SUPPORTED_EXTENSIONS:
+            await ctx.reply(f"Unsupported file type `{suffix}`.")
+            return
+
+        is_video = suffix in VIDEO_EXTENSIONS
+        input_filename = attachment.filename
+        status_msg = await ctx.reply(f"⏳ Grabbing last **{duration}s** of `{input_filename}`…")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = os.path.join(tmpdir, f"input{suffix}")
+            output_path = os.path.join(tmpdir, "lec.mp4")
+            try:
+                await download_attachment(attachment, input_path)
+            except Exception as e:
+                await status_msg.edit(content=f"❌ Failed to download: {e}")
+                return
+
+            await _lexg_run_ffmpeg(ctx, status_msg, input_path, output_path, duration, input_filename)
         return
 
-    suffix = Path(attachment.filename).suffix.lower()
-    if suffix not in SUPPORTED_EXTENSIONS:
-        await ctx.reply(f"Unsupported file type `{suffix}`.")
+    # No attachment — use the user's last th/ihtx export.
+    last = _lexg_load_last_export(ctx.author.id)
+    if not last:
+        await ctx.reply(
+            "**th/lexg [duration]** — Grab the last N seconds of your last `th/ihtx` export.\n"
+            "No export found yet — run an `th/ihtx` command first, or attach/reply to a video.\n"
+            "Duration defaults to `5` seconds.\n"
+            "Aliases: `th/lastexportgrab` `th/lec`"
+        )
         return
 
-    is_video = suffix in VIDEO_EXTENSIONS
-    status_msg = await ctx.reply(f"⏳ Grabbing last **{duration}s** of `{attachment.filename}`…")
+    input_path = last["path"]
+    input_filename = last.get("filename", "lastexport.mp4")
+    output_path = os.path.join(os.path.dirname(input_path), f"lec_{ctx.author.id}.mp4")
+    status_msg = await ctx.reply(f"⏳ Grabbing last **{duration}s** of your last export (`{input_filename}`)…")
+    await _lexg_run_ffmpeg(ctx, status_msg, input_path, output_path, duration, input_filename)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        input_path = os.path.join(tmpdir, f"input{suffix}")
-        output_path = os.path.join(tmpdir, "lec.mp4")
+
+def _lexg_load_last_export(user_id: int) -> dict | None:
+    """Return the last export metadata for a user, rehydrating from disk if needed."""
+    # In-memory cache
+    last = _last_exports.get(user_id)
+    if last and os.path.isfile(last.get("path", "")):
+        return last
+    if last:
+        _last_exports.pop(user_id, None)
+
+    # JSON metadata
+    meta_path = f"output/lastexport_{user_id}.json"
+    if os.path.isfile(meta_path):
         try:
-            await download_attachment(attachment, input_path)
-        except Exception as e:
-            await status_msg.edit(content=f"❌ Failed to download: {e}")
-            return
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+            path = meta.get("path", "")
+            if os.path.isfile(path):
+                _last_exports[user_id] = meta
+                return meta
+        except Exception as exc:
+            print(f"[lexg] failed to load metadata: {exc}")
 
-        dur = duration
-        if is_video:
-            vf = f"reverse,trim=0:{dur},reverse"
-            af = f"areverse,atrim=0:{dur},areverse"
-            cmd = [
-                "ffmpeg", "-y", "-i", input_path,
-                "-vf", vf,
-                "-af", af,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-                "-c:a", "aac", "-b:a", "192k",
-                output_path,
-            ]
-        else:
-            af = f"areverse,atrim=0:{dur},areverse"
-            cmd = [
-                "ffmpeg", "-y", "-i", input_path,
-                "-af", af,
-                "-c:a", "aac", "-b:a", "192k",
-                output_path,
-            ]
+    # Fallback: any output/lastexport_<user_id>.* file
+    candidates = [
+        p for p in Path("output").glob(f"lastexport_{user_id}.*")
+        if p.suffix != ".json"
+    ]
+    if candidates:
+        path = max(candidates, key=lambda p: p.stat().st_mtime)
+        meta = {
+            "path": str(path),
+            "filename": "lastexport",
+            "is_video": True,
+            "suffix": path.suffix,
+            "ext": path.suffix,
+        }
+        _last_exports[user_id] = meta
+        return meta
 
-        loop = asyncio.get_event_loop()
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=300),
-            )
-            ok = result.returncode == 0
-            err = result.stderr
-        except subprocess.TimeoutExpired:
-            await status_msg.edit(content="❌ FFmpeg timed out.")
-            return
-        except Exception as e:
-            await status_msg.edit(content=f"❌ FFmpeg error: {e}")
-            return
+    return None
 
-        if not ok:
-            await status_msg.edit(content=f"❌ FFmpeg failed:\n```\n{err[-1500:]}\n```")
-            return
 
-        out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="⬆️ Output too large for Discord — uploading to Catbox…")
-            cb_url = await _upload_to_catbox(output_path)
-            if cb_url:
-                await ctx.reply(f"✅ Last **{dur}s** grabbed → {cb_url}")
-                await status_msg.delete()
-            else:
-                await status_msg.edit(content="❌ Output too large for Discord and Catbox upload failed.")
-            return
+def _lexg_probe_streams(path: str) -> tuple[bool, bool, float]:
+    """Return (has_video, has_audio, duration_seconds) for a media file."""
+    has_video = bool(
+        _ffprobe(path, "-select_streams", "v:0", "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1").strip()
+    )
+    has_audio = bool(
+        _ffprobe(path, "-select_streams", "a:0", "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1").strip()
+    )
+    dur = _ffprobe_duration(path)
+    return has_video, has_audio, dur
 
-        out_filename = f"lec_{Path(attachment.filename).stem}.mp4"
-        try:
-            await ctx.reply(
-                content=f"✅ Last **{dur}s** grabbed!",
-                file=discord.File(output_path, filename=out_filename),
-            )
+
+async def _lexg_run_ffmpeg(
+    ctx: commands.Context,
+    status_msg: discord.Message,
+    input_path: str,
+    output_path: str,
+    duration: float,
+    input_filename: str,
+) -> None:
+    """Run the reverse→trim→reverse FFmpeg command for th/lexg and upload result.
+
+    Probes the actual input streams so video-only, audio-only, and silent/GIF
+    exports are handled correctly.
+    """
+    has_video, has_audio, actual_dur = _lexg_probe_streams(input_path)
+    if not has_video and not has_audio:
+        await status_msg.edit(content="❌ No video or audio streams found in the input file.")
+        return
+
+    dur = min(duration, actual_dur) if actual_dur > 0 else duration
+    if actual_dur > 0 and duration > actual_dur:
+        await status_msg.edit(content=f"⚠️ Requested duration ({duration}s) exceeds media length ({actual_dur:.2f}s). Using full duration.")
+
+    cmd = ["ffmpeg", "-y", "-i", input_path]
+    if has_video:
+        cmd += ["-vf", f"reverse,trim=0:{dur},reverse"]
+    if has_audio:
+        cmd += ["-af", f"areverse,atrim=0:{dur},areverse"]
+    if has_video:
+        cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "18"]
+    if has_audio:
+        cmd += ["-c:a", "aac", "-b:a", "192k"]
+    elif has_video:
+        # Video-only output still needs a codec container; an audio track is absent
+        cmd += ["-an"]
+    cmd += [output_path]
+
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=300),
+        )
+        ok = result.returncode == 0
+        err = result.stderr
+    except subprocess.TimeoutExpired:
+        await status_msg.edit(content="❌ FFmpeg timed out.")
+        return
+    except Exception as e:
+        await status_msg.edit(content=f"❌ FFmpeg error: {e}")
+        return
+
+    if not ok:
+        await status_msg.edit(content=f"❌ FFmpeg failed:\n```\n{err[-1500:]}\n```")
+        return
+
+    out_size = os.path.getsize(output_path)
+    if out_size > MAX_FILE_SIZE:
+        await status_msg.edit(content="⬆️ Output too large for Discord — uploading to Catbox…")
+        cb_url = await _upload_to_catbox(output_path)
+        if cb_url:
+            await ctx.reply(f"✅ Last **{dur:.2f}s** grabbed → {cb_url}")
             await status_msg.delete()
-        except discord.HTTPException as e:
-            await status_msg.edit(content=f"❌ Failed to upload: {e}")
+        else:
+            await status_msg.edit(content="❌ Output too large for Discord and Catbox upload failed.")
+        return
+
+    out_filename = f"lec_{Path(input_filename).stem}.mp4"
+    try:
+        await ctx.reply(
+            content=f"✅ Last **{dur:.2f}s** grabbed!",
+            file=discord.File(output_path, filename=out_filename),
+        )
+        await status_msg.delete()
+    except discord.HTTPException as e:
+        await status_msg.edit(content=f"❌ Failed to upload: {e}")
 
 
 
