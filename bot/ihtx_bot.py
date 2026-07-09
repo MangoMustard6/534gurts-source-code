@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-09: Added th/crop and th/resize commands: crop <width> <height> center-crops a video; resize <width> <height> scales a video to the exact dimensions. Both preserve audio and support attachment/reply input.
 - 2026-07-09: Updated th/lexg to use the last th/ihtx export per user (persisted to output/lastexport_<user_id>.mp4) with reverse→trim→reverse. Still supports attachment/reply override.
 - 2026-07-08: Removed alimiter post-processing from multipitch2/mp2 (Evil_Rampaging_Sorcerer/G-Major_17 presets) to avoid clipping/static.
 - 2026-07-08: Added multipitch3/mp3 pipe effect — old-style Rubber Band CLI multi-voice pitch shift with FLAC audio (no static fallback).
@@ -10058,6 +10059,237 @@ async def _lexg_run_ffmpeg(
     try:
         await ctx.reply(
             content=f"✅ Last **{dur:.2f}s** grabbed!",
+            file=discord.File(output_path, filename=out_filename),
+        )
+        await status_msg.delete()
+    except discord.HTTPException as e:
+        await status_msg.edit(content=f"❌ Failed to upload: {e}")
+
+
+@bot.command(name="crop", aliases=["c"])
+async def crop_command(ctx: commands.Context, width: int, height: int):
+    """Center-crop a video to the given width and height.
+
+    Usage: th/crop <width> <height> — attach or reply to a video.
+    Example: th/crop 640 360
+    """
+    if width <= 0 or height <= 0 or width > 7680 or height > 7680:
+        await ctx.reply("❌ Width and height must be between 1 and 7680.")
+        return
+
+    # libx264/yuv420 requires even dimensions.
+    orig_width, orig_height = width, height
+    width = width - (width % 2)
+    height = height - (height % 2)
+    if width == 0 or height == 0:
+        await ctx.reply("❌ Width and height must be at least 2 after rounding to even values for h.264.")
+        return
+
+    attachment = None
+    if ctx.message and ctx.message.attachments:
+        attachment = ctx.message.attachments[0]
+    elif ctx.message and ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref.attachments:
+                attachment = ref.attachments[0]
+        except Exception:
+            pass
+
+    if not attachment:
+        await ctx.reply(
+            "**th/crop <width> <height>** — Center-crop a video.\n"
+            "Attach a video or reply to one.\n"
+            "Example: `th/crop 640 360`"
+        )
+        return
+
+    if attachment.size > MAX_FILE_SIZE:
+        await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
+        return
+
+    suffix = Path(attachment.filename).suffix.lower()
+    if suffix not in VIDEO_EXTENSIONS:
+        await ctx.reply(f"`th/crop` requires a video file. Got `{suffix}`.")
+        return
+
+    input_filename = attachment.filename
+    if orig_width != width or orig_height != height:
+        crop_status = f"⏳ Cropping `{input_filename}` to **{orig_width}×{orig_height}** → **{width}×{height}** for h.264…"
+    else:
+        crop_status = f"⏳ Cropping `{input_filename}` to **{width}×{height}**…"
+    status_msg = await ctx.reply(crop_status)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = os.path.join(tmpdir, f"input{suffix}")
+        output_path = os.path.join(tmpdir, "crop.mp4")
+        try:
+            await download_attachment(attachment, input_path)
+        except Exception as e:
+            await status_msg.edit(content=f"❌ Failed to download: {e}")
+            return
+
+        # Probe source dimensions so we can fail early on impossible crops.
+        try:
+            vinfo = _ffprobe_video_info(input_path)
+            src_w = int(vinfo["width"])
+            src_h = int(vinfo["height"])
+        except Exception as exc:
+            await status_msg.edit(content=f"❌ Could not probe video dimensions: {exc}")
+            return
+
+        if width > src_w or height > src_h:
+            await status_msg.edit(
+                content=f"❌ Crop size **{width}×{height}** is larger than source video **{src_w}×{src_h}**."
+            )
+            return
+
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-vf", f"crop={width}:{height}:(iw-{width})/2:(ih-{height})/2,setsar=1",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-c:a", "copy",
+            output_path,
+        ]
+
+        loop = asyncio.get_event_loop()
+        try:
+            result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=300),
+            )
+            ok = result.returncode == 0
+            err = result.stderr
+        except subprocess.TimeoutExpired:
+            await status_msg.edit(content="❌ FFmpeg timed out.")
+            return
+        except Exception as e:
+            await status_msg.edit(content=f"❌ FFmpeg error: {e}")
+            return
+
+        if not ok:
+            await status_msg.edit(content=f"❌ FFmpeg failed:\n```\n{err[-1500:]}\n```")
+            return
+
+        await _lexg_upload_result(ctx, status_msg, output_path, input_filename, f"crop_{width}x{height}")
+
+
+@bot.command(name="resize", aliases=["res"])
+async def resize_command(ctx: commands.Context, width: int, height: int):
+    """Resize a video to the given width and height.
+
+    Usage: th/resize <width> <height> — attach or reply to a video.
+    Example: th/resize 640 360
+    """
+    if width <= 0 or height <= 0 or width > 7680 or height > 7680:
+        await ctx.reply("❌ Width and height must be between 1 and 7680.")
+        return
+
+    # libx264/yuv420 requires even dimensions.
+    orig_width, orig_height = width, height
+    width = width - (width % 2)
+    height = height - (height % 2)
+    if width == 0 or height == 0:
+        await ctx.reply("❌ Width and height must be at least 2 after rounding to even values for h.264.")
+        return
+
+    attachment = None
+    if ctx.message and ctx.message.attachments:
+        attachment = ctx.message.attachments[0]
+    elif ctx.message and ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref.attachments:
+                attachment = ref.attachments[0]
+        except Exception:
+            pass
+
+    if not attachment:
+        await ctx.reply(
+            "**th/resize <width> <height>** — Resize a video.\n"
+            "Attach a video or reply to one.\n"
+            "Example: `th/resize 640 360`"
+        )
+        return
+
+    if attachment.size > MAX_FILE_SIZE:
+        await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
+        return
+
+    suffix = Path(attachment.filename).suffix.lower()
+    if suffix not in VIDEO_EXTENSIONS:
+        await ctx.reply(f"`th/resize` requires a video file. Got `{suffix}`.")
+        return
+
+    input_filename = attachment.filename
+    if orig_width != width or orig_height != height:
+        resize_status = f"⏳ Resizing `{input_filename}` to **{orig_width}×{orig_height}** → **{width}×{height}** for h.264…"
+    else:
+        resize_status = f"⏳ Resizing `{input_filename}` to **{width}×{height}**…"
+    status_msg = await ctx.reply(resize_status)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = os.path.join(tmpdir, f"input{suffix}")
+        output_path = os.path.join(tmpdir, "resize.mp4")
+        try:
+            await download_attachment(attachment, input_path)
+        except Exception as e:
+            await status_msg.edit(content=f"❌ Failed to download: {e}")
+            return
+
+        cmd = [
+            "ffmpeg", "-y", "-i", input_path,
+            "-vf", f"scale={width}:{height},setsar=1",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+            "-c:a", "copy",
+            output_path,
+        ]
+
+        loop = asyncio.get_event_loop()
+        try:
+            result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=300),
+            )
+            ok = result.returncode == 0
+            err = result.stderr
+        except subprocess.TimeoutExpired:
+            await status_msg.edit(content="❌ FFmpeg timed out.")
+            return
+        except Exception as e:
+            await status_msg.edit(content=f"❌ FFmpeg error: {e}")
+            return
+
+        if not ok:
+            await status_msg.edit(content=f"❌ FFmpeg failed:\n```\n{err[-1500:]}\n```")
+            return
+
+        await _lexg_upload_result(ctx, status_msg, output_path, input_filename, f"resize_{width}x{height}")
+
+
+async def _lexg_upload_result(
+    ctx: commands.Context,
+    status_msg: discord.Message,
+    output_path: str,
+    input_filename: str,
+    prefix: str,
+) -> None:
+    """Upload a lexg/crop/resize output, falling back to Catbox if too large."""
+    out_size = os.path.getsize(output_path)
+    if out_size > MAX_FILE_SIZE:
+        await status_msg.edit(content="⬆️ Output too large for Discord — uploading to Catbox…")
+        cb_url = await _upload_to_catbox(output_path)
+        if cb_url:
+            await ctx.reply(f"✅ Done → {cb_url}")
+            await status_msg.delete()
+        else:
+            await status_msg.edit(content="❌ Output too large for Discord and Catbox upload failed.")
+        return
+
+    out_filename = f"{prefix}_{Path(input_filename).stem}.mp4"
+    try:
+        await ctx.reply(
+            content="✅ Done!",
             file=discord.File(output_path, filename=out_filename),
         )
         await status_msg.delete()
