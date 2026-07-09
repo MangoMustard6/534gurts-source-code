@@ -196,9 +196,18 @@ class VebCog(commands.Cog, name="VEB"):
             pipe_effects = _random_effect_str()
             label = "(random)"
 
-        await ctx.invoke(
-            ihtxgen,
+        # Call the ihtxgen callback directly so hybrid-command invocation does not
+        # accidentally route into the slash-only path or drop pipe_effects.
+        economy = self.bot.cogs.get("Economy")
+        if economy is None:
+            await ctx.reply("❌ Economy cog not loaded — cannot run effects.", mention_author=False)
+            return
+        await ihtxgen.callback(
+            economy,
+            ctx,
             effect="chaos",
+            url=None,
+            attachment=None,
             pipe_effects=pipe_effects,
             repetitions=1,
             duration="vidlen",
@@ -251,9 +260,15 @@ class VebCog(commands.Cog, name="VEB"):
         await message.add_reaction("🎬")
 
         ctx = await self.bot.get_context(message)
-        await ctx.invoke(
-            ihtxgen,
+        economy = self.bot.cogs.get("Economy")
+        if economy is None:
+            return
+        await ihtxgen.callback(
+            economy,
+            ctx,
             effect="chaos",
+            url=None,
+            attachment=None,
             pipe_effects=pipe_effects,
             repetitions=1,
             duration="vidlen",
