@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-09: fzte pipeline: replaced volume,mp,volume trio with single mp3= (rubberband CLI multi-pitch, FLAC) for cleaner audio. Updated docstrings and embed description to show full pipeline.
 - 2026-07-09: Fixed pipe effects' intermediate audio codec from pcm_s24le to pcm_s16le to prevent "Invalid PCM packet" FFmpeg errors on odd-byte audio streams. Also updated invlum pipe effect separately.
 - 2026-07-09: Added th/crop and th/resize commands: crop <width> <height> center-crops a video; resize <width> <height> scales a video to the exact dimensions. Both preserve audio and support attachment/reply input.
 - 2026-07-09: Updated th/lexg to use the last th/ihtx export per user (persisted to output/lastexport_<user_id>.mp4) with reverse→trim→reverse. Still supports attachment/reply override.
@@ -965,8 +966,21 @@ def _run_freakzinga_test_effect(
 ) -> tuple[bool, str]:
     """Freakzinga test effect — runs the standard fzte ihtx pipe pipeline.
 
-    Applies: lut → rotate-45 → tvsim → wave → rotate+45 →
-             mirror/crop/drawtext (via ffmpeg step) → volume → multipitch → volume.
+    Pipeline:
+      1. invlum — luma inversion
+      2. huehsv=0.62 — hue shift
+      3. ccshue=110 — CCS hue
+      4. channelblend=b|g|r — channel blend
+      5. invlum — second luma inversion
+      6. rotate=-45/180*PI — rotate -45°
+      7. tvsim=0.9|4 — TV simulator
+      8. wave=0|15|0.8|0.34666|0|0|0|0 — wave distortion
+      9. rotate=45/180*PI — rotate +45°
+     10. ffmpeg(...) — hflip + crop/split/hstack composite
+     11. mirror=right — mirror right half
+     12. mirror=bottom — mirror bottom half
+     13. ffmpeg(...) — frame-numbered drawtext + negate
+     14. mp3=-20|-17|-13|-8|-5|-1|4|7|11|16|19|23 — multi-pitch (rubberband CLI, FLAC)
 
     Optional params override output resolution:
         freakzingatesteffect=1280|720
@@ -1010,9 +1024,7 @@ def _run_freakzinga_test_effect(
         + f"-vf drawtext=fontfile={font}:text='%{{n}}.000':text_align=R:fontcolor=white:fontsize=w/24:box=1:boxcolor=black:boxborderw=7*(text_h):x=(w/2)-(text_w/2):y=(h-text_h)/1.12,"
         + f"negate"
         + f"),"
-        + "volume=14.4,"
-        + "mp=-20|-17|-13|-8|-5|-1|4|7|11|16|19|23,"
-        + "volume=1.2"
+        + "mp3=-20|-17|-13|-8|-5|-1|4|7|11|16|19|23"
     )
 
     effects = _parse_pipe_effects(pipe)
@@ -8736,8 +8748,10 @@ async def gradientmap_command(ctx: commands.Context, *, args: str = ""):
 async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = ""):
     """Apply the Freakzinga test effect to an attached video.
 
-    This runs a complex FFmpeg graph (3D LUT, displacement map, native FFmpeg
-    mirroring, scrolling, frame-numbered text) plus a multi-pitch audio shift.
+    Pipeline: invlum → huehsv → ccshue → channelblend → invlum →
+              rotate→tvsim→wave→rotate → ffmpeg hflip/crop/hstack →
+              mirror=right → mirror=bottom → ffmpeg drawtext+negate →
+              mp3 (multi-pitch rubberband CLI).
 
     Usage:
       th/freakzingatesteffect
@@ -8813,7 +8827,7 @@ async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = "")
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/freakzingatesteffect",
-                description="LUT + displace + native mirror + multi-pitch audio",
+                description="invlum→huehsv→ccshue→channelblend→invlum→rotate→tvsim→wave→rotate→ffmpeg→mirror→mirror→ffmpeg→mp3",
                 color=4886754,
             )
             embed.set_thumbnail(url="https://files.catbox.moe/xli8jw.png")
