@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-08: Removed alimiter post-processing from multipitch2/mp2 (Evil_Rampaging_Sorcerer/G-Major_17 presets) to avoid clipping/static.
 - 2026-07-08: Added multipitch3/mp3 pipe effect — old-style Rubber Band CLI multi-voice pitch shift with FLAC audio (no static fallback).
 - 2026-07-08: Fixed th/veb to call ihtxgen.callback directly, avoiding the hybrid-command invocation path that was dropping pipe_effects and showing the ihtx preset help.
 - 2026-07-08: Added math/animation support for pipe effects: $fc (frame count), lerp(a,b,t), and FFmpeg-native T/N/PI expressions. Affects wave, wave2, shake, jitter, randomjitter, scroll, ripple, pan, tile, brightness, contrast, saturation, rotate.
@@ -3687,12 +3688,7 @@ def _apply_pipe_effects(
                 pcm      = "aformat=sample_fmts=s16:sample_rates=44100,"
                 rb_args  = "rubberband=tempo=1:formant=6942000/634"
 
-                if surround_type == "Evil_Rampaging_Sorcerer":
-                    post_mix = ",alimiter=30:latency=1"
-                elif surround_type == "G-Major_17":
-                    post_mix = ",alimiter=15:latency=1"
-                else:
-                    post_mix = ""
+                post_mix = ""
 
                 if n_voices == 1:
                     pitch_ratio = 2 ** (semitones[0] / 12)
