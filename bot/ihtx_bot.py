@@ -2813,8 +2813,14 @@ def _apply_pipe_effects(
         pass
 
     # Preprocess effect parameters: expand lerp, replace $fc, collapse constants.
+    # Skip for effects whose params are raw FFmpeg/shell command strings
+    # (they may contain '=' that is NOT a key=value separator).
+    _RAW_ARG_EFFECTS = {"ffmpeg", "leftsplit", "rightsplit"}
     effects = [
-        (name, [_preprocess_param(p, frame_count) for p in params])
+        (
+            name,
+            (params if name in _RAW_ARG_EFFECTS else [_preprocess_param(p, frame_count) for p in params]),
+        )
         for name, params in effects
     ]
 
