@@ -16,6 +16,7 @@ import json
 import math
 import os
 import random
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -453,9 +454,11 @@ class EconomyCog(commands.Cog, name="Economy"):
                 run_ffmpeg,
                 _upload_to_catbox,
                 _ffprobe_video_info,
+                _ffprobe_duration,
                 _run_ihtx_tagscript_workflow,
                 _pipe_effects_label,
                 _parse_ihtx_custom_args,
+                _last_exports,
             )
         except ImportError as exc:
             await ctx.reply(f"❌ Internal error importing IHTX pipeline: `{exc}`", ephemeral=True)
@@ -690,6 +693,26 @@ class EconomyCog(commands.Cog, name="Economy"):
             if not ok:
                 await _update(f"❌ FFmpeg failed:\n```\n{err[-1200:]}\n```", 0xED4245)
                 return
+
+            # Persist the last export for th/lexg re-use.
+            os.makedirs("output", exist_ok=True)
+            last_export_ext = out_final_ext
+            last_export_path = os.path.abspath(f"output/lastexport_{ctx.author.id}{last_export_ext}")
+            try:
+                shutil.copy2(output_path, last_export_path)
+                _last_exports[ctx.author.id] = {
+                    "path": last_export_path,
+                    "filename": media_filename,
+                    "is_video": is_video,
+                    "suffix": suffix,
+                    "ext": last_export_ext,
+                    "duration": _ffprobe_duration(output_path),
+                    "timestamp": time.time(),
+                }
+                with open(f"output/lastexport_{ctx.author.id}.json", "w") as f:
+                    json.dump(_last_exports[ctx.author.id], f)
+            except Exception as exc:
+                print(f"[lexg] failed to persist last export: {exc}")
 
             out_size = os.path.getsize(output_path)
 
