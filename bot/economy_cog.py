@@ -831,6 +831,25 @@ class EconomyCog(commands.Cog, name="Economy"):
                 await ctx.invoke(self.ihtxgen, effect=first or "chaos")
 
     # -----------------------------------------------------------------------
+    # roxi math — evaluate a math expression (no eval/exec, recursive-descent)
+    # -----------------------------------------------------------------------
+
+    @commands.command(name="math", aliases=["calc"])
+    async def math_cmd(self, ctx: commands.Context, *, expression: str) -> None:
+        """Evaluate a math expression safely.
+
+        Usage: th/math <expression>
+        Example: th/math 2+2*3
+                 th/math (10^2)/4 + 5
+        """
+        from bot.tags.parser import _safe_math
+        result = _safe_math(expression.strip())
+        if result.startswith("[math error"):
+            await ctx.reply(f"❌ {result}", mention_author=False)
+        else:
+            await ctx.reply(f"🧮 `{expression.strip()}` = `{result}`", mention_author=False)
+
+    # -----------------------------------------------------------------------
     # roxi nparisonffmpeg — standalone iterative xstack grid command
     # -----------------------------------------------------------------------
 

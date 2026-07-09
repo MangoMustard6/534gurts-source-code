@@ -8,7 +8,11 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-08: multipitch2/mp2: probe for audio stream before processing; switch intermediate audio codec to FLAC; removed apad padding.
+- 2026-07-08: Fixed th/veb to call ihtxgen.callback directly, avoiding the hybrid-command invocation path that was dropping pipe_effects and showing the ihtx preset help.
+- 2026-07-08: Added math/animation support for pipe effects: $fc (frame count), lerp(a,b,t), and FFmpeg-native T/N/PI expressions. Affects wave, wave2, shake, jitter, randomjitter, scroll, ripple, pan, tile, brightness, contrast, saturation, rotate.
+- 2026-07-08: Added th/math command (EconomyCog) to evaluate math expressions safely.
+- 2026-07-08: huehsv: preserve audio stream with -c:a copy.
+- 2026-07-08: multipitch2/mp2: probe for audio stream before processing; removed apad padding; restored pcm_s16le intermediate codec.
 - 2026-07-08: Added VebCog (bot/veb_cog.py): th/veb <effects> command with veb-shorthand mapping + mention-triggered random effects.
 - 2026-07-07: fzte: rewrite to use ihtx pipe engine (lut→rotate→tvsim→wave→rotate→ffmpeg/mirror/drawtext→volume→mp→volume); no more custom filter_complex.
 - 2026-07-07: rotate pipe effect: angle now passed verbatim as FFmpeg radian expression (supports any math e.g. -45/180*PI, 50*7).
@@ -49,6 +53,8 @@ try:
     import yt_dlp
 except ImportError:
     yt_dlp = None
+
+from bot.tags.parser import _MathParser, _safe_math
 
 try:
     from PIL import Image as _PIL_Image
@@ -125,6 +131,116 @@ def _is_bot_mod(ctx: commands.Context) -> bool:
     return False
 
 _load_owner_ids()
+
+# ---------- Math / animation helpers ----------
+
+_FFMPEG_EXPR_SYMBOLS = {
+    "T", "N", "X", "Y", "W", "H", "PI", "E",
+    "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+    "abs", "clip", "mod", "hypot", "sqrt", "pow", "exp", "log",
+    "min", "max", "if", "gt", "lt", "eq", "gte", "lte", "not", "and", "or",
+    "between", "bitand", "bitor", "bitxor", "ceil", "floor", "round", "trunc",
+    "isnan", "isinf", "gauss", "lerp",
+    "w", "h", "t", "n", "x", "y", "p", "dx", "dy",
+}
+
+_FFMPEG_EXPR_RE = re.compile(
+    r'(?<![A-Za-z0-9_])(' + '|'.join(re.escape(s) for s in _FFMPEG_EXPR_SYMBOLS) + r')(?![A-Za-z0-9_])'
+)
+
+
+def _split_top_level(s: str, delim: str) -> list[str]:
+    """Split *s* at *delim*, but only at top-level parentheses depth."""
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for ch in s:
+        if ch == '(':
+            depth += 1
+            current.append(ch)
+        elif ch == ')':
+            depth -= 1
+            current.append(ch)
+        elif ch == delim and depth == 0:
+            parts.append(''.join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    parts.append(''.join(current).strip())
+    return parts
+
+
+def _expand_lerp(expr: str) -> str:
+    """Expand lerp(a,b,t) -> (a)+((b)-(a))*(t)."""
+    while True:
+        m = re.search(r'\blerp\s*\(', expr, re.IGNORECASE)
+        if not m:
+            break
+        start = m.start()
+        depth = 1
+        end = m.end()
+        for i in range(m.end(), len(expr)):
+            if expr[i] == '(':
+                depth += 1
+            elif expr[i] == ')':
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end <= m.end():
+            break
+        inner = expr[m.end():end]
+        args = _split_top_level(inner, ',')
+        if len(args) != 3:
+            break
+        a, b, t = args
+        replacement = f"({a})+(({b})-({a}))*({t})"
+        expr = expr[:start] + f"({replacement})" + expr[end + 1:]
+    return expr
+
+
+def _preprocess_math_expr(expr: str, frame_count: int | None = None) -> str:
+    """Replace $fc, expand lerp, and collapse constant subexpressions.
+
+    Preserves key=value forms (e.g. scroll=hpos=0.5) by only preprocessing
+    the value half.
+    """
+    if frame_count is not None:
+        expr = expr.replace('$fc', str(frame_count))
+    expr = _expand_lerp(expr)
+    if not _FFMPEG_EXPR_RE.search(expr):
+        try:
+            val = _MathParser(expr).parse()
+            if val == int(val) and abs(val) < 1e15:
+                return str(int(val))
+            return f"{val:.10g}"
+        except Exception:
+            pass
+    return expr
+
+
+def _preprocess_param(param: str, frame_count: int | None = None) -> str:
+    """Preprocess a single effect parameter, preserving key=value syntax."""
+    if not param or not param.strip():
+        return param
+    if "=" in param:
+        k, v = param.split("=", 1)
+        return f"{k}={_preprocess_math_expr(v.strip(), frame_count)}"
+    return _preprocess_math_expr(param.strip(), frame_count)
+
+
+def _expr_param(param: str | None, default: float) -> str:
+    """Return a string suitable for FFmpeg expressions."""
+    if param is None:
+        return str(default)
+    param = param.strip()
+    if param == "":
+        return str(default)
+    try:
+        return str(float(param))
+    except (ValueError, TypeError):
+        return param
+
 
 # Heavy command rate limiting
 HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "preview1280", "p1280", "oppositep1280", "op1280", "preview1280with640x360resize", "p1280ff!3", "p1280w16:9r", "multipitch", "mp", "multi", "lexg", "chat", "ask", "ai", "ihtxsap", "sap"}
@@ -1168,10 +1284,11 @@ def _run_huehsv(
         if result.returncode != 0:
             return False, f"huehsv: ImageMagick failed: {result.stderr}"
 
-        # Apply via FFmpeg haldclut filter
+        # Apply via FFmpeg haldclut filter; preserve audio by copying it.
         ok, err = _run_ffmpeg_raw([
             "ffmpeg", "-y", "-i", input_path,
             "-vf", f"movie={hald_path},[in]haldclut,format=yuv420p",
+            "-c:a", "copy",
             "-pix_fmt", "yuv420p",
             output_path,
         ], timeout=180)
@@ -2274,6 +2391,10 @@ def _parse_pipe_effects(pipe_str: str) -> list[tuple[str, list[str]]]:
                 # as one param (no further splitting on | or spaces).
                 # Allows: mp2=-4.5|5::G-Major_17  →  params=["-4.5|5", "G-Major_17"]
                 current_params = [p.strip() for p in value.split("::") if p.strip()]
+            elif current_name == "scroll" and "=" not in value and ":" in value:
+                # scroll supports colon-delimited positional syntax:
+                #   scroll=x1:y1:x2:y2[:dur]
+                current_params = [p.strip() for p in value.split(":") if p.strip()]
             else:
                 current_params = _split_effect_params(value)
             continue
@@ -2311,7 +2432,7 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
     if name == "sepia":
         return "colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131"
     if name == "rotate":
-        # Angle is a raw FFmpeg expression in radians — supports any math e.g. -45/180*PI or 50*7
+        # Angle is a raw FFmpeg expression in radians — supports any math e.g. -45/180*PI or T*6
         angle = params[0] if params else "0"
         return f"rotate={angle}"
     if name == "ccshue":
@@ -2329,22 +2450,22 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
         return f"frei0r={plugin}:{rest}" if rest else f"frei0r={plugin}"
     if name == "brightness":
         # params: brightness|contrast|saturation|gamma  (all via eq filter, 100=unchanged)
-        b = params[0] if params else "0"
-        c = params[1] if len(params) > 1 else "1"
-        s = params[2] if len(params) > 2 else "1"
-        g = params[3] if len(params) > 3 else "1"
+        b = _expr_param(params[0] if params else None, 0.0)
+        c = _expr_param(params[1] if len(params) > 1 else None, 1.0)
+        s = _expr_param(params[2] if len(params) > 2 else None, 1.0)
+        g = _expr_param(params[3] if len(params) > 3 else None, 1.0)
         return f"eq=brightness={b}:contrast={c}:saturation={s}:gamma={g}"
     if name == "contrast":
         # params: contrast|brightness|saturation|gamma
-        c = params[0] if params else "1"
-        b = params[1] if len(params) > 1 else "0"
-        s = params[2] if len(params) > 2 else "1"
-        g = params[3] if len(params) > 3 else "1"
+        c = _expr_param(params[0] if params else None, 1.0)
+        b = _expr_param(params[1] if len(params) > 1 else None, 0.0)
+        s = _expr_param(params[2] if len(params) > 2 else None, 1.0)
+        g = _expr_param(params[3] if len(params) > 3 else None, 1.0)
         return f"eq=contrast={c}:brightness={b}:saturation={s}:gamma={g}"
     if name == "saturation":
         # params: saturation|hue_angle_degrees
-        s = params[0] if params else "1"
-        h = params[1] if len(params) > 1 else "0"
+        s = _expr_param(params[0] if params else None, 1.0)
+        h = _expr_param(params[1] if len(params) > 1 else None, 0.0)
         return f"hue=s={s}:h={h}"
     if name == "swapuv":
         return "swapuv"
@@ -2424,65 +2545,41 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
         )
     if name == "ripple":
         # Radial displacement using geq with hypot/sin/cos formulas.
-        # params: speed|frequency|amplitude|phase  (all optional)
-        try:
-            speed = float(params[0]) if len(params) > 0 else 1.0
-        except (ValueError, TypeError):
-            speed = 1.0
-        try:
-            frequency = float(params[1]) if len(params) > 1 else 30.0
-        except (ValueError, TypeError):
-            frequency = 30.0
-        try:
-            amplitude = float(params[2]) if len(params) > 2 else 10.0
-        except (ValueError, TypeError):
-            amplitude = 10.0
-        try:
-            phase = float(params[3]) if len(params) > 3 else 0.0
-        except (ValueError, TypeError):
-            phase = 0.0
+        # params: speed|frequency|amplitude|phase  (all optional, may be expressions)
+        speed     = _expr_param(params[0] if len(params) > 0 else None, 1.0)
+        frequency = _expr_param(params[1] if len(params) > 1 else None, 30.0)
+        amplitude = _expr_param(params[2] if len(params) > 2 else None, 10.0)
+        phase     = _expr_param(params[3] if len(params) > 3 else None, 0.0)
         r_expr = "hypot(X-W*0.5,Y-H*0.5)"
-        disp = f"({r_expr}+{amplitude}*sin(2*PI*{speed}*T-({phase})+(-({r_expr})/{frequency})))"
+        disp = f"({r_expr}+({amplitude})*sin(2*PI*({speed})*T-({phase})+(-({r_expr})/({frequency}))))"
         angle = "atan2(Y-H*0.5,X-W*0.5)"
         return (
             f"format=yuv444p,"
-            f"geq='p(W*0.5+{disp}*cos({angle}),H*0.5+{disp}*sin({angle}))',"
+            f"geq='p(W*0.5+({disp})*cos({angle}),H*0.5+({disp})*sin({angle}))',"
             f"scale=iw:ih,format=yuv420p"
         )
     if name == "pan":
         # Simple pixel offset via geq with clip for boundary safety.
-        # params: px|py  (pixel offset amounts, default 0)
-        try:
-            px = float(params[0]) if len(params) > 0 else 0.0
-        except (ValueError, TypeError):
-            px = 0.0
-        try:
-            py = float(params[1]) if len(params) > 1 else 0.0
-        except (ValueError, TypeError):
-            py = 0.0
+        # params: px|py  (pixel offset amounts, default 0, may be expressions)
+        px = _expr_param(params[0] if len(params) > 0 else None, 0.0)
+        py = _expr_param(params[1] if len(params) > 1 else None, 0.0)
         return (
             f"format=yuv444p,"
-            f"geq='p(clip(X+{px},0,W-1),clip(Y+{py},0,H-1))"
-            f":cb(clip(X+{px},0,W-1),clip(Y+{py},0,H-1))"
-            f":cr(clip(X+{px},0,W-1),clip(Y+{py},0,H-1))',"
+            f"geq='p(clip(X+({px}),0,W-1),clip(Y+({py}),0,H-1))"
+            f":cb(clip(X+({px}),0,W-1),clip(Y+({py}),0,H-1))"
+            f":cr(clip(X+({px}),0,W-1),clip(Y+({py}),0,H-1))',"
             f"scale=iw:ih,format=yuv420p"
         )
     if name == "tile":
         # Repetitive tiling via geq mod expressions.
-        # params: tx|ty  (tile repeat counts, default 2x2)
-        try:
-            tx = float(params[0]) if len(params) > 0 else 2.0
-        except (ValueError, TypeError):
-            tx = 2.0
-        try:
-            ty = float(params[1]) if len(params) > 1 else 2.0
-        except (ValueError, TypeError):
-            ty = 2.0
+        # params: tx|ty  (tile repeat counts, default 2x2, may be expressions)
+        tx = _expr_param(params[0] if len(params) > 0 else None, 2.0)
+        ty = _expr_param(params[1] if len(params) > 1 else None, 2.0)
         return (
             f"format=yuv444p,"
-            f"geq='p(mod(X*{tx},W),mod(Y*{ty},H))"
-            f":cb(mod(X*{tx},W),mod(Y*{ty},H))"
-            f":cr(mod(X*{tx},W),mod(Y*{ty},H))',"
+            f"geq='p(mod(X*({tx}),W),mod(Y*({ty}),H))"
+            f":cb(mod(X*({tx}),W),mod(Y*({ty}),H))"
+            f":cr(mod(X*({tx}),W),mod(Y*({ty}),H))',"
             f"scale=iw:ih,format=yuv420p"
         )
     if name in ("pinch&punch", "p&p", "pinchpunch"):
@@ -2664,6 +2761,28 @@ def _apply_pipe_effects(
     if not effects:
         ok, err = _run_ffmpeg_raw(["ffmpeg", "-y", "-i", input_path, "-c", "copy", output_path], timeout=60)
         return ok, err
+
+    # Compute frame count for $fc / N expressions used by math-aware effects.
+    frame_count: int | None = None
+    try:
+        vinfo = _ffprobe_video_info(input_path)
+        dur = vinfo.get("duration", 0.0)
+        fps_str = vinfo.get("r_frame_rate", "30")
+        if '/' in fps_str:
+            num, den = fps_str.split('/')
+            fps = float(num) / float(den)
+        else:
+            fps = float(fps_str)
+        if dur > 0 and fps > 0:
+            frame_count = max(1, int(round(dur * fps)))
+    except Exception:
+        pass
+
+    # Preprocess effect parameters: expand lerp, replace $fc, collapse constants.
+    effects = [
+        (name, [_preprocess_param(p, frame_count) for p in params])
+        for name, params in effects
+    ]
 
     with tempfile.TemporaryDirectory() as tmpdir:
         current = input_path
@@ -2922,14 +3041,8 @@ def _apply_pipe_effects(
 
             # shake — pixel-displacement shake using geq, crops back to original dims
             if name == "shake":
-                try:
-                    h_amt = float(params[0]) if len(params) > 0 else 3.0
-                except (ValueError, TypeError):
-                    h_amt = 3.0
-                try:
-                    v_amt = float(params[1]) if len(params) > 1 else 0.0
-                except (ValueError, TypeError):
-                    v_amt = 0.0
+                h_amt = _expr_param(params[0] if len(params) > 0 else None, 3.0)
+                v_amt = _expr_param(params[1] if len(params) > 1 else None, 0.0)
                 try:
                     vinfo = _ffprobe_video_info(current)
                     vid_w = int(vinfo["width"])
@@ -2940,8 +3053,8 @@ def _apply_pipe_effects(
                     return False, "shake: could not probe video dimensions."
                 shake_vf = (
                     f"rotate=0:iw*1.1:ih*1.1,format=yuv444p,"
-                    f"geq='p(X+{h_amt}*(2*mod(1000*sin(N*12.9898),1)-1),"
-                    f"Y+{v_amt}*(2*mod(1000*sin(N+1000)*78.233,1)-1))',"
+                    f"geq='p(X+({h_amt})*(2*mod(1000*sin(N*12.9898),1)-1),"
+                    f"Y+({v_amt})*(2*mod(1000*sin(N+1000)*78.233,1)-1))',"
                     f"crop={vid_w}:{vid_h},format=yuv420p"
                 )
                 cmd = [
@@ -2959,10 +3072,7 @@ def _apply_pipe_effects(
             # wave — sinusoidal pixel-displacement distortion
             if name == "wave":
                 def _wp(idx, default):
-                    try:
-                        return float(params[idx]) if idx < len(params) else default
-                    except (ValueError, TypeError):
-                        return default
+                    return _expr_param(params[idx] if idx < len(params) else None, default)
                 h_speed   = _wp(0, 1.0)
                 h_freq    = _wp(1, 1.0)
                 h_amp     = _wp(2, 1.0)
@@ -2976,10 +3086,10 @@ def _apply_pipe_effects(
 
                 drawbox = "drawbox=t=1," if noclip else ""
                 h_wave = (
-                    f"sin((T*5*{v_speed}+({v_phase}*15))+(Y/H)*(PI*{v_freq}))*(-15*{v_amp})"
+                    f"sin((T*5*({v_speed})+(({v_phase})*15))+(Y/H)*(PI*({v_freq})))*(-15*({v_amp}))"
                 )
                 v_wave = (
-                    f"sin((T*5*{h_speed}+({h_phase}*15))+(X/W)*(PI*{h_freq}))*(-15*{h_amp})"
+                    f"sin((T*5*({h_speed})+(({h_phase})*15))+(X/W)*(PI*({h_freq})))*(-15*({h_amp}))"
                 )
 
                 def _wave_cmd(inp, op, x_expr, y_expr):
@@ -3015,21 +3125,18 @@ def _apply_pipe_effects(
             # wave2 — sinusoidal pixel-warp (buildWaveFilter port from TS)
             if name == "wave2":
                 def _w2p(idx, default):
-                    try:
-                        return params[idx] if idx < len(params) else default
-                    except (IndexError, TypeError):
-                        return default
-                xw     = _w2p(0, "3")
-                yw     = _w2p(1, "3")
-                xa     = _w2p(2, "20")
-                ya     = _w2p(3, "20")
-                xphase = _w2p(4, "0")
-                yphase = _w2p(5, "0")
-                speed  = _w2p(6, "0")
-                ph_x = f"2*PI*Y*{xw}/2/H+2*PI*{speed}*T+{xphase}*PI/180"
-                ph_y = f"2*PI*X*{yw}/2/W+2*PI*{speed}*T+{yphase}*PI/180"
-                dx = f"{xa}*10*sin({ph_x})" if xa != "0" else "0"
-                dy = f"{ya}*10*sin({ph_y})" if ya != "0" else "0"
+                    return _expr_param(params[idx] if idx < len(params) else None, default)
+                xw     = _w2p(0, 3.0)
+                yw     = _w2p(1, 3.0)
+                xa     = _w2p(2, 20.0)
+                ya     = _w2p(3, 20.0)
+                xphase = _w2p(4, 0.0)
+                yphase = _w2p(5, 0.0)
+                speed  = _w2p(6, 0.0)
+                ph_x = f"2*PI*Y*({xw})/2/H+2*PI*({speed})*T+({xphase})*PI/180"
+                ph_y = f"2*PI*X*({yw})/2/W+2*PI*({speed})*T+({yphase})*PI/180"
+                dx = f"({xa})*10*sin({ph_x})" if xa != "0" else "0"
+                dy = f"({ya})*10*sin({ph_y})" if ya != "0" else "0"
                 cx = f"clip(X+{dx},0,W-1)"
                 cy = f"clip(Y+{dy},0,H-1)"
                 vf_str = (
@@ -3609,8 +3716,7 @@ def _apply_pipe_effects(
                     "-map", "0:v?",
                     "-map", "[mp2aout]",
                     "-c:v", "copy",
-                    "-c:a", "flac",
-                    "-shortest",
+                    "-c:a", "pcm_s16le",
                     out,
                 ], timeout=300)
                 if not ok:
@@ -3623,17 +3729,17 @@ def _apply_pipe_effects(
             # into a pad→crop approach: expands the canvas by `margin` px, then
             # crops back with a sin(n*seed)-driven x/y offset each frame.
             if name == "jitter":
+                strength = _expr_param(params[0] if params else None, 15.0)
                 try:
-                    strength = float(params[0]) if params else 15.0
+                    strength_num = float(strength)
+                    margin = max(4, (int(strength_num * 2) + 4) // 2 * 2)  # even, ≥4
                 except (ValueError, TypeError):
-                    strength = 15.0
-
-                margin = max(4, (int(strength * 2) + 4) // 2 * 2)  # even, ≥4
+                    margin = 64  # expression: use a safe default margin
                 half = margin // 2
                 sin_x = i + 68   # TypeScript: sinSeedX = i + 67 (with i defaulting to 1)
                 sin_y = i + 671  # TypeScript: sinSeedY = i + 670
-                x_expr = f"max(0,{half}+{strength:.4f}*sin(n*{sin_x}))"
-                y_expr = f"max(0,{half}+{strength:.4f}*sin(n*{sin_y}))"
+                x_expr = f"max(0,{half}+({strength})*sin(n*{sin_x}))"
+                y_expr = f"max(0,{half}+({strength})*sin(n*{sin_y}))"
                 vf = (
                     f"pad=iw+{margin}:ih+{margin}:{half}:{half},"
                     f"crop=iw-{margin}:ih-{margin}:'{x_expr}':'{y_expr}'"
@@ -3658,10 +3764,7 @@ def _apply_pipe_effects(
             #   exprX = ((strength/(25/3))/divisor)*(2*mod(1000*sin(N*indexX),1)-1)
             #   exprY = (strength/divisor)*(2*mod(1000*sin(N+1000)*indexY,1)-1)
             if name == "randomjitter":
-                try:
-                    strength = float(params[0]) if params else 10.0
-                except (ValueError, TypeError):
-                    strength = 10.0
+                strength = _expr_param(params[0] if params else None, 10.0)
 
                 info = _ffprobe_video_info(current)
                 w, h = info["width"], info["height"]
@@ -3673,7 +3776,7 @@ def _apply_pipe_effects(
                 index_y = idx_i + 670
                 divisor = 2.6666666666666665
 
-                expr_x = f"(({strength}/(25/3))/{divisor})*(2*mod(1000*sin(N*{index_x}),1)-1)"
+                expr_x = f"(({strength})/(25/3)/{divisor})*(2*mod(1000*sin(N*{index_x}),1)-1)"
                 expr_y = f"({strength}/{divisor})*(2*mod(1000*sin(N+1000)*{index_y},1)-1)"
 
                 vf = (
@@ -3703,13 +3806,6 @@ def _apply_pipe_effects(
             if name == "scroll":
                 # Check if params contain named hpos/vpos params
                 has_named = any(p.startswith("hpos") or p.startswith("vpos") or p.startswith("ypos") for p in params)
-                all_numeric = True
-                for p in params:
-                    try:
-                        float(p.split("=")[-1] if "=" in p else p)
-                    except (ValueError, TypeError):
-                        all_numeric = False
-                        break
 
                 if has_named:
                     # Mode 1: Named params (hpos=, ypos=) → native scroll filter
@@ -3735,29 +3831,25 @@ def _apply_pipe_effects(
                         return False, f"scroll: ffmpeg failed: {err}"
                     current = out
                     continue
-                elif len(params) >= 4 and all_numeric:
+                elif len(params) >= 4:
                     # Mode 3: Animated pan via geq — x1:y1:x2:y2[:dur]
-                    def _sp(idx, default):
-                        try:
-                            return float(params[idx]) if idx < len(params) else default
-                        except (ValueError, TypeError):
-                            return default
-                    x1 = _sp(0, 0.0)
-                    y1 = _sp(1, 0.0)
-                    x2 = _sp(2, 0.0)
-                    y2 = _sp(3, 0.0)
-                    dur = _sp(4, 0.0)
-                    if dur > 0:
-                        t_expr = f"T/{dur}"
-                    else:
-                        t_expr = "T"
-                    pan_x = f"{x1}+({x2}-{x1})*{t_expr}"
-                    pan_y = f"{y1}+({y2}-{y1})*{t_expr}"
+                    x1 = _expr_param(params[0] if 0 < len(params) else None, 0.0)
+                    y1 = _expr_param(params[1] if 1 < len(params) else None, 0.0)
+                    x2 = _expr_param(params[2] if 2 < len(params) else None, 0.0)
+                    y2 = _expr_param(params[3] if 3 < len(params) else None, 0.0)
+                    dur  = _expr_param(params[4] if 4 < len(params) else None, 0.0)
+                    try:
+                        dur_num = float(dur)
+                        t_expr = f"T/{dur_num}" if dur_num > 0 else "T"
+                    except (ValueError, TypeError):
+                        t_expr = f"T/({dur})"  # expression-based duration
+                    pan_x = f"({x1})+(({x2})-({x1}))*{t_expr}"
+                    pan_y = f"({y1})+(({y2})-({y1}))*{t_expr}"
                     vf = (
                         f"format=yuv444p,"
-                        f"geq='p(clip(X+{pan_x},0,W-1),clip(Y+{pan_y},0,H-1))"
-                        f":cb(clip(X+{pan_x},0,W-1),clip(Y+{pan_y},0,H-1))"
-                        f":cr(clip(X+{pan_x},0,W-1),clip(Y+{pan_y},0,H-1))',"
+                        f"geq='p(clip(X+({pan_x}),0,W-1),clip(Y+({pan_y}),0,H-1))"
+                        f":cb(clip(X+({pan_x}),0,W-1),clip(Y+({pan_y}),0,H-1))"
+                        f":cr(clip(X+({pan_x}),0,W-1),clip(Y+({pan_y}),0,H-1))',"
                         f"scale=iw:ih,format=yuv420p"
                     )
                     ok, err = _run_ffmpeg_raw([
@@ -3773,17 +3865,12 @@ def _apply_pipe_effects(
                     continue
                 else:
                     # Mode 2: Continuous scroll — h;v (0.0–1.0 per axis)
-                    def _sp2(idx, default):
-                        try:
-                            return float(params[idx]) if idx < len(params) else default
-                        except (ValueError, TypeError):
-                            return default
-                    h_speed = _sp2(0, 0.0)
-                    v_speed = _sp2(1, 0.0)
+                    h_speed = _expr_param(params[0] if 0 < len(params) else None, 0.0)
+                    v_speed = _expr_param(params[1] if 1 < len(params) else None, 0.0)
                     scroll_args = []
-                    if h_speed != 0.0:
+                    if h_speed != "0.0" and h_speed != "0":
                         scroll_args.append(f"hpos={h_speed}")
-                    if v_speed != 0.0:
+                    if v_speed != "0.0" and v_speed != "0":
                         scroll_args.append(f"vpos={v_speed}")
                     vf_scroll = ",".join(scroll_args) if scroll_args else "hpos=0.5"
                     ok, err = _run_ffmpeg_raw([
