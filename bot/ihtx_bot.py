@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-09: Fixed pipe effects' intermediate audio codec from pcm_s24le to pcm_s16le to prevent "Invalid PCM packet" FFmpeg errors on odd-byte audio streams. Also updated invlum pipe effect separately.
 - 2026-07-09: Added th/crop and th/resize commands: crop <width> <height> center-crops a video; resize <width> <height> scales a video to the exact dimensions. Both preserve audio and support attachment/reply input.
 - 2026-07-09: Updated th/lexg to use the last th/ihtx export per user (persisted to output/lastexport_<user_id>.mp4) with reverse→trim→reverse. Still supports attachment/reply override.
 - 2026-07-08: Removed alimiter post-processing from multipitch2/mp2 (Evil_Rampaging_Sorcerer/G-Major_17 presets) to avoid clipping/static.
@@ -2884,7 +2885,7 @@ def _apply_pipe_effects(
                 cmd = [
                     "ffmpeg", "-y", "-i", current,
                     "-vf", f"lut3d={lut_path},format=yuv420p",
-                    "-c:a", "pcm_s24le",
+                    "-c:a", "pcm_s16le",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                     "-movflags", "+faststart",
                     out,
@@ -2905,7 +2906,7 @@ def _apply_pipe_effects(
                     "-i", current,
                     "-vf", f"lut3d={lut_path}",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s24le",
+                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le",
                     out,
                 ]
                 ok, err = _run_ffmpeg_raw(cmd, timeout=180)
@@ -2922,7 +2923,7 @@ def _apply_pipe_effects(
                         "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                         "-i", current, "-vf", vf_str,
                         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                        "-pix_fmt", "yuv420p", "-c:a", "pcm_s24le", out,
+                        "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
                     ]
                     ok, err = _run_ffmpeg_raw(cmd, timeout=180)
                     if not ok:
@@ -3074,7 +3075,7 @@ def _apply_pipe_effects(
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                     "-i", current, "-vf", shake_vf,
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s24le", out,
+                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
                 ]
                 ok, err = _run_ffmpeg_raw(cmd, timeout=180)
                 if not ok:
@@ -3111,7 +3112,7 @@ def _apply_pipe_effects(
                         "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                         "-i", inp, "-vf", vf_str,
                         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                        "-pix_fmt", "yuv420p", "-c:a", "pcm_s24le", op,
+                        "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", op,
                     ]
 
                 if sep:
@@ -3162,7 +3163,7 @@ def _apply_pipe_effects(
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                     "-i", current, "-vf", vf_str,
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s24le", out,
+                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
                 ]
                 ok, err = _run_ffmpeg_raw(cmd, timeout=180)
                 if not ok:
@@ -3197,7 +3198,7 @@ def _apply_pipe_effects(
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                     "-i", current, "-vf", vf_str,
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s24le", out,
+                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
                 ]
                 ok, err = _run_ffmpeg_raw(cmd, timeout=300)
                 if not ok:
@@ -3227,7 +3228,7 @@ def _apply_pipe_effects(
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                     "-i", current, "-vf", vf_str,
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s24le", out,
+                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
                 ]
                 ok, err = _run_ffmpeg_raw(cmd, timeout=180)
                 if not ok:
@@ -3311,7 +3312,7 @@ def _apply_pipe_effects(
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                     "-i", current, "-vf", _m_vf,
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s24le", out,
+                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
                 ]
                 ok, err = _run_ffmpeg_raw(cmd, timeout=180)
                 if not ok:
@@ -3334,7 +3335,7 @@ def _apply_pipe_effects(
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                     "-i", current, "-vf", vf,
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s24le", out,
+                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
                 ]
                 ok, err = _run_ffmpeg_raw(cmd, timeout=180)
                 if not ok:
@@ -4754,7 +4755,7 @@ def _run_multipitch_rb3(
                 "-map", "0:v",
                 "-map", "1:a",
                 "-c:v", "copy",
-                "-c:a", "pcm_s24le",
+                "-c:a", "pcm_s16le",
                 "-t", dur_flag,
                 output_path,
             ], timeout=300)
@@ -5008,7 +5009,7 @@ def _run_soundstretch_multipitch(
                 "-t", cap, "-i", input_path,
                 "-i", out_wav,
                 "-map", "0:v", "-map", "1:a",
-                "-c:v", "copy", "-c:a", "pcm_s24le",
+                "-c:v", "copy", "-c:a", "pcm_s16le",
                 "-t", dur_flag,
                 output_path,
             ], timeout=300)
