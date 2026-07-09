@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-08: Added multipitch3/mp3 pipe effect — old-style Rubber Band CLI multi-voice pitch shift with FLAC audio (no static fallback).
 - 2026-07-08: Fixed th/veb to call ihtxgen.callback directly, avoiding the hybrid-command invocation path that was dropping pipe_effects and showing the ihtx preset help.
 - 2026-07-08: Added math/animation support for pipe effects: $fc (frame count), lerp(a,b,t), and FFmpeg-native T/N/PI expressions. Affects wave, wave2, shake, jitter, randomjitter, scroll, ripple, pan, tile, brightness, contrast, saturation, rotate.
 - 2026-07-08: Added th/math command (EconomyCog) to evaluate math expressions safely.
@@ -2245,6 +2246,7 @@ PIPE_EFFECT_NAMES = {
     "alimiter",
     "freakzinga", "fzgm156", "freakzingagm156", "fgm156",
     "multipitch2", "mp2",
+    "multipitch3", "mp3",
     "jitter",
     "randomjitter",
     "trim",
@@ -2838,6 +2840,14 @@ def _apply_pipe_effects(
                 ok, err = _run_multipitch_rb3(current, out, params)
                 if not ok:
                     return False, err
+                current = out
+                continue
+
+            # Old multipitch fallback — rubberband CLI + FLAC (no static)
+            if name in ("multipitch3", "mp3"):
+                ok, err = _run_multipitch_old(current, out, params)
+                if not ok:
+                    return False, f"multipitch3: {err}"
                 current = out
                 continue
 
@@ -4766,6 +4776,131 @@ def _run_multipitch_rb3(
 
 # Keep the old name as an alias so legacy pipe-effect calls still resolve
 _run_multipitch = _run_multipitch_rb3
+
+
+def _run_multipitch_old(
+    input_path: str,
+    output_path: str,
+    pitch_values: list[str],
+    audio_codec: str = "flac",
+) -> tuple[bool, str]:
+    """Old-style multi-voice pitch shift using the Rubber Band CLI directly.
+
+    This skips the fileaa binary tier and uses rubberband -p<st> per voice,
+    then amixes and remuxes. Default audio codec is FLAC to avoid static and
+    keep intermediates lossless for further pipe steps.
+    """
+    # ── Flatten & parse pitch values ────────────────────────────────────────
+    flattened: list[str] = []
+    for pv in pitch_values:
+        flattened.extend(
+            v.strip()
+            for v in re.split(r"[;|,\s]+", pv)
+            if v.strip()
+        )
+
+    if not flattened:
+        return False, "No pitch values specified."
+
+    if len(flattened) > MAX_PITCHES:
+        return False, f"Too many pitch values (maximum: {MAX_PITCHES})."
+
+    semitones: list[float] = []
+    seen: set[float] = set()
+    for raw in flattened:
+        try:
+            val = float(raw)
+        except ValueError:
+            return False, f"Invalid pitch value: {raw!r} — must be a number in semitones."
+        if not math.isfinite(val):
+            return False, f"Invalid pitch value: {raw!r} — must be finite."
+        if val not in seen:
+            seen.add(val)
+            semitones.append(val)
+
+    # ── Ensure rubberband CLI is available ──────────────────────────────────
+    rb_bin = shutil.which("rubberband")
+    if not rb_bin:
+        return False, "rubberband CLI not found — cannot run old multipitch fallback."
+
+    # ── Probe input ─────────────────────────────────────────────────────────
+    has_video = bool(_ffprobe(
+        input_path,
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_type",
+        "-of", "default=nw=1:nk=1",
+    ).strip())
+
+    actual_dur = _ffprobe_duration(input_path)
+    cap = str(int(min(actual_dur, MAX_DURATION)) + 1) if actual_dur > 0 else str(MAX_DURATION)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # ── Extract 16-bit PCM WAV for rubberband ───────────────────────────
+        base_wav = os.path.join(tmpdir, "base.wav")
+        ok, err = _run_ffmpeg_raw([
+            "ffmpeg", "-y",
+            "-t", cap,
+            "-i", input_path,
+            "-vn", "-ar", "44100", "-ac", "2",
+            "-c:a", "pcm_s16le",
+            "-t", cap,
+            base_wav,
+        ], timeout=120)
+        if not ok:
+            return False, f"Audio extraction failed: {err}"
+
+        # ── Pitch each voice with rubberband CLI ────────────────────────────
+        voice_wavs: list[str] = []
+        for idx, st in enumerate(semitones):
+            v_wav = os.path.join(tmpdir, f"oldmp_rb_{idx}.wav")
+            rb_res = subprocess.run(
+                [rb_bin, f"-p{st:+.4f}", "-t1", base_wav, v_wav],
+                capture_output=True, text=True, timeout=300,
+            )
+            if rb_res.returncode != 0:
+                return False, f"rubberband CLI failed (voice {idx}, {st:+.2f}st): {rb_res.stderr[-300:]}"
+            voice_wavs.append(v_wav)
+
+        # ── Mix voices ───────────────────────────────────────────────────────
+        mix_wav = os.path.join(tmpdir, "mix.wav")
+        mix_cmd = ["ffmpeg", "-y"]
+        for vw in voice_wavs:
+            mix_cmd += ["-i", vw]
+        mix_cmd += [
+            "-filter_complex", f"amix=inputs={len(voice_wavs)}:normalize=0",
+            "-c:a", "pcm_s16le",
+            mix_wav,
+        ]
+        ok, err = _run_ffmpeg_raw(mix_cmd, timeout=300)
+        if not ok:
+            return False, f"amix failed: {err}"
+
+        # ── Remux with original video (or audio-only) using requested codec ──
+        if has_video:
+            dur_flag = str(round(actual_dur, 6)) if actual_dur > 0 else cap
+            ok, err = _run_ffmpeg_raw([
+                "ffmpeg", "-y",
+                "-t", cap, "-i", input_path,
+                "-i", mix_wav,
+                "-map", "0:v",
+                "-map", "1:a",
+                "-c:v", "copy",
+                "-c:a", audio_codec,
+                "-t", dur_flag,
+                output_path,
+            ], timeout=300)
+        else:
+            ok, err = _run_ffmpeg_raw([
+                "ffmpeg", "-y",
+                "-i", mix_wav,
+                "-c:a", audio_codec,
+                output_path,
+            ], timeout=180)
+
+        if not ok:
+            return False, f"Remux failed: {err}"
+
+    return True, ""
 
 
 def _run_soundstretch_multipitch(
