@@ -2,15 +2,15 @@ modules = ["python-3.11", "nodejs-20", "web"]
 
 [deployment]
 router = "application"
-deploymentTarget = "vm"
-run = ["python3", "main.py"]
+deploymentTarget = "autoscale"
+run = ["gunicorn", "--bind", "0.0.0.0:5000", "main:app"]
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
 
 [workflows]
-runButton = "IHTX Discord Bot"
+runButton = "Project"
 
 [[workflows.workflow]]
 name = "Project"
@@ -64,7 +64,7 @@ args = "PORT=8099 node public/serve.mjs"
 waitForPort = 8099
 
 [agent]
-stack = "BEST_EFFORT_FALLBACK"
+stack = "FLASK_VANILLA_JS"
 expertMode = true
 integrations = []
 
@@ -108,7 +108,7 @@ PORT = "8081"
 
 [nix]
 channel = "stable-25_05"
-packages = ["freetype", "lcms2", "libimagequant", "libjpeg", "libtiff", "libuv", "libwebp", "libxcrypt", "openjpeg", "rubberband", "tcl", "tk", "zlib"]
+packages = ["freetype", "lcms2", "libimagequant", "libjpeg", "libtiff", "libuv", "libwebp", "libxcrypt", "openjpeg", "openssl", "postgresql", "rubberband", "tcl", "tk", "zlib"]
 
 [rules]
 

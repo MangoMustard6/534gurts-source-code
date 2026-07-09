@@ -8,3 +8,8 @@ Pillow
 python-dotenv
 uvloop
 yt-dlp>=2026.3.17
+email_validator
+flask
+flask-sqlalchemy
+gunicorn
+psycopg2-binary
