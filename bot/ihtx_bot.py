@@ -10,6 +10,7 @@ ImageMagick/sox/etc. depending on advanced effects.
 _UPDATELOG (newest first):
 - 2026-07-10: Fixed attachment downloads across all bot code — switched from `attachment.url` to `attachment.proxy_url or attachment.url`. Discord CDN now requires auth; direct URLs often return 404 for fresh uploads.
 - 2026-07-10: Added Catbox.moe fallback to all video commands. Files >8 MB now auto-upload to Catbox instead of erroring out. Lowered threshold from 25 MB to 8 MB for commands that already had Catbox fallback.
+- 2026-07-10: th/chat now supports -debug flag — adds the full AI response as a .txt file attachment, bypassing Discord's 2000-char message limit.
 - 2026-07-09: Rewrote _split_pipe_segments to only track parens inside known function blocks (ffmpeg, leftsplit, rightsplit), fixing "No closing quotation" errors caused by expressions like 7*(text_h) corrupting the naive depth counter.
 - 2026-07-09: Replaced chatbot personality (Clankered lore) with a concise technical assistant prompt that knows all core IHTX commands, effects, and presets.
 - 2026-07-09: fzte pipeline: replaced volume,mp,volume trio with single mp3= (rubberband CLI multi-pitch, FLAC) for cleaner audio. Updated docstrings and embed description to show full pipeline.
@@ -2657,7 +2658,9 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
         g_curve = "0/1 1/0" if g_inv == "1" else "0/0 1/1"
         b_curve = "0/1 1/0" if b_inv == "1" else "0/0 1/1"
         return f"curves=r='{r_curve}':g='{g_curve}':b='{b_curve}'"
-    if name == "invlum":
+    if name in ("invlum", "il"):
+        # InvertLuminosity via curves (fast) or lut3d (precise).  curves is
+        # pure FFmpeg -vf and can be batched with neighbouring filters.
         return "curves=all='0/1 1/0'"
     if name == "volume":
         val = params[0] if params else "1"
@@ -2936,25 +2939,6 @@ def _apply_pipe_effects(
                 ok, err = _run_ffmpeg_raw(cmd, timeout=180)
                 if not ok:
                     return False, f"lut3d failed: {err}"
-                current = out
-                continue
-
-            # invlum — apply InvertLuminosity LUT
-            if name in ("invlum", "il"):
-                lut_path = str(INVLUM_LUT_FILE.resolve())
-                if not INVLUM_LUT_FILE.exists():
-                    return False, "InvertLuminosity.cube LUT file not found."
-                cmd = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current,
-                    "-vf", f"lut3d={lut_path}",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le",
-                    out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=180)
-                if not ok:
-                    return False, f"invlum failed: {err}"
                 current = out
                 continue
 
@@ -11212,7 +11196,11 @@ Owner-only:
 
 @bot.command(name="chat", aliases=["ask", "ai"])
 async def chat(ctx: commands.Context, *, question: str = ""):
-    """Chat with the IHTX AI assistant. Supports multilingual replies and remembers you."""
+    """Chat with the IHTX AI assistant. Supports multilingual replies and remembers you.
+
+    Use ``-debug`` anywhere in the prompt to receive the full response as a
+    ``.txt`` file attachment (bypasses Discord's 2 000-char message limit).
+    """
 
     username = ctx.author.display_name
     current_prefix = ctx.prefix if ctx.prefix else _BOT_PREFIX
@@ -11221,6 +11209,11 @@ async def chat(ctx: commands.Context, *, question: str = ""):
 
     attachments = ctx.message.attachments if ctx.message else []
     has_attachments = bool(attachments)
+
+    # Detect -debug flag and strip it from the prompt sent to the model
+    use_debug_file = "-debug" in question.split()
+    if use_debug_file:
+        question = " ".join(p for p in question.split() if p != "-debug").strip()
 
     if not question and not has_attachments:
         await ctx.send("bradar say something or attach a file 😭")
@@ -11272,18 +11265,29 @@ async def chat(ctx: commands.Context, *, question: str = ""):
             channel_hist.append({"role": "user", "content": question})
             channel_hist.append({"role": "assistant", "content": bot_response})
 
-        # Send — split into ≤1990-char chunks on word/newline boundaries
-        chunks = _split_reply(bot_response)
-        first = True
-        for chunk in chunks:
-            if first:
-                await ctx.send(chunk)
-                first = False
-            else:
-                await ctx.send(chunk)
+        if use_debug_file:
+            import io
+            txt_bytes = bot_response.encode("utf-8")
+            if len(txt_bytes) > 25 * 1024 * 1024:
+                await ctx.send("Response is >25 MB even as text — too large to upload.")
+                return
+            txt_file = io.BytesIO(txt_bytes)
+            await ctx.send(
+                "Full response attached:",
+                file=discord.File(txt_file, filename="th_chat_response.txt"),
+            )
+        else:
+            chunks = _split_reply(bot_response)
+            first = True
+            for chunk in chunks:
+                if first:
+                    await ctx.send(chunk)
+                    first = False
+                else:
+                    await ctx.send(chunk)
     else:
         print(f"[chat] empty/blocked response for: {question[:80]!r}")
-        await ctx.send("bradar something went wrong on my end 😭 try again")
+        await ctx.send("bradar something went wrong on my end — try again")
 
 
 @bot.command(name="clearchat", aliases=["resetai", "chatclear"])
