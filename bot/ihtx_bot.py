@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-10: th/chat now auto-sends long replies (>1800 chars) as a .txt file attachment; -debug flag still works for explicit file mode. th/ihtx pipe effects: added short aliases srw (sierpinskiransomware), wmm (wmm3dripple), p1280 (preview1280), rj (randomjitter).
 - 2026-07-10: Fixed attachment downloads across all bot code — switched from `attachment.url` to `attachment.proxy_url or attachment.url`. Discord CDN now requires auth; direct URLs often return 404 for fresh uploads.
 - 2026-07-10: Added Catbox.moe fallback to all video commands. Files >8 MB now auto-upload to Catbox instead of erroring out. Lowered threshold from 25 MB to 8 MB for commands that already had Catbox fallback.
 - 2026-07-10: th/chat now supports -debug flag — adds the full AI response as a .txt file attachment, bypassing Discord's 2000-char message limit.
@@ -2264,8 +2265,8 @@ PIPE_EFFECT_NAMES = {
     "wave",
     "tvsim", "tv",
     "swirl",
-    "sierpinskiransomware",
-    "preview1280", "scale1280",
+    "sierpinskiransomware", "srw",
+    "preview1280", "p1280", "scale1280",
     "oppositep1280", "op1280",
     "earthquake", "nbfx",
     "ssmp", "soundstretchmultipitch",
@@ -2276,7 +2277,7 @@ PIPE_EFFECT_NAMES = {
     "multipitch2", "mp2",
     "multipitch3", "mp3",
     "jitter",
-    "randomjitter",
+    "randomjitter", "rj",
     "trim",
     "leftsplit",
     "rightsplit",
@@ -2297,7 +2298,7 @@ PIPE_EFFECT_NAMES = {
     "nparisonffmpeg", "nineparisonffmpeg",
     "gradientmap", "gmap",
     "wave2",
-    "wmm3dripple",
+    "wmm3dripple", "wmm",
     "timecode",
     "radar",
     "freakzingatesteffect", "fzte", "freaktest",
@@ -3198,8 +3199,8 @@ def _apply_pipe_effects(
                 current = out
                 continue
 
-            # wmm3dripple — radial ripple distortion (probes dims + frame count)
-            if name == "wmm3dripple":
+            # wmm3dripple (wmm) — radial ripple distortion (probes dims + frame count)
+            if name in ("wmm3dripple", "wmm"):
                 vinfo = _ffprobe_video_info(current)
                 rW  = vinfo["width"]  or 640
                 rH  = vinfo["height"] or 640
@@ -3294,8 +3295,8 @@ def _apply_pipe_effects(
                 current = out
                 continue
 
-            # preview1280 — full TV-simulator montage pipeline as a pipe step
-            if name == "preview1280":
+            # preview1280 (p1280) — full TV-simulator montage pipeline as a pipe step
+            if name in ("preview1280", "p1280"):
                 def _pp1280(idx, default):
                     try:
                         return float(params[idx]) if idx < len(params) else default
@@ -3423,8 +3424,8 @@ def _apply_pipe_effects(
                 current = out
                 continue
 
-            # sierpinskiransomware — 2×2 Sierpinski-style grid via preset
-            if name == "sierpinskiransomware":
+            # sierpinskiransomware (srw) — 2×2 Sierpinski-style grid via preset
+            if name in ("sierpinskiransomware", "srw"):
                 ok, err = run_ffmpeg(current, out, "sierpinskiransomware", True)
                 if not ok:
                     return False, f"sierpinskiransomware failed: {err}"
@@ -3799,7 +3800,7 @@ def _apply_pipe_effects(
             #   indexX = i+67, indexY = i+670, divisor = 2.6666666666666665
             #   exprX = ((strength/(25/3))/divisor)*(2*mod(1000*sin(N*indexX),1)-1)
             #   exprY = (strength/divisor)*(2*mod(1000*sin(N+1000)*indexY,1)-1)
-            if name == "randomjitter":
+            if name in ("randomjitter", "rj"):
                 strength = _expr_param(params[0] if params else None, 10.0)
 
                 info = _ffprobe_video_info(current)
@@ -11265,7 +11266,9 @@ async def chat(ctx: commands.Context, *, question: str = ""):
             channel_hist.append({"role": "user", "content": question})
             channel_hist.append({"role": "assistant", "content": bot_response})
 
-        if use_debug_file:
+        # Send as .txt when -debug is set OR the reply is too long for Discord
+        send_as_file = use_debug_file or len(bot_response) > 1800
+        if send_as_file:
             import io
             txt_bytes = bot_response.encode("utf-8")
             if len(txt_bytes) > 25 * 1024 * 1024:
@@ -11277,14 +11280,7 @@ async def chat(ctx: commands.Context, *, question: str = ""):
                 file=discord.File(txt_file, filename="th_chat_response.txt"),
             )
         else:
-            chunks = _split_reply(bot_response)
-            first = True
-            for chunk in chunks:
-                if first:
-                    await ctx.send(chunk)
-                    first = False
-                else:
-                    await ctx.send(chunk)
+            await ctx.send(bot_response)
     else:
         print(f"[chat] empty/blocked response for: {question[:80]!r}")
         await ctx.send("bradar something went wrong on my end — try again")
