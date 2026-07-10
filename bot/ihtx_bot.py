@@ -9,6 +9,7 @@ ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
 - 2026-07-10: Fixed attachment downloads across all bot code — switched from `attachment.url` to `attachment.proxy_url or attachment.url`. Discord CDN now requires auth; direct URLs often return 404 for fresh uploads.
+- 2026-07-10: Added Catbox.moe fallback to all video commands. Files >8 MB now auto-upload to Catbox instead of erroring out. Lowered threshold from 25 MB to 8 MB for commands that already had Catbox fallback.
 - 2026-07-09: Rewrote _split_pipe_segments to only track parens inside known function blocks (ffmpeg, leftsplit, rightsplit), fixing "No closing quotation" errors caused by expressions like 7*(text_h) corrupting the naive depth counter.
 - 2026-07-09: Replaced chatbot personality (Clankered lore) with a concise technical assistant prompt that knows all core IHTX commands, effects, and presets.
 - 2026-07-09: fzte pipeline: replaced volume,mp,volume trio with single mp3= (rubberband CLI multi-pitch, FLAC) for cleaner audio. Updated docstrings and embed description to show full pipeline.
@@ -606,6 +607,7 @@ SUPPORTED_EXTENSIONS  = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".gif", ".png"
 VIDEO_EXTENSIONS      = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".gif"}
 AUDIO_VIDEO_EXTS      = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 MAX_FILE_SIZE         = 25 * 1024 * 1024
+CATBOX_THRESHOLD      = 8  * 1024 * 1024   # upload to catbox above this, Discord limit is 25 MB
 MAX_REPETITIONS       = 100
 MAX_DURATION          = 600
 
@@ -6051,8 +6053,14 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
             output_path = pipe_out
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output too large for Discord (>25 MB). Try fewer powers or a shorter duration.")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         out_filename = f"invlum_{Path(attachment.filename).stem}.mov"
@@ -6140,8 +6148,14 @@ async def preview1280_command(ctx: commands.Context, start: float = 1.85, durati
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output file too large for Discord (>25 MB). Try shorter segments.")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         out_filename = f"p1280_{Path(attachment.filename).stem}.mp4"
@@ -6236,8 +6250,14 @@ async def oppositep1280_command(ctx: commands.Context, start: float = 1.85, dura
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output file too large for Discord (>25 MB). Try shorter segments.")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         out_filename = f"op1280_{Path(attachment.filename).stem}.mp4"
@@ -6334,8 +6354,14 @@ async def preview1280_640x360resize_command(ctx: commands.Context, start: float 
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output file too large for Discord (>25 MB). Try shorter segments.")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         out_filename = f"p1280_640x360_{Path(attachment.filename).stem}.mp4"
@@ -6477,8 +6503,14 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output file too large for Discord (>25 MB). Try a shorter clip.")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         safe_pitch_str = pitch_str.replace(";", "_")
@@ -6601,8 +6633,14 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output file too large for Discord (>25 MB). Try a shorter clip.")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         safe_pitch_str = pitch_str.replace(";", "_")
@@ -7104,8 +7142,8 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
         )
 
         # Catbox fallback if >25 MB (same as ihtxgen)
-        if out_size > MAX_FILE_SIZE:
-            await _update("⬆️ Output exceeds 25 MB — uploading to Catbox…")
+        if out_size > CATBOX_THRESHOLD:
+            await _update("⬆️ Output exceeds 8 MB — uploading to Catbox…")
             catbox_url = await _upload_to_catbox(output_path)
             if catbox_url:
                 result_embed = _make_embed()
@@ -7234,8 +7272,14 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output too large for Discord (>25 MB).")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         footer_parts = []
@@ -7407,8 +7451,14 @@ async def ffmpeg_process_command(ctx: commands.Context, *, args: str = ""):
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output too large for Discord (>25 MB).")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         footer_parts = []
@@ -7636,8 +7686,14 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output file too large for Discord (>25 MB).")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         stem = Path(src_name).stem
@@ -7762,8 +7818,14 @@ async def autotune_command(ctx: commands.Context, *, args: str = ""):
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output is too large for Discord (>25 MB).")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         stem = Path(src_name).stem
@@ -7906,11 +7968,11 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
+        if out_size > CATBOX_THRESHOLD:
             catbox_url = await _upload_to_catbox(output_path)
             if catbox_url:
                 await status_msg.edit(
-                    content=f"✅ Grid overlay done (file >25 MB, uploaded to Catbox):\n{catbox_url}"
+                    content=f"✅ Grid overlay done (file >8 MB, uploaded to Catbox):\n{catbox_url}"
                 )
             else:
                 await status_msg.edit(content="❌ Output too large for Discord (>25 MB) and Catbox upload failed.")
@@ -8084,8 +8146,14 @@ async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str =
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output file too large for Discord (>25 MB).")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         stem = Path(src_name).stem
@@ -8191,8 +8259,14 @@ async def huehsv_command(
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output file too large for Discord (>25 MB). Try a shorter clip.")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         out_filename = f"huehsv_{hue}_{Path(attachment.filename).stem}{out_ext}"
@@ -8420,8 +8494,14 @@ async def lut2png_cmd(ctx: commands.Context, cube_url: str = ""):
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output too large for Discord (>25 MB).")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         out_filename = f"lut2png_{Path(media_att.filename).stem}{out_ext}"
@@ -8515,8 +8595,14 @@ async def syncaudio_command(ctx: commands.Context, mode: str = ""):
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
-            await status_msg.edit(content="❌ Output file too large for Discord (>25 MB). Try a shorter clip.")
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
         out_filename = f"syncaudio_{Path(attachment.filename).stem}.mp4"
@@ -8637,7 +8723,7 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
+        if out_size > CATBOX_THRESHOLD:
             await status_msg.edit(content="⬆️ Output too large — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
@@ -8749,7 +8835,7 @@ async def gradientmap_command(ctx: commands.Context, *, args: str = ""):
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
+        if out_size > CATBOX_THRESHOLD:
             await status_msg.edit(content="⬆️ Output too large — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
@@ -8843,7 +8929,7 @@ async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = "")
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
+        if out_size > CATBOX_THRESHOLD:
             await status_msg.edit(content="⬆️ Output too large — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
@@ -8979,7 +9065,7 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
+        if out_size > CATBOX_THRESHOLD:
             await status_msg.edit(content="⬆️ Output too large for Discord — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
@@ -9071,7 +9157,7 @@ async def folkvalley_command(ctx: commands.Context):
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
+        if out_size > CATBOX_THRESHOLD:
             await status_msg.edit(content="⬆️ Output too large for Discord — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
@@ -9192,7 +9278,7 @@ async def vocoder_command(ctx: commands.Context, *, args: str = ""):
             return
 
         out_size = os.path.getsize(output_path)
-        if out_size > MAX_FILE_SIZE:
+        if out_size > CATBOX_THRESHOLD:
             await status_msg.edit(content="⬆️ Output too large for Discord — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
@@ -10090,7 +10176,7 @@ async def _lexg_run_ffmpeg(
         return
 
     out_size = os.path.getsize(output_path)
-    if out_size > MAX_FILE_SIZE:
+    if out_size > CATBOX_THRESHOLD:
         await status_msg.edit(content="⬆️ Output too large for Discord — uploading to Catbox…")
         cb_url = await _upload_to_catbox(output_path)
         if cb_url:
@@ -10321,7 +10407,7 @@ async def _lexg_upload_result(
 ) -> None:
     """Upload a lexg/crop/resize output, falling back to Catbox if too large."""
     out_size = os.path.getsize(output_path)
-    if out_size > MAX_FILE_SIZE:
+    if out_size > CATBOX_THRESHOLD:
         await status_msg.edit(content="⬆️ Output too large for Discord — uploading to Catbox…")
         cb_url = await _upload_to_catbox(output_path)
         if cb_url:
