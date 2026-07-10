@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-10: Refactored _apply_pipe_effects: extracted _ff_vf/_ff_af/_geq/_dl_file helpers and _VF_CODEC/_FF_BASE constants to eliminate repeated FFmpeg command boilerplate across ~15 effects (shake, wave, wave2, wmm3dripple, timecode, radar, jitter, randomjitter, watermark, nepeta, avflip, lut, __rawvf__, __rawaf__).
 - 2026-07-10: th/chat now auto-sends long replies (>1800 chars) as a .txt file attachment; -debug flag still works for explicit file mode. th/ihtx pipe effects: added short aliases srw (sierpinskiransomware), wmm (wmm3dripple), p1280 (preview1280), rj (randomjitter).
 - 2026-07-10: Fixed attachment downloads across all bot code — switched from `attachment.url` to `attachment.proxy_url or attachment.url`. Discord CDN now requires auth; direct URLs often return 404 for fresh uploads.
 - 2026-07-10: Added Catbox.moe fallback to all video commands. Files >8 MB now auto-upload to Catbox instead of erroring out. Lowered threshold from 25 MB to 8 MB for commands that already had Catbox fallback.
@@ -2796,6 +2797,40 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
 
 
 
+# ── Pipe-effect inline helpers ───────────────────────────────────────────────
+
+_VF_CODEC = ["-c:v", "libx264", "-preset", "fast", "-crf", "23",
+             "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le"]
+_FF_BASE   = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
+
+def _ff_vf(inp: str, vf: str, out: str, timeout: int = 180) -> tuple[bool, str]:
+    """Run a -vf filter with standard x264/pcm_s16le settings."""
+    return _run_ffmpeg_raw(_FF_BASE + ["-i", inp, "-vf", vf, *_VF_CODEC, out], timeout=timeout)
+
+def _ff_af(inp: str, af: str, out: str, timeout: int = 180) -> tuple[bool, str]:
+    """Run a -af filter keeping video stream unchanged."""
+    return _run_ffmpeg_raw(_FF_BASE + ["-i", inp, "-af", af, "-c:v", "copy", "-c:a", "pcm_s16le", out], timeout=timeout)
+
+def _geq(expr: str) -> str:
+    """Wrap a geq pixel expression in the yuv444p → geq → yuv420p boilerplate."""
+    return f"format=yuv444p,geq='{expr}',format=yuv420p"
+
+def _dl_file(url: str, path: str, timeout: int = 30) -> tuple[bool, str]:
+    """Download *url* to *path*. Returns (ok, error_message)."""
+    import urllib.request as _ur, ssl as _ssl
+    try:
+        ctx = _ssl.create_default_context()
+        req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"})
+        with _ur.urlopen(req, context=ctx, timeout=timeout) as r:
+            with open(path, "wb") as f:
+                f.write(r.read())
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 def _apply_pipe_effects(
     input_path: str,
     output_path: str,
@@ -2929,15 +2964,11 @@ def _apply_pipe_effects(
                             f.write(resp.read())
                 except Exception as e:
                     return False, f"Failed to download LUT from {lut_url}: {e}"
-                cmd = [
-                    "ffmpeg", "-y", "-i", current,
-                    "-vf", f"lut3d={lut_path},format=yuv420p",
-                    "-c:a", "pcm_s16le",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-movflags", "+faststart",
-                    out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", current, "-vf", f"lut3d={lut_path},format=yuv420p",
+                                *_VF_CODEC, "-movflags", "+faststart", out],
+                    timeout=180,
+                )
                 if not ok:
                     return False, f"lut3d failed: {err}"
                 current = out
@@ -2947,13 +2978,7 @@ def _apply_pipe_effects(
             if name == "__rawvf__":
                 vf_str = params[0] if params else ""
                 if vf_str:
-                    cmd = [
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", current, "-vf", vf_str,
-                        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                        "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
-                    ]
-                    ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                    ok, err = _ff_vf(current, vf_str, out)
                     if not ok:
                         return False, f"Video filter failed: {err}"
                     current = out
@@ -2962,12 +2987,7 @@ def _apply_pipe_effects(
             if name == "__rawaf__":
                 af_str = params[0] if params else ""
                 if af_str:
-                    cmd = [
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", current, "-af", af_str,
-                        "-c:v", "copy", "-c:a", "pcm_s16le", out,
-                    ]
-                    ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                    ok, err = _ff_af(current, af_str, out)
                     if not ok:
                         return False, f"Audio filter failed: {err}"
                     current = out
@@ -3099,13 +3119,7 @@ def _apply_pipe_effects(
                     f"Y+({v_amt})*(2*mod(1000*sin(N+1000)*78.233,1)-1))',"
                     f"crop={vid_w}:{vid_h},format=yuv420p"
                 )
-                cmd = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current, "-vf", shake_vf,
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                ok, err = _ff_vf(current, shake_vf, out)
                 if not ok:
                     return False, f"shake failed: {err}"
                 current = out
@@ -3135,30 +3149,18 @@ def _apply_pipe_effects(
                 )
 
                 def _wave_cmd(inp, op, x_expr, y_expr):
-                    vf_str = f"{drawbox}format=yuv444p,geq='p({x_expr},{y_expr})',format=yuv420p"
-                    return [
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", inp, "-vf", vf_str,
-                        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                        "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", op,
-                    ]
+                    return _ff_vf(inp, f"{drawbox}" + _geq(f"p({x_expr},{y_expr})"), op)
 
                 if sep:
                     mid = os.path.join(tmpdir, f"wave_mid_{i}.mp4")
-                    ok, err = _run_ffmpeg_raw(
-                        _wave_cmd(current, mid, f"X-({h_wave})", "Y"), timeout=180
-                    )
+                    ok, err = _wave_cmd(current, mid, f"X-({h_wave})", "Y")
                     if not ok:
                         return False, f"wave (h pass) failed: {err}"
-                    ok, err = _run_ffmpeg_raw(
-                        _wave_cmd(mid, out, "X", f"Y-({v_wave})"), timeout=180
-                    )
+                    ok, err = _wave_cmd(mid, out, "X", f"Y-({v_wave})")
                     if not ok:
                         return False, f"wave (v pass) failed: {err}"
                 else:
-                    ok, err = _run_ffmpeg_raw(
-                        _wave_cmd(current, out, f"X-({h_wave})", f"Y-({v_wave})"), timeout=180
-                    )
+                    ok, err = _wave_cmd(current, out, f"X-({h_wave})", f"Y-({v_wave})")
                     if not ok:
                         return False, f"wave failed: {err}"
                 current = out
@@ -3184,16 +3186,9 @@ def _apply_pipe_effects(
                 vf_str = (
                     f"format=yuv444p,"
                     f"geq='p({cx},{cy}):cb({cx},{cy}):cr({cx},{cy})',"
-                    f"scale=iw:ih,"
-                    f"format=yuv420p"
+                    f"scale=iw:ih,format=yuv420p"
                 )
-                cmd = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current, "-vf", vf_str,
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                ok, err = _ff_vf(current, vf_str, out)
                 if not ok:
                     return False, f"wave2 failed: {err}"
                 current = out
@@ -3214,21 +3209,8 @@ def _apply_pipe_effects(
                     f"mod(H*0.5+(hypot(X-W*0.5,Y-H*0.5)-sin(N/{rFc}*PI)*25*sin(2*PI*N/{rFc}*2-(0)+(-(hypot(X-W*0.5,Y-H*0.5))/90)))*sin(atan2(Y-H*0.5,X-W*0.5)),H)"
                     f")'"
                 )
-                vf_str = (
-                    f"scale=640:640,"
-                    f"format=yuv444p,"
-                    f"{geq_str},"
-                    f"scale={rW}:{rH},"
-                    f"setsar=1,"
-                    f"format=yuv420p"
-                )
-                cmd = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current, "-vf", vf_str,
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=300)
+                vf_str = f"scale=640:640,format=yuv444p,{geq_str},scale={rW}:{rH},setsar=1,format=yuv420p"
+                ok, err = _ff_vf(current, vf_str, out, timeout=300)
                 if not ok:
                     return False, f"wmm3dripple failed: {err}"
                 current = out
@@ -3252,13 +3234,7 @@ def _apply_pipe_effects(
                     f":x=(w-text_w)/1.1"
                     f":y=(h-text_h)/1.12"
                 )
-                cmd = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current, "-vf", vf_str,
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                ok, err = _ff_vf(current, vf_str, out)
                 if not ok:
                     return False, f"timecode failed: {err}"
                 current = out
@@ -3281,15 +3257,13 @@ def _apply_pipe_effects(
                     f"[rcc][rdd]vstack[rV2];"
                     f"[rV][rV2]hstack,scale={rW}:{rH},setsar=1:1,format=yuv420p[vout]"
                 )
-                cmd = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current,
-                    "-filter_complex", fc,
-                    "-map", "[vout]", "-map", "0:a?",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "copy", out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=300)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", current, "-filter_complex", fc,
+                                "-map", "[vout]", "-map", "0:a?",
+                                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                "-pix_fmt", "yuv420p", "-c:a", "copy", out],
+                    timeout=300,
+                )
                 if not ok:
                     return False, f"radar failed: {err}"
                 current = out
@@ -3781,13 +3755,10 @@ def _apply_pipe_effects(
                     f"pad=iw+{margin}:ih+{margin}:{half}:{half},"
                     f"crop=iw-{margin}:ih-{margin}:'{x_expr}':'{y_expr}'"
                 )
-                ok, err = _run_ffmpeg_raw([
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current,
-                    "-vf", vf,
-                    "-c:a", "copy",
-                    out,
-                ], timeout=300)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", current, "-vf", vf, "-c:a", "copy", out],
+                    timeout=300,
+                )
                 if not ok:
                     return False, f"jitter: ffmpeg failed: {err}"
                 current = out
@@ -3821,13 +3792,10 @@ def _apply_pipe_effects(
                     f"geq='p(X+{expr_x},Y+{expr_y})',"
                     f"crop={w}:{h},format=yuv420p"
                 )
-                ok, err = _run_ffmpeg_raw([
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current,
-                    "-vf", vf,
-                    "-c:a", "copy",
-                    out,
-                ], timeout=300)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", current, "-vf", vf, "-c:a", "copy", out],
+                    timeout=300,
+                )
                 if not ok:
                     return False, f"randomjitter: ffmpeg failed: {err}"
                 current = out
@@ -4103,31 +4071,22 @@ def _apply_pipe_effects(
                 else:
                     wm_url = params[0] if params else _WM_DEFAULTS[name]
                 wm_path = os.path.join(tmpdir, f"wm_{i}.png")
-                try:
-                    import urllib.request as _ur
-                    import ssl as _ssl
-                    _ssl_ctx = _ssl.create_default_context()
-                    _req = _ur.Request(wm_url, headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"})
-                    with _ur.urlopen(_req, context=_ssl_ctx, timeout=30) as _resp:
-                        with open(wm_path, "wb") as _f:
-                            _f.write(_resp.read())
-                except Exception as _wme:
-                    return False, f"{name}: failed to download watermark from {wm_url}: {_wme}"
+                ok, err = _dl_file(wm_url, wm_path)
+                if not ok:
+                    return False, f"{name}: failed to download watermark from {wm_url}: {err}"
                 fc = (
                     "[1:v]format=rgba,loop=loop=-1:size=1[_wmraw];"
                     "[_wmraw][0:v]scale2ref=w=ref_w:h=ref_h:flags=lanczos[_wm][_vid];"
                     "[_vid][_wm]overlay=0:0:eof_action=repeat[vout]"
                 )
-                cmd = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current, "-i", wm_path,
-                    "-filter_complex", fc,
-                    "-map", "[vout]", "-map", "0:a?",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "copy",
-                    out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=120)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", current, "-i", wm_path,
+                                "-filter_complex", fc,
+                                "-map", "[vout]", "-map", "0:a?",
+                                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                "-pix_fmt", "yuv420p", "-c:a", "copy", out],
+                    timeout=120,
+                )
                 if not ok:
                     return False, f"{name}: ffmpeg overlay failed: {err}"
                 current = out
@@ -4138,16 +4097,9 @@ def _apply_pipe_effects(
                 _NEPETA_DEFAULT_URL = "https://files.catbox.moe/i4d60t.png"
                 nepeta_url = params[0] if params else _NEPETA_DEFAULT_URL
                 nepeta_path = os.path.join(tmpdir, f"nepeta_{i}.png")
-                try:
-                    import urllib.request as _ur
-                    import ssl as _ssl
-                    _ssl_ctx = _ssl.create_default_context()
-                    _req = _ur.Request(nepeta_url, headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"})
-                    with _ur.urlopen(_req, context=_ssl_ctx, timeout=30) as _resp:
-                        with open(nepeta_path, "wb") as _f:
-                            _f.write(_resp.read())
-                except Exception as _ne:
-                    return False, f"nepeta: failed to download overlay from {nepeta_url}: {_ne}"
+                ok, err = _dl_file(nepeta_url, nepeta_path)
+                if not ok:
+                    return False, f"nepeta: failed to download overlay from {nepeta_url}: {err}"
                 # Probe video dimensions so we can scale the PNG exactly to them.
                 # (scale2ref + loop crashes on this FFmpeg build; probing then hardcoding is stable.)
                 _probe = subprocess.run(
@@ -4164,17 +4116,14 @@ def _apply_pipe_effects(
                     f"[1:v]format=rgba,scale={_vw}:{_vh}:flags=lanczos[_nimg];"
                     "[0:v][_nimg]overlay=0:0:repeatlast=1[vout]"
                 )
-                cmd = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current, "-i", nepeta_path,
-                    "-filter_complex", fc,
-                    "-map", "[vout]", "-map", "0:a?",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "copy",
-                    "-shortest",
-                    out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=120)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", current, "-i", nepeta_path,
+                                "-filter_complex", fc,
+                                "-map", "[vout]", "-map", "0:a?",
+                                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                "-pix_fmt", "yuv420p", "-c:a", "copy", "-shortest", out],
+                    timeout=120,
+                )
                 if not ok:
                     return False, f"nepeta: ffmpeg overlay failed: {err}"
                 current = out
@@ -4190,15 +4139,12 @@ def _apply_pipe_effects(
                     "rubberband=tempo=20:smoothing=712923000:window=long,"
                     "volume=8,aformat=channel_layouts=mono[aout]"
                 )
-                cmd = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current,
-                    "-filter_complex", _avflip_fc,
-                    "-map", "0:v?", "-map", "[aout]",
-                    "-c:v", "copy", "-c:a", "pcm_s16le",
-                    out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", current, "-filter_complex", _avflip_fc,
+                                "-map", "0:v?", "-map", "[aout]",
+                                "-c:v", "copy", "-c:a", "pcm_s16le", out],
+                    timeout=180,
+                )
                 if not ok:
                     return False, f"avflip: ffmpeg failed: {err}"
                 current = out
