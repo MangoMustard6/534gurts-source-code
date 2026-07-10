@@ -2828,6 +2828,26 @@ def _dl_file(url: str, path: str, timeout: int = 30) -> tuple[bool, str]:
     except Exception as e:
         return False, str(e)
 
+def _pfloat(params: list, idx: int, default: float) -> float:
+    """Safe float-from-params; used by pipe-effect parameter blocks."""
+    try:
+        return float(params[idx]) if idx < len(params) else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _mux_audio_onto(out: str, audio_src: str) -> tuple[bool, str]:
+    """Mux audio from *audio_src* onto a video-only file at *out* (replaces in-place)."""
+    with tempfile.TemporaryDirectory() as _mux_tmp:
+        _muted = os.path.join(_mux_tmp, "muted.mp4")
+        os.replace(out, _muted)
+        return _run_ffmpeg_raw(
+            _FF_BASE + ["-i", _muted, "-i", audio_src,
+                        "-map", "0:v", "-map", "1:a?",
+                        "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", out],
+            timeout=120,
+        )
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -2881,18 +2901,13 @@ def _apply_pipe_effects(
 
             # ccshue — ImageMagick haldclut with hue/sat/gamma/gain/offset
             if name == "ccshue":
-                def _p(idx, default):
-                    try:
-                        return float(params[idx]) if idx < len(params) else default
-                    except (ValueError, TypeError):
-                        return default
                 ok, err = _run_ccshue(
                     current, out,
-                    hue=_p(0, 0.0),
-                    sat=_p(1, 1.0),
-                    gamma=_p(2, 1.0),
-                    gain=_p(3, 1.0),
-                    offset=_p(4, 0.0),
+                    hue=_pfloat(params, 0, 0.0),
+                    sat=_pfloat(params, 1, 1.0),
+                    gamma=_pfloat(params, 2, 1.0),
+                    gain=_pfloat(params, 3, 1.0),
+                    offset=_pfloat(params, 4, 0.0),
                 )
                 if not ok:
                     return False, err
@@ -2901,18 +2916,13 @@ def _apply_pipe_effects(
 
             # ImageMagick huehsv — params: hue|sat|lightness|colorspace|betterfully
             if name == "huehsv":
-                def _hf(idx, default):
-                    try:
-                        return float(params[idx]) if idx < len(params) else default
-                    except (ValueError, TypeError):
-                        return default
                 _TRUE_VALS = {"1", "true", "t", "y", "yes", "+", "on"}
                 _bf_raw = params[4].strip().lower() if len(params) > 4 else ""
                 ok, err = _run_huehsv(
                     current, out,
-                    hue=_hf(0, 0.5),
-                    sat=_hf(1, 1.0),
-                    lightness=_hf(2, 1.0),
+                    hue=_pfloat(params, 0, 0.5),
+                    sat=_pfloat(params, 1, 1.0),
+                    lightness=_pfloat(params, 2, 1.0),
                     colorspace=params[3].strip() if len(params) > 3 and params[3].strip() else "hsl",
                     betterfully=_bf_raw in _TRUE_VALS,
                 )
@@ -3007,18 +3017,14 @@ def _apply_pipe_effects(
                 if t_start >= t_end:
                     return False, "trim: start must be less than end."
                 t_dur = t_end - t_start
-                cmd = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-ss", str(t_start),
-                    "-i", current,
-                    "-t", str(t_dur),
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-                    "-c:a", "aac", "-b:a", "192k",
-                    "-movflags", "+faststart",
-                    "-pix_fmt", "yuv420p",
-                    out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=120)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-ss", str(t_start), "-i", current,
+                                "-t", str(t_dur),
+                                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                                "-c:a", "aac", "-b:a", "192k",
+                                "-movflags", "+faststart", "-pix_fmt", "yuv420p", out],
+                    timeout=120,
+                )
                 if not ok:
                     return False, f"trim failed: {err}"
                 current = out
@@ -3035,17 +3041,12 @@ def _apply_pipe_effects(
                 vf_speed = f"setpts={1.0/spd:.6f}*PTS"
                 # audio: chain atempo filters to stay in FFmpeg's 0.5-100 range
                 af_speed = _build_atempo_chain(spd)
-                cmd = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current,
-                    "-vf", vf_speed,
-                    "-af", af_speed,
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p",
-                    "-c:a", "aac", "-b:a", "192k",
-                    out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", current, "-vf", vf_speed, "-af", af_speed,
+                                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", out],
+                    timeout=180,
+                )
                 if not ok:
                     return False, f"speed failed: {err}"
                 current = out
@@ -3088,14 +3089,11 @@ def _apply_pipe_effects(
                     else:
                         audio_out = os.path.join(tmpdir, f"pipe_{i}.mkv")
                         audio_codec_args = ["-c:a", "pcm_s16le"]
-                    cmd = [
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", current, "-af", af,
-                        "-c:v", "copy",
-                        *audio_codec_args,
-                        audio_out,
-                    ]
-                    ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                    ok, err = _run_ffmpeg_raw(
+                        _FF_BASE + ["-i", current, "-af", af,
+                                    "-c:v", "copy", *audio_codec_args, audio_out],
+                        timeout=180,
+                    )
                     if not ok:
                         return False, f"Audio filter '{name}' failed: {err}"
                     current = audio_out
@@ -3271,15 +3269,10 @@ def _apply_pipe_effects(
 
             # preview1280 (p1280) — full TV-simulator montage pipeline as a pipe step
             if name in ("preview1280", "p1280"):
-                def _pp1280(idx, default):
-                    try:
-                        return float(params[idx]) if idx < len(params) else default
-                    except (ValueError, TypeError):
-                        return default
                 ok, err = _run_preview1280(
                     current, out,
-                    start_offset=_pp1280(0, 1.85),
-                    segment_dur=_pp1280(1, 0.85),
+                    start_offset=_pfloat(params, 0, 1.85),
+                    segment_dur=_pfloat(params, 1, 0.85),
                 )
                 if not ok:
                     return False, f"preview1280 pipe failed: {err}"
@@ -3288,15 +3281,10 @@ def _apply_pipe_effects(
 
             # oppositep1280 / op1280 — inverse TV-simulator montage pipeline as a pipe step
             if name in ("oppositep1280", "op1280"):
-                def _op1280(idx, default):
-                    try:
-                        return float(params[idx]) if idx < len(params) else default
-                    except (ValueError, TypeError):
-                        return default
                 ok, err = _run_oppositep1280(
                     current, out,
-                    start_offset=_op1280(0, 1.85),
-                    segment_dur=_op1280(1, 0.85),
+                    start_offset=_pfloat(params, 0, 1.85),
+                    segment_dur=_pfloat(params, 1, 0.85),
                 )
                 if not ok:
                     return False, f"oppositep1280 pipe failed: {err}"
@@ -3310,13 +3298,7 @@ def _apply_pipe_effects(
                 _m_dir = (params[0] if params else "").lower().strip()
                 _m_dir = {"l": "left", "r": "right", "t": "top", "b": "bottom"}.get(_m_dir, _m_dir)
                 _m_vf = "vflip" if _m_dir in ("top", "bottom") else "hflip"
-                cmd = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current, "-vf", _m_vf,
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                ok, err = _ff_vf(current, _m_vf, out)
                 if not ok:
                     return False, f"mirror (split-inner) failed: {err}"
                 current = out
@@ -3333,13 +3315,7 @@ def _apply_pipe_effects(
             # Named video filters — rendered immediately
             vf = _build_ffmpeg_pipe_vf(name, params)
             if vf:
-                cmd = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current, "-vf", vf,
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out,
-                ]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                ok, err = _ff_vf(current, vf, out)
                 if not ok:
                     return False, f"Filter '{name}' failed: {err}"
                 current = out
@@ -3347,26 +3323,15 @@ def _apply_pipe_effects(
 
             # swirl — vortex/swirl distortion via geq
             if name == "swirl":
-                def _sp(idx, default):
-                    try:
-                        return params[idx] if idx < len(params) else default
-                    except (IndexError, TypeError):
-                        return default
-                def _spf(idx, default):
-                    try:
-                        return float(params[idx]) if idx < len(params) else default
-                    except (ValueError, TypeError):
-                        return default
-                fallout_val = _sp(4, "quad")
-                is1to1_raw = _sp(5, "true")
-                is1to1_val = str(is1to1_raw).lower() in ("1", "true", "t", "y", "yes", "+", "on")
+                _sp = lambda idx, d: params[idx] if idx < len(params) else d
+                is1to1_val = str(_sp(5, "true")).lower() in ("1", "true", "t", "y", "yes", "+", "on")
                 ok, err = _run_swirl(
                     current, out,
-                    strength=_spf(0, 180.0),
-                    radius=_spf(1, 0.5),
-                    xc=_spf(2, 0.5),
-                    yc=_spf(3, 0.5),
-                    fallout=fallout_val,
+                    strength=_pfloat(params, 0, 180.0),
+                    radius=_pfloat(params, 1, 0.5),
+                    xc=_pfloat(params, 2, 0.5),
+                    yc=_pfloat(params, 3, 0.5),
+                    fallout=_sp(4, "quad"),
                     is1to1=is1to1_val,
                 )
                 if not ok:
@@ -3376,21 +3341,16 @@ def _apply_pipe_effects(
 
             # tvsim — TV simulator CRT displacement effect
             if name in ("tvsim", "tv"):
-                def _tp(idx, default):
-                    try:
-                        return float(params[idx]) if idx < len(params) else default
-                    except (ValueError, TypeError):
-                        return default
                 ok, err = _run_tvsim(
                     current, out,
-                    line_sync=_tp(0, 0.5),
-                    detail_zoom=_tp(1, 1.0),
-                    vertical_sync=_tp(2, 1.0),
-                    phosphorescence=_tp(3, 0.0),
-                    interlacing=_tp(4, 0.0),
-                    scan_phasing=_tp(5, 0.0),
-                    aperture_grill=_tp(6, 0.0),
-                    static_noise=_tp(7, 0.0),
+                    line_sync=_pfloat(params, 0, 0.5),
+                    detail_zoom=_pfloat(params, 1, 1.0),
+                    vertical_sync=_pfloat(params, 2, 1.0),
+                    phosphorescence=_pfloat(params, 3, 0.0),
+                    interlacing=_pfloat(params, 4, 0.0),
+                    scan_phasing=_pfloat(params, 5, 0.0),
+                    aperture_grill=_pfloat(params, 6, 0.0),
+                    static_noise=_pfloat(params, 7, 0.0),
                     _in_split=_in_split,
                 )
                 if not ok:
@@ -3448,19 +3408,15 @@ def _apply_pipe_effects(
                     return False, f"earthquake (pass 1 — vidstabdetect) failed: {err}"
 
                 # Pass 2: apply inverted stabilization (destabilize = shake)
-                _eq_pass2 = [
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current,
-                    "-vf", (
-                        f"format=yuv444p,"
-                        f"vidstabtransform=input={_trf_path}:optalgo=avg:optzoom=0:zoom=15:invert=1,"
-                        f"scale=iw:ih,format=yuv420p"
-                    ),
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-c:a", "copy",
-                    out,
-                ]
-                ok, err = _run_ffmpeg_raw(_eq_pass2, timeout=180)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", current, "-vf",
+                                f"format=yuv444p,"
+                                f"vidstabtransform=input={_trf_path}:optalgo=avg:optzoom=0:zoom=15:invert=1,"
+                                f"scale=iw:ih,format=yuv420p",
+                                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                "-c:a", "copy", out],
+                    timeout=180,
+                )
                 if not ok:
                     return False, f"earthquake (pass 2 — vidstabtransform) failed: {err}"
                 current = out
@@ -3478,19 +3434,14 @@ def _apply_pipe_effects(
             if name in ("vocoder", "ilvocodex", "orangevocoder", "4ormulator", "audacity"):
                 # If the effect name IS a mode, use it as the default mode
                 _default_mode = name if name != "vocoder" else "ilvocodex"
-                def _vp(idx, default):
-                    try:
-                        return params[idx] if idx < len(params) else default
-                    except (IndexError, TypeError):
-                        return default
                 # Syntax variants:
                 #   vocoder=mode;bw;carrier_url
                 #   vocoder=mode;carrier_url
                 #   vocoder=carrier_url
                 #   ilvocodex=carrier_url
-                _p0 = _vp(0, "")
-                _p1 = _vp(1, "")
-                _p2 = _vp(2, "")
+                _p0 = params[0] if len(params) > 0 else ""
+                _p1 = params[1] if len(params) > 1 else ""
+                _p2 = params[2] if len(params) > 2 else ""
                 if _p0.lower() in _VOCODER_PROFILES:
                     _vc_mode = _p0.lower()
                     try:
@@ -3516,13 +3467,7 @@ def _apply_pipe_effects(
                 if not _ensure_multipitch_bin():
                     return False, "fzgm156: multipitch binary unavailable — download failed."
 
-                def _fzp(idx, default):
-                    try:
-                        return float(params[idx]) if idx < len(params) else default
-                    except (ValueError, TypeError):
-                        return default
-
-                sr_val = int(_fzp(0, 44100))
+                sr_val = int(_pfloat(params, 0, 44100))
 
                 # Probe input duration
                 try:
@@ -3559,25 +3504,21 @@ def _apply_pipe_effects(
                     f"[invcol2]reverse,trim=0:{trim_s:.6f},format=yuv420p[second_s];"
                     f"[first_s][second_s]concat=2:1:0,format=yuv420p"
                 )
-                ok, err = _run_ffmpeg_raw([
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current,
-                    "-filter_complex", fz_vf,
-                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "1",
-                    "-c:a", "pcm_s16le",
-                    vid_step,
-                ], timeout=300)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", current, "-filter_complex", fz_vf,
+                                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "1",
+                                "-c:a", "pcm_s16le", vid_step],
+                    timeout=300,
+                )
                 if not ok:
                     return False, f"fzgm156: palindrome video step failed: {err}"
 
                 # Step 3: extract downsampled audio (halved sample rate)
                 audio_down = os.path.join(tmpdir, f"fzgm156_h_{i}.wav")
-                ok, err = _run_ffmpeg_raw([
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", vid_step,
-                    "-af", f"asetrate={sr_val // 2}",
-                    audio_down,
-                ], timeout=120)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", vid_step, "-af", f"asetrate={sr_val // 2}", audio_down],
+                    timeout=120,
+                )
                 if not ok:
                     return False, f"fzgm156: audio downsample step failed: {err}"
 
@@ -3600,25 +3541,22 @@ def _apply_pipe_effects(
                     f"[1]asetrate={sr_val},bass=g=2.5,areverse,atrim=end={trim_s:.6f}[b];"
                     f"[a][b]concat=n=2:v=0:a=1"
                 )
-                ok, err = _run_ffmpeg_raw([
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", out_pos, "-i", out_neg,
-                    "-filter_complex", fz_af,
-                    audio_mixed,
-                ], timeout=120)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", out_pos, "-i", out_neg,
+                                "-filter_complex", fz_af, audio_mixed],
+                    timeout=120,
+                )
                 if not ok:
                     return False, f"fzgm156: audio mix step failed: {err}"
 
                 # Step 6: remux palindrome video + mixed audio
-                ok, err = _run_ffmpeg_raw([
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", vid_step, "-i", audio_mixed,
-                    "-map", "0:v", "-map", "1:a",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-pix_fmt", "yuv420p",
-                    "-c:a", "pcm_s16le",
-                    out,
-                ], timeout=300)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", vid_step, "-i", audio_mixed,
+                                "-map", "0:v", "-map", "1:a",
+                                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", out],
+                    timeout=300,
+                )
                 if not ok:
                     return False, f"fzgm156: remux step failed: {err}"
                 current = out
@@ -3720,16 +3658,12 @@ def _apply_pipe_effects(
                     )
                     fc_chain = ";".join([split_part] + chain_parts + [mix_part])
 
-                ok, err = _run_ffmpeg_raw([
-                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", current,
-                    "-filter_complex", fc_chain,
-                    "-map", "0:v?",
-                    "-map", "[mp2aout]",
-                    "-c:v", "copy",
-                    "-c:a", "pcm_s16le",
-                    out,
-                ], timeout=300)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", current, "-filter_complex", fc_chain,
+                                "-map", "0:v?", "-map", "[mp2aout]",
+                                "-c:v", "copy", "-c:a", "pcm_s16le", out],
+                    timeout=300,
+                )
                 if not ok:
                     return False, f"multipitch2: rubberband pitch shift failed: {err}"
                 current = out
@@ -3809,9 +3743,7 @@ def _apply_pipe_effects(
             # Mode 3: scroll=x1:y1:x2:y2[:dur] (4+ numeric params → animated pan via geq)
             #   → animated pan using geq with time-dependent expressions
             if name == "scroll":
-                # Check if params contain named hpos/vpos params
-                has_named = any(p.startswith("hpos") or p.startswith("vpos") or p.startswith("ypos") for p in params)
-
+                has_named = any(p.startswith(("hpos", "vpos", "ypos")) for p in params)
                 if has_named:
                     # Mode 1: Named params (hpos=, ypos=) → native scroll filter
                     scroll_parts = []
@@ -3819,76 +3751,49 @@ def _apply_pipe_effects(
                         if "=" in p:
                             k, v = p.split("=", 1)
                             k = k.strip().lower()
-                            v = v.strip()
                             if k == "hpos":
-                                scroll_parts.append(f"hpos={v}")
+                                scroll_parts.append(f"hpos={v.strip()}")
                             elif k in ("vpos", "ypos"):
-                                scroll_parts.append(f"vpos={v}")
-                    vf_scroll = ",".join(scroll_parts) if scroll_parts else "hpos=0.5"
-                    ok, err = _run_ffmpeg_raw([
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", current,
-                        "-vf", f"scroll={vf_scroll}",
-                        "-c:a", "copy",
-                        out,
-                    ], timeout=300)
-                    if not ok:
-                        return False, f"scroll: ffmpeg failed: {err}"
-                    current = out
-                    continue
+                                scroll_parts.append(f"vpos={v.strip()}")
+                    vf_filter = f"scroll={','.join(scroll_parts) or 'hpos=0.5'}"
                 elif len(params) >= 4:
                     # Mode 3: Animated pan via geq — x1:y1:x2:y2[:dur]
                     x1 = _expr_param(params[0] if 0 < len(params) else None, 0.0)
                     y1 = _expr_param(params[1] if 1 < len(params) else None, 0.0)
                     x2 = _expr_param(params[2] if 2 < len(params) else None, 0.0)
                     y2 = _expr_param(params[3] if 3 < len(params) else None, 0.0)
-                    dur  = _expr_param(params[4] if 4 < len(params) else None, 0.0)
+                    dur = _expr_param(params[4] if 4 < len(params) else None, 0.0)
                     try:
-                        dur_num = float(dur)
-                        t_expr = f"T/{dur_num}" if dur_num > 0 else "T"
+                        t_expr = f"T/{float(dur)}" if float(dur) > 0 else "T"
                     except (ValueError, TypeError):
-                        t_expr = f"T/({dur})"  # expression-based duration
+                        t_expr = f"T/({dur})"
                     pan_x = f"({x1})+(({x2})-({x1}))*{t_expr}"
                     pan_y = f"({y1})+(({y2})-({y1}))*{t_expr}"
-                    vf = (
+                    vf_filter = (
                         f"format=yuv444p,"
                         f"geq='p(clip(X+({pan_x}),0,W-1),clip(Y+({pan_y}),0,H-1))"
                         f":cb(clip(X+({pan_x}),0,W-1),clip(Y+({pan_y}),0,H-1))"
                         f":cr(clip(X+({pan_x}),0,W-1),clip(Y+({pan_y}),0,H-1))',"
                         f"scale=iw:ih,format=yuv420p"
                     )
-                    ok, err = _run_ffmpeg_raw([
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", current,
-                        "-vf", vf,
-                        "-c:a", "copy",
-                        out,
-                    ], timeout=300)
-                    if not ok:
-                        return False, f"scroll: ffmpeg failed: {err}"
-                    current = out
-                    continue
                 else:
                     # Mode 2: Continuous scroll — h;v (0.0–1.0 per axis)
                     h_speed = _expr_param(params[0] if 0 < len(params) else None, 0.0)
                     v_speed = _expr_param(params[1] if 1 < len(params) else None, 0.0)
                     scroll_args = []
-                    if h_speed != "0.0" and h_speed != "0":
+                    if h_speed not in ("0.0", "0"):
                         scroll_args.append(f"hpos={h_speed}")
-                    if v_speed != "0.0" and v_speed != "0":
+                    if v_speed not in ("0.0", "0"):
                         scroll_args.append(f"vpos={v_speed}")
-                    vf_scroll = ",".join(scroll_args) if scroll_args else "hpos=0.5"
-                    ok, err = _run_ffmpeg_raw([
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", current,
-                        "-vf", f"scroll={vf_scroll}",
-                        "-c:a", "copy",
-                        out,
-                    ], timeout=300)
-                    if not ok:
-                        return False, f"scroll: ffmpeg failed: {err}"
-                    current = out
-                    continue
+                    vf_filter = f"scroll={','.join(scroll_args) or 'hpos=0.5'}"
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", current, "-vf", vf_filter, "-c:a", "copy", out],
+                    timeout=300,
+                )
+                if not ok:
+                    return False, f"scroll: ffmpeg failed: {err}"
+                current = out
+                continue
 
             # leftsplit — split video, apply inner effects to left half, hflip+hstack
             # Syntax: leftsplit=<inner_effects>
@@ -3898,17 +3803,14 @@ def _apply_pipe_effects(
             if name == "leftsplit":
                 inner_str = params[0] if params else ""
                 if not inner_str:
-                    # No inner effects — just pass through
                     if current != out:
-                        import shutil as _shutil
-                        _shutil.copyfile(current, out)
+                        shutil.copyfile(current, out)
                     current = out
                     continue
                 inner_effects = _parse_pipe_effects(inner_str)
                 if not inner_effects:
                     if current != out:
-                        import shutil as _shutil
-                        _shutil.copyfile(current, out)
+                        shutil.copyfile(current, out)
                     current = out
                     continue
                 info = _ffprobe_video_info(current)
@@ -3920,14 +3822,12 @@ def _apply_pipe_effects(
                     left_raw = os.path.join(split_tmp, "left_raw.mp4")
                     left_fx = os.path.join(split_tmp, "left_fx.mp4")
                     # Step 1: Extract left half
-                    ok, err = _run_ffmpeg_raw([
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", current,
-                        "-vf", f"crop={half_w}:{h}:0:0",
-                        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                        "-pix_fmt", "yuv420p", "-c:a", "copy",
-                        left_raw,
-                    ], timeout=300)
+                    ok, err = _run_ffmpeg_raw(
+                        _FF_BASE + ["-i", current, "-vf", f"crop={half_w}:{h}:0:0",
+                                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                    "-pix_fmt", "yuv420p", "-c:a", "copy", left_raw],
+                        timeout=300,
+                    )
                     if not ok:
                         return False, f"leftsplit: crop left failed: {err}"
                     # Step 2: Apply inner effects to left half
@@ -3935,36 +3835,22 @@ def _apply_pipe_effects(
                     if not ok:
                         return False, f"leftsplit: inner effects failed: {err}"
                     # Step 3: hstack left_fx (unchanged) + hflip(left_fx) to create mirror.
-                    # right_raw is not used — the right side is the processed left reflected.
-                    ok, err = _run_ffmpeg_raw([
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", left_fx,
-                        "-filter_complex",
-                        "[0:v]split[l][r];[r]hflip[rflipped];[l][rflipped]hstack=inputs=2[vout]",
-                        "-map", "[vout]",
-                        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                        "-pix_fmt", "yuv420p",
-                        "-an",
-                        out,
-                    ], timeout=300)
+                    ok, err = _run_ffmpeg_raw(
+                        _FF_BASE + ["-i", left_fx, "-filter_complex",
+                                    "[0:v]split[l][r];[r]hflip[rflipped];[l][rflipped]hstack=inputs=2[vout]",
+                                    "-map", "[vout]",
+                                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                    "-pix_fmt", "yuv420p", "-an", out],
+                        timeout=300,
+                    )
                     if not ok:
                         return False, f"leftsplit: hstack failed: {err}"
                 # Always mux audio from the original input; -map 1:a? is a no-op if no audio stream.
                 # Do NOT use -shortest: it causes compounding duration truncation across iterations,
                 # eventually producing a 0-duration/unreadable file. Let the video drive duration.
-                with tempfile.TemporaryDirectory() as mux_tmp:
-                    muted_out = os.path.join(mux_tmp, "muted.mp4")
-                    os.replace(out, muted_out)
-                    ok, err = _run_ffmpeg_raw([
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", muted_out,
-                        "-i", current,
-                        "-map", "0:v", "-map", "1:a?",
-                        "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-                        out,
-                    ], timeout=120)
-                    if not ok:
-                        return False, f"leftsplit: audio mux failed: {err}"
+                ok, err = _mux_audio_onto(out, current)
+                if not ok:
+                    return False, f"leftsplit: audio mux failed: {err}"
                 current = out
                 continue
 
@@ -3977,15 +3863,13 @@ def _apply_pipe_effects(
                 inner_str = params[0] if params else ""
                 if not inner_str:
                     if current != out:
-                        import shutil as _shutil
-                        _shutil.copyfile(current, out)
+                        shutil.copyfile(current, out)
                     current = out
                     continue
                 inner_effects = _parse_pipe_effects(inner_str)
                 if not inner_effects:
                     if current != out:
-                        import shutil as _shutil
-                        _shutil.copyfile(current, out)
+                        shutil.copyfile(current, out)
                     current = out
                     continue
                 info = _ffprobe_video_info(current)
@@ -3998,25 +3882,21 @@ def _apply_pipe_effects(
                     right_raw = os.path.join(split_tmp, "right_raw.mp4")
                     right_fx = os.path.join(split_tmp, "right_fx.mp4")
                     # Step 1: Extract left half (no effects)
-                    ok, err = _run_ffmpeg_raw([
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", current,
-                        "-vf", f"crop={half_w}:{h}:0:0",
-                        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                        "-pix_fmt", "yuv420p", "-c:a", "copy",
-                        left_raw,
-                    ], timeout=300)
+                    ok, err = _run_ffmpeg_raw(
+                        _FF_BASE + ["-i", current, "-vf", f"crop={half_w}:{h}:0:0",
+                                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                    "-pix_fmt", "yuv420p", "-c:a", "copy", left_raw],
+                        timeout=300,
+                    )
                     if not ok:
                         return False, f"rightsplit: crop left failed: {err}"
                     # Step 2: Extract right half
-                    ok, err = _run_ffmpeg_raw([
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", current,
-                        "-vf", f"crop={half_w}:{h}:{half_w}:0",
-                        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                        "-pix_fmt", "yuv420p", "-c:a", "copy",
-                        right_raw,
-                    ], timeout=300)
+                    ok, err = _run_ffmpeg_raw(
+                        _FF_BASE + ["-i", current, "-vf", f"crop={half_w}:{h}:{half_w}:0",
+                                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                    "-pix_fmt", "yuv420p", "-c:a", "copy", right_raw],
+                        timeout=300,
+                    )
                     if not ok:
                         return False, f"rightsplit: crop right failed: {err}"
                     # Step 3: Apply inner effects to right half
@@ -4024,36 +3904,22 @@ def _apply_pipe_effects(
                     if not ok:
                         return False, f"rightsplit: inner effects failed: {err}"
                     # Step 4: hstack left + right(affected)
-                    ok, err = _run_ffmpeg_raw([
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", left_raw,
-                        "-i", right_fx,
-                        "-filter_complex",
-                        f"[0:v][1:v]hstack=inputs=2[vout]",
-                        "-map", "[vout]",
-                        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                        "-pix_fmt", "yuv420p",
-                        "-an",
-                        out,
-                    ], timeout=300)
+                    ok, err = _run_ffmpeg_raw(
+                        _FF_BASE + ["-i", left_raw, "-i", right_fx,
+                                    "-filter_complex", "[0:v][1:v]hstack=inputs=2[vout]",
+                                    "-map", "[vout]",
+                                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                    "-pix_fmt", "yuv420p", "-an", out],
+                        timeout=300,
+                    )
                     if not ok:
                         return False, f"rightsplit: hstack failed: {err}"
                 # Always mux audio from the original input; -map 1:a? is a no-op if no audio stream.
                 # Do NOT use -shortest: it causes compounding duration truncation across iterations,
                 # eventually producing a 0-duration/unreadable file. Let the video drive duration.
-                with tempfile.TemporaryDirectory() as mux_tmp:
-                    muted_out = os.path.join(mux_tmp, "muted.mp4")
-                    os.replace(out, muted_out)
-                    ok, err = _run_ffmpeg_raw([
-                        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                        "-i", muted_out,
-                        "-i", current,
-                        "-map", "0:v", "-map", "1:a?",
-                        "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-                        out,
-                    ], timeout=120)
-                    if not ok:
-                        return False, f"rightsplit: audio mux failed: {err}"
+                ok, err = _mux_audio_onto(out, current)
+                if not ok:
+                    return False, f"rightsplit: audio mux failed: {err}"
                 current = out
                 continue
 
@@ -4251,16 +4117,14 @@ def _apply_pipe_effects(
                 _fc = ";".join(_fc_parts)
                 # Scale timeout with grid size (120 s base + 60 s per cell)
                 _np_timeout = 120 + _powers * 60
-                cmd = (
-                    ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
-                    + _inp_flags
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + _inp_flags
                     + ["-filter_complex", _fc, "-map", "[v]"] + _map_extra
                     + ["-c:v", "libx264", "-preset", "fast", "-crf", "23",
                        "-pix_fmt", "yuv420p"]
-                    + _acodec_args
-                    + [out]
+                    + _acodec_args + [out],
+                    timeout=_np_timeout,
                 )
-                ok, err = _run_ffmpeg_raw(cmd, timeout=_np_timeout)
                 if not ok:
                     return False, f"nparisonffmpeg: xstack failed: {err}"
                 current = out
