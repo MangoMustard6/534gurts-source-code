@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-10: Fixed attachment downloads across all bot code — switched from `attachment.url` to `attachment.proxy_url or attachment.url`. Discord CDN now requires auth; direct URLs often return 404 for fresh uploads.
 - 2026-07-09: Rewrote _split_pipe_segments to only track parens inside known function blocks (ffmpeg, leftsplit, rightsplit), fixing "No closing quotation" errors caused by expressions like 7*(text_h) corrupting the naive depth counter.
 - 2026-07-09: Replaced chatbot personality (Clankered lore) with a concise technical assistant prompt that knows all core IHTX commands, effects, and presets.
 - 2026-07-09: fzte pipeline: replaced volume,mp,volume trio with single mp3= (rubberband CLI multi-pitch, FLAC) for cleaner audio. Updated docstrings and embed description to show full pipeline.
@@ -724,9 +725,15 @@ async def _global_checks(ctx: commands.Context) -> bool:
 # ---------- Helpers: download and ffmpeg ----------
 
 async def download_attachment(attachment: discord.Attachment, dest: str):
-    """Download a discord.Attachment to path `dest`."""
+    """Download a discord.Attachment to path `dest`.
+
+    Uses ``proxy_url`` (Discord's authenticated CDN proxy) when available,
+    falling back to ``url``. Discord CDN now requires auth; direct ``url``
+    often returns 404 for fresh uploads.
+    """
+    url = attachment.proxy_url or attachment.url
     async with aiohttp.ClientSession() as session:
-        async with session.get(attachment.url) as resp:
+        async with session.get(url) as resp:
             if resp.status != 200:
                 raise ValueError(f"Failed to download attachment (HTTP {resp.status})")
             data = await resp.read()
@@ -6009,8 +6016,9 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
         output_path = os.path.join(tmpdir, "invlum_out.mov")
 
         try:
+            url = attachment.proxy_url or attachment.url
             async with aiohttp.ClientSession() as session:
-                async with session.get(attachment.url) as resp:
+                async with session.get(url) as resp:
                     with open(input_path, "wb") as f:
                         f.write(await resp.read())
         except Exception as e:
@@ -12094,7 +12102,7 @@ async def random_command(ctx: commands.Context, subcommand: str = "", *, args: s
         # Attachment on this message
         if ctx.message and ctx.message.attachments:
             for att in ctx.message.attachments:
-                urls_to_add.append(att.url)
+                urls_to_add.append(att.proxy_url or att.url)
 
         # URL argument
         url_arg = args.strip()
