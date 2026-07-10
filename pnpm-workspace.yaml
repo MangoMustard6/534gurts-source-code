@@ -74,7 +74,7 @@ overrides:
   linkify-it: '>=5.0.2'
   markdown-it: '>=14.3.0'
   qs: '>=6.15.3'
-  undici: '>=8.7.0'
+  undici: '>=6.0.0 <8.0.0'
   esbuild>@esbuild/aix-ppc64: '-'
   esbuild>@esbuild/android-arm: '-'
   esbuild>@esbuild/android-arm64: '-'
