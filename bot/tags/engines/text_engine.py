@@ -66,8 +66,9 @@ async def _read_attachment(att) -> tuple[str, str]:
     if ext and ext not in _ALLOWED_EXT:
         return "", f"unsupported file type `{ext}`"
 
+    url = att.proxy_url or att.url
     async with aiohttp.ClientSession() as session:
-        async with session.get(att.url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             if resp.status != 200:
                 return "", f"download failed (HTTP {resp.status})"
             raw = await resp.read()

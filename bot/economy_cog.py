@@ -507,7 +507,7 @@ class EconomyCog(commands.Cog, name="Economy"):
         media_size: int = 0
 
         if attachment is not None:
-            media_url = attachment.url
+            media_url = attachment.proxy_url or attachment.url
             media_filename = attachment.filename
             media_size = attachment.size
         elif url:
@@ -516,7 +516,7 @@ class EconomyCog(commands.Cog, name="Economy"):
             media_size = 0
         elif ctx.message and ctx.message.attachments:
             a = ctx.message.attachments[0]
-            media_url = a.url
+            media_url = a.proxy_url or a.url
             media_filename = a.filename
             media_size = a.size
         elif ctx.message and ctx.message.reference:

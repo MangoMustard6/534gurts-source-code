@@ -79,8 +79,9 @@ class Frei0rScriptEngine(BaseEngine):
 
             try:
                 import aiohttp
+                url = attachment.proxy_url or attachment.url
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(attachment.url) as resp:
+                    async with session.get(url) as resp:
                         data = await resp.read()
                 with open(input_path, "wb") as f:
                     f.write(data)

@@ -547,28 +547,35 @@ _VIDEO_MIME_PREFIXES = ("video/", "image/gif")
 
 
 def _first_attachment_url(msg) -> str:
-    """Return the URL of the first attachment on a message, or ''."""
+    """Return the URL of the first attachment on a message, or ''.
+
+    Uses ``proxy_url`` (Discord's authenticated CDN proxy) when available,
+    falling back to ``url``. Discord CDN now requires auth for fresh uploads.
+    """
     if msg and msg.attachments:
-        return msg.attachments[0].url
+        att = msg.attachments[0]
+        return att.proxy_url or att.url
     return ""
 
 
 def _first_video_url(msg) -> str:
-    """Return the URL of the first video/gif attachment on a message, or ''."""
+    """Return the URL of the first video/gif attachment on a message, or ''.
+
+    Uses ``proxy_url`` (Discord's authenticated CDN proxy) when available.
+    """
     if not msg or not msg.attachments:
         return ""
     for att in msg.attachments:
-        # Check MIME type first (most reliable)
         ct = att.content_type or ""
         if ct.startswith(_VIDEO_MIME_PREFIXES):
-            return att.url
-        # Fall back to extension check
+            return att.proxy_url or att.url
         import os
         ext = os.path.splitext(att.filename)[1].lower()
         if ext in _VIDEO_EXTS:
-            return att.url
+            return att.proxy_url or att.url
     # Nothing video-like — return first attachment anyway so the tag can try
-    return msg.attachments[0].url
+    att = msg.attachments[0]
+    return att.proxy_url or att.url
 
 
 def _resolved_ref(discord_ctx) -> object | None:
