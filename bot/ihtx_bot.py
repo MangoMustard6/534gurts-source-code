@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-11: Fixed th/join — the video join FFmpeg command was built but never executed, causing empty output. Also forced video output to .mp4 and fixed the uploaded filename extension. Added th/join — join 2 videos side-by-side (default) or stacked (use `-vertical`). Also added to `th/ihtxhelp` / `th/help` embeds. Added th/ytdl (alias th/youtubedownload) — yt-dlp download command; sends file directly if ≤8 MB, uploads to Catbox otherwise. Added stretch pipe effect (geq centre-zoom, params: zoom|offset). Added th/pipetest (alias th/pt) — one-shot pipe effect runner.
+- 2026-07-11: Updated th/fzte / th/freakzingatesteffect pipeline to: invlum,huehsv=0.62,ccshue=110,channelblend=b|g|r,invlum,rotate=-0.78539815,tvsim=0.9;4,wave=0|15.000|0.8000|0.3466666667|0|0|0|0|0,rotate=0.78539815,mirror=90|0.840,mirror=right,mirror=bottom,ffmpeg(scale/drawtext/negate),mp3. Fixed th/join — the video join FFmpeg command was built but never executed, causing empty output. Also forced video output to .mp4 and fixed the uploaded filename extension. Added th/join — join 2 videos side-by-side (default) or stacked (use `-vertical`). Also added to `th/ihtxhelp` / `th/help` embeds. Added th/ytdl (alias th/youtubedownload) — yt-dlp download command; sends file directly if ≤8 MB, uploads to Catbox otherwise. Added stretch pipe effect (geq centre-zoom, params: zoom|offset). Added th/pipetest (alias th/pt) — one-shot pipe effect runner.
 - 2026-07-10: Refactored _apply_pipe_effects: extracted _ff_vf/_ff_af/_geq/_dl_file helpers and _VF_CODEC/_FF_BASE constants to eliminate repeated FFmpeg command boilerplate across ~15 effects (shake, wave, wave2, wmm3dripple, timecode, radar, jitter, randomjitter, watermark, nepeta, avflip, lut, __rawvf__, __rawaf__).
 - 2026-07-10: th/chat now auto-sends long replies (>1800 chars) as a .txt file attachment; -debug flag still works for explicit file mode. th/ihtx pipe effects: added short aliases srw (sierpinskiransomware), wmm (wmm3dripple), p1280 (preview1280), rj (randomjitter).
 - 2026-07-10: Fixed attachment downloads across all bot code — switched from `attachment.url` to `attachment.proxy_url or attachment.url`. Discord CDN now requires auth; direct URLs often return 404 for fresh uploads.
@@ -987,18 +987,16 @@ def _run_freakzinga_test_effect(
       3. ccshue=110 — CCS hue
       4. channelblend=b|g|r — channel blend
       5. invlum — second luma inversion
-      6. rotate=-45/180*PI — rotate -45°
-      7. tvsim=0.9|4 — TV simulator
-      8. wave=0|15|0.8|0.34666|0|0|0|0 — wave distortion
-      9. rotate=45/180*PI — rotate +45°
-     10. ffmpeg(...) — hflip + crop/split/hstack composite
+      6. rotate=-0.78539815 — rotate -45°
+      7. tvsim=0.9;4 — TV simulator
+      8. wave=0|15.000|0.8000|0.3466666667|0|0|0|0|0 — wave distortion
+      9. rotate=0.78539815 — rotate +45°
+     10. mirror=90|0.840 — parametric fold
      11. mirror=right — mirror right half
      12. mirror=bottom — mirror bottom half
-     13. ffmpeg(...) — frame-numbered drawtext + negate
+     13. ffmpeg(...) — scale, negate, frame-numbered drawtext, negate, scale to 640x360
      14. mp3=-20|-17|-13|-8|-5|-1|4|7|11|16|19|23 — multi-pitch (rubberband CLI, FLAC)
 
-    Optional params override output resolution:
-        freakzingatesteffect=1280|720
     Aliases in pipe syntax: fzte, freaktest.
     """
     params = params or []
@@ -1021,24 +1019,22 @@ def _run_freakzinga_test_effect(
         except Exception:
             pass
 
-    font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    font = "/usr/share/fonts/truetype/arial/ArialSans.ttf"
 
     pipe = (
         "invlum,huehsv=0.62,ccshue=110,channelblend=b|g|r,invlum,"
-        "rotate=-45/180*PI,"
-        "tvsim=0.9|4,"
-        "wave=0|15|0.8|0.34666|0|0|0|0,"
-        "rotate=45/180*PI,"
-        + f"ffmpeg("
-        + f"-vf hflip,"
-        + f'"crop={w}*0.840:{h}:{w}*0.840:0,split[right][tmp];[tmp]hflip[left];[left][right]hstack,crop={w}:{h}:{w}*0.840:0"'
-        + f"),"
+        "rotate=-0.78539815,"
+        "tvsim=0.9;4,"
+        "wave=0|15.000|0.8000|0.3466666667|0|0|0|0|0,"
+        "rotate=0.78539815,"
+        + "mirror=90|0.840,"
         + "mirror=right,"
         + "mirror=bottom,"
-        + f"ffmpeg("
-        + f"-vf drawtext=fontfile={font}:text='%{{n}}.000':text_align=R:fontcolor=white:fontsize=w/24:box=1:boxcolor=black:boxborderw=7*(text_h):x=(w/2)-(text_w/2):y=(h-text_h)/1.12,"
-        + f"negate"
-        + f"),"
+        + "ffmpeg("
+        + "-vf scale=640*1.1:360*1.05,negate,"
+        + f"drawtext=fontfile={font}:text='%{{n}}.000':text_align=R:fontcolor=white:fontsize=w/27:box=1:boxcolor=black:boxborderw=7*(text_h):x=(w/2)-(text_w/2):y=(h-text_h)/1.12,"
+        + "negate,scale=640:360"
+        + "),"
         + "mp3=-20|-17|-13|-8|-5|-1|4|7|11|16|19|23"
     )
 
@@ -9392,18 +9388,15 @@ async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = "")
     """Apply the Freakzinga test effect to an attached video.
 
     Pipeline: invlum → huehsv → ccshue → channelblend → invlum →
-              rotate→tvsim→wave→rotate → ffmpeg hflip/crop/hstack →
-              mirror=right → mirror=bottom → ffmpeg drawtext+negate →
+              rotate → tvsim → wave → rotate → mirror=90|0.840 →
+              mirror=right → mirror=bottom → ffmpeg (scale, negate,
+              frame-numbered drawtext, negate, scale to 640x360) →
               mp3 (multi-pitch rubberband CLI).
 
     Usage:
       th/freakzingatesteffect
       th/fzte
       th/freaktest
-
-    Optional overrides:
-      th/freakzingatesteffect 1280|720|48000
-      th/freakzingatesteffect 1280|720|48000|-12|-7|0|5|12
     """
     attachment = None
     if ctx.message and ctx.message.attachments:
@@ -9470,7 +9463,7 @@ async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = "")
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/freakzingatesteffect",
-                description="invlum→huehsv→ccshue→channelblend→invlum→rotate→tvsim→wave→rotate→ffmpeg→mirror→mirror→ffmpeg→mp3",
+                description="invlum→huehsv→ccshue→channelblend→invlum→rotate→tvsim→wave→rotate→mirror→mirror→mirror→ffmpeg→mp3",
                 color=4886754,
             )
             embed.set_thumbnail(url="https://files.catbox.moe/xli8jw.png")
