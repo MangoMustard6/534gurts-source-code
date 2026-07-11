@@ -10286,6 +10286,27 @@ async def invite_command(ctx: commands.Context):
     await ctx.reply(embed=embed)
 
 
+_KLASKYCSUPO_URL = "https://files.catbox.moe/ij1lsn.mp4"
+
+
+@bot.command(name="klaskycsupo")
+async def klaskycsupo_command(ctx: commands.Context):
+    """Reveal the Klasky Csupo video."""
+    embed = discord.Embed(
+        description="✨ Here is your Klasky Csupo video!",
+        color=discord.Color.blurple(),
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dest = os.path.join(tmpdir, "klaskycsupo.mp4")
+        try:
+            await download_url(_KLASKYCSUPO_URL, dest)
+            await ctx.reply(embed=embed, file=discord.File(dest, filename="klaskycsupo.mp4"))
+        except Exception:
+            embed.description += f"\n{_KLASKYCSUPO_URL}"
+            await ctx.reply(embed=embed)
+
+
 @bot.command(name="ihtxhelp", aliases=["bothelp"])
 async def help_command(ctx: commands.Context, *, query: str = ""):
     query = query.strip().lower()
