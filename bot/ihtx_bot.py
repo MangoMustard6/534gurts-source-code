@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-11: Added th/ytdl (alias th/youtubedownload) — yt-dlp download command; sends file directly if ≤8 MB, uploads to Catbox otherwise. Added stretch pipe effect (geq centre-zoom, params: zoom|offset). Added th/pipetest (alias th/pt) — one-shot pipe effect runner.
 - 2026-07-10: Refactored _apply_pipe_effects: extracted _ff_vf/_ff_af/_geq/_dl_file helpers and _VF_CODEC/_FF_BASE constants to eliminate repeated FFmpeg command boilerplate across ~15 effects (shake, wave, wave2, wmm3dripple, timecode, radar, jitter, randomjitter, watermark, nepeta, avflip, lut, __rawvf__, __rawaf__).
 - 2026-07-10: th/chat now auto-sends long replies (>1800 chars) as a .txt file attachment; -debug flag still works for explicit file mode. th/ihtx pipe effects: added short aliases srw (sierpinskiransomware), wmm (wmm3dripple), p1280 (preview1280), rj (randomjitter).
 - 2026-07-10: Fixed attachment downloads across all bot code — switched from `attachment.url` to `attachment.proxy_url or attachment.url`. Discord CDN now requires auth; direct URLs often return 404 for fresh uploads.
@@ -12414,6 +12415,119 @@ async def undo_command(ctx: commands.Context):
             await ctx.send("⚠️ Could not find the last bot message to delete.", delete_after=5)
         except discord.HTTPException:
             pass
+
+
+# ---------- YouTube / yt-dlp download ----------
+
+@bot.command(name="youtubedownload", aliases=["ytdl", "ydl"])
+async def ytdl_command(ctx: commands.Context, *, query: str = ""):
+    """Download a video or audio track via yt-dlp.
+
+    Usage:
+      th/ytdl <URL or search query>
+      th/youtubedownload <URL>
+
+    Examples:
+      th/ytdl https://youtube.com/watch?v=dQw4w9WgXcQ
+      th/ytdl never gonna give you up
+
+    Files ≤8 MB are sent directly; larger files are uploaded to Catbox.
+    Maximum download size: 200 MB.
+    """
+    query = query.strip()
+    if not query:
+        await ctx.reply(
+            "❌ **Usage:** `th/ytdl <URL or search query>`\n"
+            "**Examples:**\n"
+            "• `th/ytdl https://youtube.com/watch?v=...`\n"
+            "• `th/ytdl never gonna give you up`"
+        )
+        return
+
+    is_url = query.lower().startswith(("http://", "https://"))
+    target = query if is_url else f"ytsearch1:{query}"
+
+    status_msg = await ctx.reply(f"⏳ Searching and downloading: `{query}`…")
+
+    def _run_ytdlp(out_dir: str) -> tuple[bool, str]:
+        import subprocess as _sp
+        out_template = os.path.join(out_dir, "%(title).80s.%(ext)s")
+        args = [
+            "yt-dlp", target,
+            "-f", "bestvideo[ext=mp4][filesize<?200M]+bestaudio[ext=m4a]"
+                  "/bestvideo[filesize<?200M]+bestaudio"
+                  "/best[filesize<?200M]/best",
+            "--merge-output-format", "mp4",
+            "--no-playlist",
+            "--max-filesize", "200m",
+            "--output", out_template,
+            "--no-warnings",
+            "--socket-timeout", "30",
+        ]
+        result = _sp.run(args, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            return False, (result.stderr or result.stdout)[-800:]
+        return True, ""
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        loop = asyncio.get_event_loop()
+        try:
+            await status_msg.edit(content=f"⏳ Downloading: `{query}`…")
+            ok, err = await loop.run_in_executor(None, lambda: _run_ytdlp(tmpdir))
+        except Exception as exc:
+            await status_msg.edit(content=f"❌ Download failed: `{str(exc)[:400]}`")
+            return
+
+        if not ok:
+            await status_msg.edit(content=f"❌ yt-dlp failed:\n```\n{err}\n```")
+            return
+
+        files = [f for f in os.listdir(tmpdir) if not f.startswith(".")]
+        if not files:
+            await status_msg.edit(content="❌ Download completed but no output file was found.")
+            return
+
+        dl_file = files[0]
+        file_path = os.path.join(tmpdir, dl_file)
+        file_size = os.path.getsize(file_path)
+
+        MAX_DL_BYTES = 200 * 1024 * 1024
+        if file_size > MAX_DL_BYTES:
+            await status_msg.edit(
+                content=f"❌ File too large ({file_size / 1024 / 1024:.1f} MB). Max is 200 MB."
+            )
+            return
+
+        title = os.path.splitext(dl_file)[0]
+        ext = os.path.splitext(dl_file)[1] or ".mp4"
+        safe_filename = f"{title[:80]}{ext}"
+
+        if file_size <= CATBOX_THRESHOLD:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+            try:
+                await ctx.reply(
+                    content=f"✅ **{title}**",
+                    file=discord.File(file_path, filename=safe_filename),
+                )
+            except discord.HTTPException as exc:
+                await ctx.reply(f"❌ Failed to send file: {exc}")
+        else:
+            await status_msg.edit(
+                content=f"📦 File too large for Discord ({file_size / 1024 / 1024:.1f} MB)"
+                        f" — uploading to Catbox…"
+            )
+            cb_url = await _upload_to_catbox(file_path)
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+            if cb_url:
+                await ctx.reply(f"✅ **{title}**\n📦 Too large for Discord → {cb_url}")
+            else:
+                await ctx.reply("❌ Catbox upload failed. File may be too large.")
 
 
 # ---------- Catbox upload ----------
