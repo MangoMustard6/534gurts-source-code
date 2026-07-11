@@ -9,9 +9,10 @@ ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
 - 2026-07-11: Updated th/fzte / th/freakzingatesteffect pipeline to: invlum,huehsv=0.62,ccshue=110,channelblend=b|g|r,invlum,rotate=-0.78539815,tvsim=0.9;4,wave=0|15.000|0.8000|0.3466666667|0|0|0|0|0,rotate=0.78539815,mirror=90|0.840,mirror=right,mirror=bottom,ffmpeg(scale/drawtext/negate),mp3. Fixed th/join — the video join FFmpeg command was built but never executed, causing empty output. Also forced video output to .mp4 and fixed the uploaded filename extension. Added th/join — join 2 videos side-by-side (default) or stacked (use `-vertical`). Also added to `th/ihtxhelp` / `th/help` embeds. Added th/ytdl (alias th/youtubedownload) — yt-dlp download command; sends file directly if ≤8 MB, uploads to Catbox otherwise. Added stretch pipe effect (geq centre-zoom, params: zoom|offset). Added th/pipetest (alias th/pt) — one-shot pipe effect runner.
+- 2026-07-11: Added replied-to plain HTTP(S) URL support for media commands that previously only accepted attachments.
 - 2026-07-10: Refactored _apply_pipe_effects: extracted _ff_vf/_ff_af/_geq/_dl_file helpers and _VF_CODEC/_FF_BASE constants to eliminate repeated FFmpeg command boilerplate across ~15 effects (shake, wave, wave2, wmm3dripple, timecode, radar, jitter, randomjitter, watermark, nepeta, avflip, lut, __rawvf__, __rawaf__).
 - 2026-07-10: th/chat now auto-sends long replies (>1800 chars) as a .txt file attachment; -debug flag still works for explicit file mode. th/ihtx pipe effects: added short aliases srw (sierpinskiransomware), wmm (wmm3dripple), p1280 (preview1280), rj (randomjitter).
-- 2026-07-10: Fixed attachment downloads across all bot code — switched from `attachment.url` to `attachment.proxy_url or attachment.url`. Discord CDN now requires auth; direct URLs often return 404 for fresh uploads.
+- 2026-07-10: Fixed attachment downloads across all bot code — switched from `source.url` to `attachment.proxy_url or source.url`. Discord CDN now requires auth; direct URLs often return 404 for fresh uploads.
 - 2026-07-10: Added Catbox.moe fallback to all video commands. Files >8 MB now auto-upload to Catbox instead of erroring out. Lowered threshold from 25 MB to 8 MB for commands that already had Catbox fallback.
 - 2026-07-10: th/chat now supports -debug flag — adds the full AI response as a .txt file attachment, bypassing Discord's 2000-char message limit.
 - 2026-07-09: Rewrote _split_pipe_segments to only track parens inside known function blocks (ffmpeg, leftsplit, rightsplit), fixing "No closing quotation" errors caused by expressions like 7*(text_h) corrupting the naive depth counter.
@@ -737,7 +738,7 @@ async def download_attachment(attachment: discord.Attachment, dest: str):
     falling back to ``url``. Discord CDN now requires auth; direct ``url``
     often returns 404 for fresh uploads.
     """
-    url = attachment.proxy_url or attachment.url
+    url = attachment.proxy_url or source.url
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
             if resp.status != 200:
@@ -749,6 +750,23 @@ async def download_attachment(attachment: discord.Attachment, dest: str):
     os.replace(tmp, dest)
 
 
+
+
+async def _resolve_media_source(ctx: commands.Context) -> discord.Attachment | str | None:
+    """Resolve a media source from the current message or a reply."""
+    if ctx.message and ctx.message.attachments:
+        return ctx.message.attachments[0]
+    if ctx.message and ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref.attachments:
+                return ref.attachments[0]
+            for tok in ref.content.split():
+                if tok.startswith(("http://", "https://")):
+                    return tok
+        except Exception:
+            pass
+    return None
 async def download_url(url: str, dest: str):
     """Download an arbitrary URL to path `dest`.
 
@@ -5800,30 +5818,29 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
         )
         return
 
-    attachment = None
-    if attachment is None:
-        if ctx.message and ctx.message.attachments:
-            attachment = ctx.message.attachments[0]
-        elif ctx.message and ctx.message.reference:
-            try:
-                ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-                if ref.attachments:
-                    attachment = ref.attachments[0]
-            except Exception:
-                pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply("❌ Attach a video.\n**Usage:** `th/invlum <powers> [duration] [PIPE: effect;effect]`")
         return
 
-    if attachment.size > MAX_FILE_SIZE:
+    if source.size > MAX_FILE_SIZE:
         await ctx.reply("❌ File too large (max 25 MB).")
         return
 
-    suffix = Path(attachment.filename).suffix.lower()
-    if suffix not in VIDEO_EXTENSIONS:
-        await ctx.reply(f"❌ `invlum` requires a video file. Got `{suffix}`.")
-        return
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply("❌ File too large (max 25 MB).")
+            return
+        suffix = Path(source.filename).suffix.lower()
+        if suffix not in VIDEO_EXTENSIONS:
+            await ctx.reply(f"❌ `invlum` requires a video file. Got `{suffix}`.")
+            return
+    else:
+        suffix = Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
+        if suffix not in VIDEO_EXTENSIONS:
+            await ctx.reply(f"❌ `invlum` requires a video file. Got `{suffix}`.")
+            return
 
     pipe_desc = f" | PIPE: `{pipe_raw}`" if pipe_raw else ""
     status_msg = await ctx.reply(
@@ -5835,11 +5852,10 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
         output_path = os.path.join(tmpdir, "invlum_out.mov")
 
         try:
-            url = attachment.proxy_url or attachment.url
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    with open(input_path, "wb") as f:
-                        f.write(await resp.read())
+            if isinstance(source, discord.Attachment):
+                await download_attachment(source, input_path)
+            else:
+                await download_url(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Download failed: {e}")
             return
@@ -5880,7 +5896,7 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"invlum_{Path(attachment.filename).stem}.mov"
+        out_filename = f"invlum_{Path(source.filename).stem}.mov"
         try:
             await ctx.reply(
                 content=f"✅ **invlum** done! `{powers}` power(s), `{duration}s` each.",
@@ -5919,30 +5935,20 @@ async def pipetest_command(ctx: commands.Context, *, effects: str = ""):
         await ctx.reply("❌ Could not parse any effects.")
         return
 
-    # Resolve attachment from message or replied-to message
-    attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "❌ No media found. Attach a file or reply to one.\n"
             "**Usage:** `th/pipetest effect1;effect2;...`"
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply("❌ File too large (max 25 MB).")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply("❌ File too large (max 25 MB).")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     if suffix not in SUPPORTED_EXTENSIONS:
         await ctx.reply(f"❌ Unsupported file type `{suffix}`.")
         return
@@ -5955,11 +5961,10 @@ async def pipetest_command(ctx: commands.Context, *, effects: str = ""):
         output_path = os.path.join(tmpdir, f"pipetest_out{suffix}")
 
         try:
-            url = attachment.proxy_url or attachment.url
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    with open(input_path, "wb") as f:
-                        f.write(await resp.read())
+            if isinstance(source, discord.Attachment):
+                await download_attachment(source, input_path)
+            else:
+                await download_url(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Download failed: {e}")
             return
@@ -5984,7 +5989,7 @@ async def pipetest_command(ctx: commands.Context, *, effects: str = ""):
                 await status_msg.edit(content="❌ Output too large and Catbox upload failed.")
             return
 
-        out_filename = f"pipetest_{Path(attachment.filename).stem}{suffix}"
+        out_filename = f"pipetest_{Path(source.filename).stem}{suffix}"
         try:
             await ctx.reply(
                 content=f"✅ **pipetest** — `{effect_label}`",
@@ -6003,19 +6008,9 @@ async def preview1280_command(ctx: commands.Context, start: float = 1.85, durati
     Default: start=1.85, duration=0.85
     """
     attachment = None
-    # Resolve attachment from message or referenced message.
-    if attachment is None:
-        if ctx.message and ctx.message.attachments:
-            attachment = ctx.message.attachments[0]
-        elif ctx.message and ctx.message.reference:
-            try:
-                ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-                if ref.attachments:
-                    attachment = ref.attachments[0]
-            except Exception:
-                pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "**IHTX Preview1280**\n"
             "Attach a video and use `th/preview1280 [start] [duration]`.\n\n"
@@ -6026,11 +6021,11 @@ async def preview1280_command(ctx: commands.Context, start: float = 1.85, durati
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply(f"File too large (max 25 MB). Your file is {source.size / 1024 / 1024:.1f} MB.")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     if suffix not in VIDEO_EXTENSIONS:
         await ctx.reply(f"Preview1280 requires a video file. Got `{suffix}`.")
         return
@@ -6047,7 +6042,7 @@ async def preview1280_command(ctx: commands.Context, start: float = 1.85, durati
         output_path = os.path.join(tmpdir, "output_p1280.mp4")
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download your file: {e}")
             return
@@ -6079,7 +6074,7 @@ async def preview1280_command(ctx: commands.Context, start: float = 1.85, durati
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"p1280_{Path(attachment.filename).stem}.mp4"
+        out_filename = f"p1280_{Path(source.filename).stem}.mp4"
         try:
             embed_p1280 = discord.Embed(
                 title="Preview 1280 - FFmpeg command originally made by `MWTVE7691` then transported to typescript:",
@@ -6106,17 +6101,9 @@ async def oppositep1280_command(ctx: commands.Context, start: float = 1.85, dura
     Default: start=1.85, duration=0.85
     """
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "**IHTX OppositeP1280**\n"
             "Attach a video and use `th/oppositep1280 [start] [duration]`.\n\n"
@@ -6128,11 +6115,11 @@ async def oppositep1280_command(ctx: commands.Context, start: float = 1.85, dura
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply(f"File too large (max 25 MB). Your file is {source.size / 1024 / 1024:.1f} MB.")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     if suffix not in VIDEO_EXTENSIONS:
         await ctx.reply(f"OppositeP1280 requires a video file. Got `{suffix}`.")
         return
@@ -6149,7 +6136,7 @@ async def oppositep1280_command(ctx: commands.Context, start: float = 1.85, dura
         output_path = os.path.join(tmpdir, "output_op1280.mp4")
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download your file: {e}")
             return
@@ -6181,7 +6168,7 @@ async def oppositep1280_command(ctx: commands.Context, start: float = 1.85, dura
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"op1280_{Path(attachment.filename).stem}.mp4"
+        out_filename = f"op1280_{Path(source.filename).stem}.mp4"
         try:
             embed_op1280 = discord.Embed(
                 title="Opposite 1280 - Inverse TV-simulator montage",
@@ -6211,17 +6198,9 @@ async def preview1280_640x360resize_command(ctx: commands.Context, start: float 
     Default: start=1.85, duration=0.85
     """
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "**IHTX Preview1280 (640×360 output)**\n"
             "Attach a video and use `th/preview1280with640x360resize [start] [duration]`.\n\n"
@@ -6233,11 +6212,11 @@ async def preview1280_640x360resize_command(ctx: commands.Context, start: float 
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply(f"File too large (max 25 MB). Your file is {source.size / 1024 / 1024:.1f} MB.")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     if suffix not in VIDEO_EXTENSIONS:
         await ctx.reply(f"Preview1280w16:9r requires a video file. Got `{suffix}`.")
         return
@@ -6254,7 +6233,7 @@ async def preview1280_640x360resize_command(ctx: commands.Context, start: float 
         output_path = os.path.join(tmpdir, "output_p1280_resized.mp4")
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download your file: {e}")
             return
@@ -6285,7 +6264,7 @@ async def preview1280_640x360resize_command(ctx: commands.Context, start: float 
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"p1280_640x360_{Path(attachment.filename).stem}.mp4"
+        out_filename = f"p1280_640x360_{Path(source.filename).stem}.mp4"
         try:
             embed_p1280r = discord.Embed(
                 title="Preview 1280 (640×360 output) — FFmpeg command originally by `yodelaiihiiho`:",
@@ -6367,30 +6346,20 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
 
     # Resolve attachment: slash commands pass it as a parameter;
     # prefix commands need us to look at the message or referenced message.
-    attachment = None
-    if attachment is None:
-        if ctx.message and ctx.message.attachments:
-            attachment = ctx.message.attachments[0]
-        elif ctx.message and ctx.message.reference:
-            try:
-                ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-                if ref.attachments:
-                    attachment = ref.attachments[0]
-            except Exception:
-                pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "Attach a video or audio file and provide pitch values.\n"
             "Example: `th/multipitch -7;12;19`"
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply(f"File too large (max 25 MB). Your file is {source.size / 1024 / 1024:.1f} MB.")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     if suffix not in _MULTIPITCH_AUDIO_EXTS:
         await ctx.reply(
             f"Unsupported file type `{suffix}`.\n"
@@ -6408,7 +6377,7 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
         output_path = os.path.join(tmpdir, "output_multipitch.mp4")
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download your file: {e}")
             return
@@ -6435,7 +6404,7 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
             return
 
         safe_pitch_str = pitch_str.replace(";", "_")
-        out_filename = f"multipitch_{safe_pitch_str}_{Path(attachment.filename).stem}.mp4"
+        out_filename = f"multipitch_{safe_pitch_str}_{Path(source.filename).stem}.mp4"
         try:
             await ctx.reply(
                 content=f"✅ **IHTX multipitch** ({pitch_str}) applied!",
@@ -6499,28 +6468,20 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
             return
 
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "Attach a video or audio file and provide pitch values.\n"
             "Example: `th/ssmp -7;12;19`"
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply(f"File too large (max 25 MB). Your file is {source.size / 1024 / 1024:.1f} MB.")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     if suffix not in _MULTIPITCH_AUDIO_EXTS:
         await ctx.reply(
             f"Unsupported file type `{suffix}`.\n"
@@ -6538,7 +6499,7 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
         output_path = os.path.join(tmpdir, "output_ssmp.mp4")
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download your file: {e}")
             return
@@ -6565,7 +6526,7 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
             return
 
         safe_pitch_str = pitch_str.replace(";", "_")
-        out_filename = f"ssmp_{safe_pitch_str}_{Path(attachment.filename).stem}.mp4"
+        out_filename = f"ssmp_{safe_pitch_str}_{Path(source.filename).stem}.mp4"
         try:
             await ctx.reply(
                 content=f"✅ **SoundStretch multipitch** ({pitch_str}) applied!",
@@ -6934,39 +6895,47 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
         await ctx.reply(err_str)
         return
 
-    # ── Resolve attachment (direct → reply → channel history) ────────────────
-    attachment = None
+    # ── Resolve media source (direct → reply → channel history) ────────────
+    source = None
     if ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
+        source = ctx.message.attachments[0]
     elif ctx.message.reference:
         try:
             ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
             if ref.attachments:
-                attachment = ref.attachments[0]
+                source = ref.attachments[0]
+            else:
+                for tok in ref.content.split():
+                    if tok.startswith(("http://", "https://")):
+                        source = tok
+                        break
         except Exception:
             pass
-    if attachment is None:
+    if source is None:
         try:
             async for msg in ctx.channel.history(limit=30, before=ctx.message):
                 if msg.attachments:
                     ext = Path(msg.attachments[0].filename).suffix.lower()
                     if ext in _IHTXSAP_AUDIO_EXTS:
-                        attachment = msg.attachments[0]
+                        source = msg.attachments[0]
                         break
         except Exception:
             pass
 
-    if not attachment:
+    if not source:
         await ctx.reply(
             f"❌ No audio/video file found. Attach one, reply to one, or have one in recent history.\n\n{_IHTXSAP_USAGE}"
         )
         return
 
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        suffix = Path(source.filename).suffix.lower()
+    else:
+        suffix = Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     if suffix not in _IHTXSAP_AUDIO_EXTS:
         await ctx.reply(f"❌ Unsupported file type `{suffix}`. Attach an audio or video file.")
         return
-    if attachment.size > MAX_FILE_SIZE:
+    if isinstance(source, discord.Attachment) and source.size > MAX_FILE_SIZE:
         await ctx.reply(f"❌ File too large (max {MAX_FILE_SIZE // 1024 // 1024} MB).")
         return
 
@@ -7013,7 +6982,7 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
         # Download
         try:
             await _update("⬇️ Downloading media…")
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as exc:
             await _update(f"❌ Download failed: `{exc}`", 0xED4245)
             return
@@ -7131,23 +7100,13 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
         )
         return
 
-    attachment = None
-    if attachment is None:
-        if ctx.message and ctx.message.attachments:
-            attachment = ctx.message.attachments[0]
-        elif ctx.message and ctx.message.reference:
-            try:
-                ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-                if ref.attachments:
-                    attachment = ref.attachments[0]
-            except Exception:
-                pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply("❌ Attach a file to use `th/ffmpeg`.")
         return
 
-    if attachment.size > MAX_FILE_SIZE:
+    if source.size > MAX_FILE_SIZE:
         await ctx.reply(f"❌ File too large (max 25 MB).")
         return
 
@@ -7157,12 +7116,12 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
     start_time = time.time()
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        suffix = Path(attachment.filename).suffix.lower()
+        suffix = Path(source.filename).suffix.lower()
         input_path = os.path.join(tmpdir, f"input{suffix}")
-        output_path = os.path.join(tmpdir, attachment.filename)
+        output_path = os.path.join(tmpdir, source.filename)
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Download failed: {e}")
             return
@@ -7212,7 +7171,7 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
         try:
             await ctx.reply(
                 content=footer,
-                file=discord.File(output_path, filename=attachment.filename),
+                file=discord.File(output_path, filename=source.filename),
             )
             await status_msg.delete()
         except discord.HTTPException as e:
@@ -7292,21 +7251,13 @@ async def ffmpeg_process_command(ctx: commands.Context, *, args: str = ""):
         return
 
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply("❌ Attach a file to use `th/ffmpegprocess`.")
         return
 
-    if attachment.size > MAX_FILE_SIZE:
+    if source.size > MAX_FILE_SIZE:
         await ctx.reply("❌ File too large (max 25 MB).")
         return
 
@@ -7316,12 +7267,12 @@ async def ffmpeg_process_command(ctx: commands.Context, *, args: str = ""):
     start_time = time.time()
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        suffix = Path(attachment.filename).suffix.lower()
+        suffix = Path(source.filename).suffix.lower()
         input_path = os.path.join(tmpdir, f"input{suffix}")
-        output_path = os.path.join(tmpdir, attachment.filename)
+        output_path = os.path.join(tmpdir, source.filename)
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Download failed: {e}")
             return
@@ -7393,7 +7344,7 @@ async def ffmpeg_process_command(ctx: commands.Context, *, args: str = ""):
         try:
             await ctx.reply(
                 content=footer,
-                file=discord.File(output_path, filename=attachment.filename),
+                file=discord.File(output_path, filename=source.filename),
             )
             await status_msg.delete()
         except discord.HTTPException as e:
@@ -7521,7 +7472,7 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
         return
 
     # Determine file extension
-    src_name = attachment.filename if attachment else urllib.parse.urlparse(media_url).path
+    src_name = source.filename if attachment else urllib.parse.urlparse(media_url).path
     suffix = Path(src_name).suffix.lower()
     if not suffix:
         suffix = ".mp4"
@@ -7540,9 +7491,9 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
         # Download
         try:
             if attachment:
-                await download_attachment(attachment, input_path)
+                await download_attachment(source, input_path)
             else:
-                await download_url(media_url, input_path)
+                await download_url(source, input_path)
         except Exception as exc:
             await status_msg.edit(content=f"❌ Failed to download media: {exc}")
             return
@@ -7690,7 +7641,7 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
         await ctx.reply("❌ No media found. Attach, reply to, or provide a media URL.")
         return
 
-    src_name = attachment.filename if attachment else urllib.parse.urlparse(media_url).path
+    src_name = source.filename if attachment else urllib.parse.urlparse(media_url).path
     suffix = Path(src_name).suffix.lower()
     if not suffix:
         suffix = ".mp4"
@@ -7708,9 +7659,9 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
 
         try:
             if attachment:
-                await download_attachment(attachment, input_path)
+                await download_attachment(source, input_path)
             else:
-                await download_url(media_url, input_path)
+                await download_url(source, input_path)
         except Exception as exc:
             await status_msg.edit(content=f"❌ Failed to download media: {exc}")
             return
@@ -8295,7 +8246,7 @@ async def autotune_command(ctx: commands.Context, *, args: str = ""):
         await ctx.reply("❌ No media found. Attach a video/audio, reply to one, or include a media URL.")
         return
 
-    src_name = attachment.filename if attachment else urllib.parse.urlparse(media_url).path
+    src_name = source.filename if attachment else urllib.parse.urlparse(media_url).path
     suffix = Path(src_name).suffix.lower() or ".mp4"
     if suffix not in _AUTOTUNE_EXTS:
         await ctx.reply(f"❌ Unsupported format `{suffix}`. Supported: {', '.join(sorted(_AUTOTUNE_EXTS))}")
@@ -8324,9 +8275,9 @@ async def autotune_command(ctx: commands.Context, *, args: str = ""):
         await status_msg.edit(content="⬇️ Downloading your media…")
         try:
             if attachment:
-                await download_attachment(attachment, input_path)
+                await download_attachment(source, input_path)
             else:
-                await download_url(media_url, input_path)
+                await download_url(source, input_path)
         except Exception as exc:
             await status_msg.edit(content=f"❌ Media download failed: {exc}")
             return
@@ -8451,7 +8402,7 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
         await ctx.reply("❌ No base video found. Attach one to the message or reply to a message that has one.")
         return
 
-    src_name = attachment.filename if attachment else urllib.parse.urlparse(base_url).path
+    src_name = source.filename if attachment else urllib.parse.urlparse(base_url).path
     suffix   = Path(src_name).suffix.lower() or ".mp4"
 
     status_msg = await ctx.reply("⬇️ Downloading base video…", mention_author=False)
@@ -8467,7 +8418,7 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
             if attachment:
                 await download_attachment(attachment, base_path)
             else:
-                await download_url(base_url, base_path)
+                await download_url(source, base_path)
         except Exception as exc:
             await status_msg.edit(content=f"❌ Base download failed: `{exc}`")
             return
@@ -8608,7 +8559,7 @@ async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str =
         await ctx.reply("❌ No media found. Attach, reply to, or provide media.")
         return
 
-    src_name = attachment.filename if attachment else urllib.parse.urlparse(media_url).path
+    src_name = source.filename if attachment else urllib.parse.urlparse(media_url).path
     suffix = Path(src_name).suffix.lower()
     if not suffix:
         suffix = ".mp4"
@@ -8628,9 +8579,9 @@ async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str =
 
         try:
             if attachment:
-                await download_attachment(attachment, input_path)
+                await download_attachment(source, input_path)
             else:
-                await download_url(media_url, input_path)
+                await download_url(source, input_path)
         except Exception as exc:
             await status_msg.edit(content=f"❌ Failed to download media: {exc}")
             return
@@ -8722,17 +8673,9 @@ async def huehsv_command(
 
     # Resolve attachment
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "**IHTX HueHSV**\n"
             "Attach a video or image and use `th/huehsv <hue> [sat] [lightness] [colorspace] [betterfully]`.\n\n"
@@ -8743,11 +8686,11 @@ async def huehsv_command(
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply(f"File too large (max 25 MB). Your file is {source.size / 1024 / 1024:.1f} MB.")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     if suffix not in SUPPORTED_EXTENSIONS:
         await ctx.reply(f"Unsupported file type `{suffix}`. Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}")
         return
@@ -8765,7 +8708,7 @@ async def huehsv_command(
         output_path = os.path.join(tmpdir, f"output{out_ext}")
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download your file: {e}")
             return
@@ -8792,7 +8735,7 @@ async def huehsv_command(
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"huehsv_{hue}_{Path(attachment.filename).stem}{out_ext}"
+        out_filename = f"huehsv_{hue}_{Path(source.filename).stem}{out_ext}"
         try:
             await ctx.reply(
                 content=f"✅ **IHTX huehsv** (hue={hue} sat={sat} lightness={lightness} cs={colorspace}{bf_label}) applied!",
@@ -8831,17 +8774,9 @@ async def png2lut_cmd(ctx: commands.Context, *, args: str = ""):
 
     # Resolve attachment
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "**th/png2lut** — Convert a tiled LUT PNG → .cube file\n"
             "Attach the LUT PNG and run `th/png2lut [lut_size] [output_name]`.\n"
@@ -8849,7 +8784,7 @@ async def png2lut_cmd(ctx: commands.Context, *, args: str = ""):
         )
         return
 
-    if not attachment.filename.lower().endswith(".png"):
+    if not source.filename.lower().endswith(".png"):
         await ctx.reply("❌ Please attach a PNG file.")
         return
 
@@ -8865,7 +8800,7 @@ async def png2lut_cmd(ctx: commands.Context, *, args: str = ""):
         cube_path = os.path.join(tmpdir, f"{stem}.cube")
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download PNG: {e}")
             return
@@ -8930,23 +8865,28 @@ async def lut2png_cmd(ctx: commands.Context, cube_url: str = ""):
     Attach the media to process. Provide the .cube file as a second
     attachment OR pass its URL as the first argument.
     """
-    # Resolve media attachment (first attachment, or from reply)
-    media_att = None
+    # Resolve media source (first attachment, or from reply)
+    media_source = None
     cube_att = None
 
     if ctx.message and ctx.message.attachments:
-        media_att = ctx.message.attachments[0]
+        media_source = ctx.message.attachments[0]
         if len(ctx.message.attachments) >= 2:
             cube_att = ctx.message.attachments[1]
     elif ctx.message and ctx.message.reference:
         try:
             ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
             if ref.attachments:
-                media_att = ref.attachments[0]
+                media_source = ref.attachments[0]
+            else:
+                for tok in ref.content.split():
+                    if tok.startswith(("http://", "https://")):
+                        media_source = tok
+                        break
         except Exception:
             pass
 
-    if not media_att:
+    if not media_source:
         await ctx.reply(
             "**th/lut2png** — Apply a .cube LUT to image/video via FFmpeg\n"
             "Attach the media + the .cube file (two attachments), or attach\n"
@@ -8963,7 +8903,10 @@ async def lut2png_cmd(ctx: commands.Context, cube_url: str = ""):
         await ctx.reply("❌ Provide the .cube file as a second attachment or a URL argument.")
         return
 
-    suffix = Path(media_att.filename).suffix.lower()
+    if isinstance(media_source, discord.Attachment):
+        suffix = Path(media_source.filename).suffix.lower()
+    else:
+        suffix = Path(urllib.parse.urlparse(media_source).path).suffix.lower() or ".mp4"
     is_video = suffix in VIDEO_EXTENSIONS
     out_ext = get_output_ext(suffix, is_video) if suffix in SUPPORTED_EXTENSIONS else ".png"
 
@@ -8976,7 +8919,10 @@ async def lut2png_cmd(ctx: commands.Context, cube_url: str = ""):
 
         # Download media
         try:
-            await download_attachment(media_att, input_path)
+            if isinstance(media_source, discord.Attachment):
+                await download_attachment(media_source, input_path)
+            else:
+                await download_url(media_source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download media: {e}")
             return
@@ -9055,19 +9001,9 @@ async def syncaudio_command(ctx: commands.Context, mode: str = ""):
 
     # Resolve attachment: slash commands pass it as a parameter;
     # prefix commands need us to look at the message or referenced message.
-    attachment = None
-    if attachment is None:
-        if ctx.message and ctx.message.attachments:
-            attachment = ctx.message.attachments[0]
-        elif ctx.message and ctx.message.reference:
-            try:
-                ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-                if ref.attachments:
-                    attachment = ref.attachments[0]
-            except Exception:
-                pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         mode_desc = "adjusts **video speed** to match audio" if not alt_mode else "adjusts **audio speed** to match video"
         await ctx.reply(
             "**IHTX Syncaudio**\n"
@@ -9083,11 +9019,11 @@ async def syncaudio_command(ctx: commands.Context, mode: str = ""):
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply(f"File too large (max 25 MB). Your file is {source.size / 1024 / 1024:.1f} MB.")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     if suffix not in VIDEO_EXTENSIONS:
         await ctx.reply(f"Syncaudio requires a video file. Got `{suffix}`.")
         return
@@ -9102,7 +9038,7 @@ async def syncaudio_command(ctx: commands.Context, mode: str = ""):
         output_path = os.path.join(tmpdir, "output_syncaudio.mp4")
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download your file: {e}")
             return
@@ -9128,7 +9064,7 @@ async def syncaudio_command(ctx: commands.Context, mode: str = ""):
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"syncaudio_{Path(attachment.filename).stem}.mp4"
+        out_filename = f"syncaudio_{Path(source.filename).stem}.mp4"
         try:
             await ctx.reply(
                 content=f"✅ **IHTX syncaudio** ({mode_label}) applied!\n```\n{info}\n```",
@@ -9193,28 +9129,20 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
     is1to1 = is1to1_raw.lower() in ("1", "true", "t", "y", "yes", "+", "on")
 
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "❌ Attach a video or image to use `th/swirl`.\n"
             "**Usage:** `th/swirl <strength> [radius] [xc] [yc] [fallout] [is1to1]`"
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply("❌ File too large (max 25 MB).")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply("❌ File too large (max 25 MB).")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     is_video = suffix in VIDEO_EXTENSIONS
     is_image = suffix in IMAGE_EXTENSIONS
     if not is_video and not is_image:
@@ -9229,7 +9157,7 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
         output_path = os.path.join(tmpdir, f"swirl{out_suffix}")
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download: {e}")
             return
@@ -9256,7 +9184,7 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"swirl_{Path(attachment.filename).stem}{out_suffix}"
+        out_filename = f"swirl_{Path(source.filename).stem}{out_suffix}"
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/swirl",
@@ -9307,28 +9235,20 @@ async def gradientmap_command(ctx: commands.Context, *, args: str = ""):
         return
 
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "❌ Attach a video or image to use `th/gradientmap`.\n"
             "**Usage:** `th/gradientmap R,G,B [A] [pos] ...`"
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply("❌ File too large (max 25 MB).")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply("❌ File too large (max 25 MB).")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     is_video = suffix in VIDEO_EXTENSIONS
     is_image = suffix in IMAGE_EXTENSIONS
     if not is_video and not is_image:
@@ -9343,7 +9263,7 @@ async def gradientmap_command(ctx: commands.Context, *, args: str = ""):
         output_path = os.path.join(tmpdir, f"gradientmap{out_suffix}")
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download: {e}")
             return
@@ -9368,7 +9288,7 @@ async def gradientmap_command(ctx: commands.Context, *, args: str = ""):
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"gradientmap_{Path(attachment.filename).stem}{out_suffix}"
+        out_filename = f"gradientmap_{Path(source.filename).stem}{out_suffix}"
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/gradientmap",
@@ -9399,17 +9319,9 @@ async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = "")
       th/freaktest
     """
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "**th/freakzingatesteffect** — apply the Freakzinga test effect.\n"
             "Attach a video and run `th/freakzingatesteffect`.\n"
@@ -9417,11 +9329,11 @@ async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = "")
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply("❌ File too large (max 25 MB).")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply("❌ File too large (max 25 MB).")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     if suffix not in VIDEO_EXTENSIONS:
         await ctx.reply(f"❌ `freakzingatesteffect` requires a video file. Got `{suffix}`.")
         return
@@ -9433,7 +9345,7 @@ async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = "")
         output_path = os.path.join(tmpdir, "freakzinga_test.mp4")
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download: {e}")
             return
@@ -9459,7 +9371,7 @@ async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = "")
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"freakzinga_test_{Path(attachment.filename).stem}.mp4"
+        out_filename = f"freakzinga_test_{Path(source.filename).stem}.mp4"
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/freakzingatesteffect",
@@ -9532,28 +9444,20 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
 
     # Resolve attachment
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "❌ Attach a video to use `th/tvsim`.\n"
             "**Usage:** `th/tvsim <line_sync> [detail_zoom] [vertical_sync] [phosphorescence] [interlacing] [scan_phasing]`"
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
+    if source.size > MAX_FILE_SIZE:
         await ctx.reply(f"❌ File too large (max 25 MB).")
         return
 
-    suffix = Path(attachment.filename).suffix.lower()
+    suffix = Path(source.filename).suffix.lower()
     if suffix not in VIDEO_EXTENSIONS:
         await ctx.reply(f"❌ `th/tvsim` requires a video file. Got `{suffix}`.")
         return
@@ -9566,7 +9470,7 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
         output_path = os.path.join(tmpdir, "tvsim.mp4")
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download: {e}")
             return
@@ -9595,7 +9499,7 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
                 await status_msg.edit(content="❌ Output too large for Discord (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"tvsim_{Path(attachment.filename).stem}.mp4"
+        out_filename = f"tvsim_{Path(source.filename).stem}.mp4"
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/tvsim",
@@ -9628,17 +9532,9 @@ async def folkvalley_command(ctx: commands.Context):
     No parameters — the effect is fixed.
     """
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "**th/folkvalley** — dreamy aesthetic effect\n"
             "Attaches folkvalley music, boosts brightness, and adds a decorative overlay.\n\n"
@@ -9648,11 +9544,11 @@ async def folkvalley_command(ctx: commands.Context):
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply("❌ File too large (max 25 MB).")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply("❌ File too large (max 25 MB).")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     if suffix not in VIDEO_EXTENSIONS:
         await ctx.reply(f"❌ `th/folkvalley` requires a video file. Got `{suffix}`.")
         return
@@ -9664,7 +9560,7 @@ async def folkvalley_command(ctx: commands.Context):
         output_path = os.path.join(tmpdir, "folkvalley.mp4")
 
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download: {e}")
             return
@@ -9687,7 +9583,7 @@ async def folkvalley_command(ctx: commands.Context):
                 await status_msg.edit(content="❌ Output too large for Discord (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"folkvalley_{Path(attachment.filename).stem}.mp4"
+        out_filename = f"folkvalley_{Path(source.filename).stem}.mp4"
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/folkvalley",
@@ -9757,28 +9653,20 @@ async def vocoder_command(ctx: commands.Context, *, args: str = ""):
         return
 
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply("❌ Attach a video (or reply to one) for the vocoder to process.")
         return
 
     bw_display = bandwidth if bandwidth else _VOCODER_PROFILES[mode]["bandwidth"]
     status_msg = await ctx.reply(
-        f"🎙️ Vocoding `{attachment.filename}` — mode: `{mode}`, bands: `{bw_display}`…"
+        f"🎙️ Vocoding `{source.filename}` — mode: `{mode}`, bands: `{bw_display}`…"
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        input_path = os.path.join(tmpdir, attachment.filename)
-        output_path = os.path.join(tmpdir, f"vocoder_{Path(attachment.filename).stem}.mp4")
+        input_path = os.path.join(tmpdir, source.filename)
+        output_path = os.path.join(tmpdir, f"vocoder_{Path(source.filename).stem}.mp4")
 
         try:
             file_bytes = await attachment.read()
@@ -9808,7 +9696,7 @@ async def vocoder_command(ctx: commands.Context, *, args: str = ""):
                 await status_msg.edit(content="❌ Output too large for Discord (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"vocoder_{Path(attachment.filename).stem}.mp4"
+        out_filename = f"vocoder_{Path(source.filename).stem}.mp4"
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/vocoder",
@@ -10552,15 +10440,20 @@ async def lexg_command(ctx: commands.Context, duration: float = 5.0):
     You can still attach or reply to a video to override the stored export.
     Default duration is 5 seconds.
     """
-    # Resolve attachment (override) first
-    attachment = None
+    # Resolve media source (override) first
+    source = None
     if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
+        source = ctx.message.attachments[0]
     elif ctx.message and ctx.message.reference:
         try:
             ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
             if ref.attachments:
-                attachment = ref.attachments[0]
+                source = ref.attachments[0]
+            else:
+                for tok in ref.content.split():
+                    if tok.startswith(("http://", "https://")):
+                        source = tok
+                        break
         except Exception:
             pass
 
@@ -10568,25 +10461,32 @@ async def lexg_command(ctx: commands.Context, duration: float = 5.0):
         await ctx.reply("❌ Duration must be between 0 and 3600 seconds.")
         return
 
-    if attachment:
-        if attachment.size > MAX_FILE_SIZE:
-            await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
+    if source:
+        if isinstance(source, discord.Attachment) and source.size > MAX_FILE_SIZE:
+            await ctx.reply(f"File too large (max 25 MB). Your file is {source.size / 1024 / 1024:.1f} MB.")
             return
 
-        suffix = Path(attachment.filename).suffix.lower()
+        if isinstance(source, discord.Attachment):
+            suffix = Path(source.filename).suffix.lower()
+            input_filename = source.filename
+        else:
+            suffix = Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
+            input_filename = os.path.basename(urllib.parse.urlparse(source).path) or "media.mp4"
         if suffix not in SUPPORTED_EXTENSIONS:
             await ctx.reply(f"Unsupported file type `{suffix}`.")
             return
 
         is_video = suffix in VIDEO_EXTENSIONS
-        input_filename = attachment.filename
         status_msg = await ctx.reply(f"⏳ Grabbing last **{duration}s** of `{input_filename}`…")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             input_path = os.path.join(tmpdir, f"input{suffix}")
             output_path = os.path.join(tmpdir, "lec.mp4")
             try:
-                await download_attachment(attachment, input_path)
+                if isinstance(source, discord.Attachment):
+                    await download_attachment(source, input_path)
+                else:
+                    await download_url(source, input_path)
             except Exception as e:
                 await status_msg.edit(content=f"❌ Failed to download: {e}")
                 return
@@ -10763,17 +10663,9 @@ async def crop_command(ctx: commands.Context, width: int, height: int):
         return
 
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "**th/crop <width> <height>** — Center-crop a video.\n"
             "Attach a video or reply to one.\n"
@@ -10781,16 +10673,16 @@ async def crop_command(ctx: commands.Context, width: int, height: int):
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply(f"File too large (max 25 MB). Your file is {source.size / 1024 / 1024:.1f} MB.")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     if suffix not in VIDEO_EXTENSIONS:
         await ctx.reply(f"`th/crop` requires a video file. Got `{suffix}`.")
         return
 
-    input_filename = attachment.filename
+    input_filename = source.filename
     if orig_width != width or orig_height != height:
         crop_status = f"⏳ Cropping `{input_filename}` to **{orig_width}×{orig_height}** → **{width}×{height}** for h.264…"
     else:
@@ -10801,7 +10693,7 @@ async def crop_command(ctx: commands.Context, width: int, height: int):
         input_path = os.path.join(tmpdir, f"input{suffix}")
         output_path = os.path.join(tmpdir, "crop.mp4")
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download: {e}")
             return
@@ -10871,17 +10763,9 @@ async def resize_command(ctx: commands.Context, width: int, height: int):
         return
 
     attachment = None
-    if ctx.message and ctx.message.attachments:
-        attachment = ctx.message.attachments[0]
-    elif ctx.message and ctx.message.reference:
-        try:
-            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-            if ref.attachments:
-                attachment = ref.attachments[0]
-        except Exception:
-            pass
+    source = await _resolve_media_source(ctx)
 
-    if not attachment:
+    if source is None:
         await ctx.reply(
             "**th/resize <width> <height>** — Resize a video.\n"
             "Attach a video or reply to one.\n"
@@ -10889,16 +10773,16 @@ async def resize_command(ctx: commands.Context, width: int, height: int):
         )
         return
 
-    if attachment.size > MAX_FILE_SIZE:
-        await ctx.reply(f"File too large (max 25 MB). Your file is {attachment.size / 1024 / 1024:.1f} MB.")
-        return
-
-    suffix = Path(attachment.filename).suffix.lower()
+    if isinstance(source, discord.Attachment):
+        if source.size > MAX_FILE_SIZE:
+            await ctx.reply(f"File too large (max 25 MB). Your file is {source.size / 1024 / 1024:.1f} MB.")
+            return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
     if suffix not in VIDEO_EXTENSIONS:
         await ctx.reply(f"`th/resize` requires a video file. Got `{suffix}`.")
         return
 
-    input_filename = attachment.filename
+    input_filename = source.filename
     if orig_width != width or orig_height != height:
         resize_status = f"⏳ Resizing `{input_filename}` to **{orig_width}×{orig_height}** → **{width}×{height}** for h.264…"
     else:
@@ -10909,7 +10793,7 @@ async def resize_command(ctx: commands.Context, width: int, height: int):
         input_path = os.path.join(tmpdir, f"input{suffix}")
         output_path = os.path.join(tmpdir, "resize.mp4")
         try:
-            await download_attachment(attachment, input_path)
+            await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download: {e}")
             return
