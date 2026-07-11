@@ -42,7 +42,7 @@ The main effect command. Available as a slash command (`/ihtxgen`) and as a pref
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `effect` | string | `chaos` | Preset name, or the full custom syntax string |
+| `effect` | string | `chaos` | Preset name, a bare comma-separated pipe effects string (e.g. `negate,huehsv=0.5`), or the full custom syntax string |
 | `url` | string | — | Direct URL to a media file (alternative to attaching) |
 | `attachment` | file | — | Attach a video or image (slash only) |
 | `pipe_effects` | string | — | Comma-separated pipe effects (see [Pipe Effects](#pipe-effects)) |

@@ -420,7 +420,7 @@ class EconomyCog(commands.Cog, name="Economy"):
         description="Run an IHTX FFmpeg effect on media with live embed feedback.",
     )
     @app_commands.describe(
-        effect="Preset when not using pipe_effects (e.g. chaos, glitch, melt). Autocomplete available.",
+        effect="Preset (chaos, glitch, melt, …), or type your own pipe effects directly (e.g. negate,huehsv=0.5). Autocomplete available.",
         url="Direct URL to a media file (alternative to attaching).",
         attachment="Attach a video or image (slash only).",
         pipe_effects="Comma/semicolon-separated pipe effects (e.g. huehsv 0.5,negate,multipitch=1|6|7).",
@@ -481,6 +481,20 @@ class EconomyCog(commands.Cog, name="Economy"):
                     export_fmt = _c_fmt or "mp4"
                     pipe_effects = _c_pe
                     use_pipe = True
+                elif effect.strip() and not effect.strip().split()[0][:1].isdigit():
+                    # Shorthand pipe-effects mode: the effect field isn't a known
+                    # preset, doesn't start with a digit (which would indicate the
+                    # full "<reps> <dur> <noTrim> <fmt> <effects>" syntax), so treat
+                    # the whole string as pipe effects with defaults (1 rep, full
+                    # video duration, mp4). Mirrors the roxi ihtx prefix shorthand.
+                    #   /ihtxgen effect:negate,huehsv=0.5
+                    #   /ihtxgen effect:ffmpeg(-vf huesaturation=saturation=1:strength=100)
+                    pipe_effects = effect.strip()
+                    repetitions = 1
+                    duration = "vidlen"
+                    no_trim = False
+                    export_fmt = "mp4"
+                    use_pipe = True
                 else:
                     preset_list = ", ".join(f"`{p}`" for p in sorted(PRESET_FILTERS.keys()))
                     await ctx.reply(
@@ -489,12 +503,13 @@ class EconomyCog(commands.Cog, name="Economy"):
                             description=(
                                 f"**Presets:** {preset_list}\n\n"
                                 "**Pipe-effects shorthand** *(1 rep, full duration, mp4)*:\n"
-                                "`roxi ihtx <pipe effects>`\n"
+                                "`roxi ihtx <pipe effects>` or `/ihtxgen effect:<pipe effects>`\n"
                                 "Example: `roxi ihtx ffmpeg(-vf huesaturation=saturation=1:strength=100)`\n"
                                 "Example: `roxi ihtx negate,huehsv=0.5`\n\n"
                                 "**Full custom syntax:**\n"
                                 "`<exports> <duration> <no_trim> <format> <pipe effects>`\n"
-                                "Example: `10 0.483 - mp4 huehsv 0.5;negate;multipitch=1|6|7`"
+                                "Example: `10 0.483 - mp4 huehsv 0.5;negate;multipitch=1|6|7`\n\n"
+                                "Or use the dedicated `pipe_effects:` parameter alongside `effect:`."
                             ),
                             color=0xED4245,
                         ),
