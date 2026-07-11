@@ -450,6 +450,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                 SUPPORTED_EXTENSIONS,
                 VIDEO_EXTENSIONS,
                 MAX_FILE_SIZE,
+                CATBOX_THRESHOLD,
                 get_output_ext,
                 run_ffmpeg,
                 _upload_to_catbox,
@@ -735,8 +736,8 @@ class EconomyCog(commands.Cog, name="Economy"):
             size_mb = out_size / (1024 * 1024)
             _applied = f"`{_pe_label}`" if use_pipe else f"`{effect}`"
 
-            if out_size > MAX_FILE_SIZE:
-                await _update("⬆️ Output exceeds 25 MB — uploading to Catbox…")
+            if out_size > CATBOX_THRESHOLD:
+                await _update("⬆️ Output exceeds 8 MB — uploading to Catbox…")
                 catbox_url = await _upload_to_catbox(output_path)
                 if catbox_url:
                     _elapsed = time.monotonic() - _start_time
@@ -763,7 +764,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                     )
                     await status_msg.edit(embed=result_embed)
                 else:
-                    await _update("❌ Output too large for Discord (>25 MB) and Catbox upload failed.", 0xED4245)
+                    await _update("❌ Output too large for Discord and Catbox upload failed.", 0xED4245)
                 return
 
             stem = Path(media_filename).stem
@@ -891,6 +892,7 @@ class EconomyCog(commands.Cog, name="Economy"):
             _upload_to_catbox,
             _ffprobe_video_info,
             MAX_FILE_SIZE,
+            CATBOX_THRESHOLD,
         )
 
         # Parse args: first token is grid (NxM), rest are ffmpeg args
@@ -1094,8 +1096,8 @@ class EconomyCog(commands.Cog, name="Economy"):
             stem = Path(media_filename).stem
             out_filename = f"nparison_{grid_str}_{stem}.mp4"
 
-            if out_size > MAX_FILE_SIZE:
-                await _update("⬆️ Output >25 MB — uploading to Catbox…")
+            if out_size > CATBOX_THRESHOLD:
+                await _update("⬆️ Output exceeds 8 MB — uploading to Catbox…")
                 catbox_url = await _upload_to_catbox(output_path)
                 if catbox_url:
                     result_embed.add_field(
