@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-11: Added th/ytdl (alias th/youtubedownload) — yt-dlp download command; sends file directly if ≤8 MB, uploads to Catbox otherwise. Added stretch pipe effect (geq centre-zoom, params: zoom|offset). Added th/pipetest (alias th/pt) — one-shot pipe effect runner.
+- 2026-07-11: Added th/join — join 2 videos side-by-side (default) or stacked (use `-vertical`). Also added to `th/ihtxhelp` / `th/help` embeds. Added th/ytdl (alias th/youtubedownload) — yt-dlp download command; sends file directly if ≤8 MB, uploads to Catbox otherwise. Added stretch pipe effect (geq centre-zoom, params: zoom|offset). Added th/pipetest (alias th/pt) — one-shot pipe effect runner.
 - 2026-07-10: Refactored _apply_pipe_effects: extracted _ff_vf/_ff_af/_geq/_dl_file helpers and _VF_CODEC/_FF_BASE constants to eliminate repeated FFmpeg command boilerplate across ~15 effects (shake, wave, wave2, wmm3dripple, timecode, radar, jitter, randomjitter, watermark, nepeta, avflip, lut, __rawvf__, __rawaf__).
 - 2026-07-10: th/chat now auto-sends long replies (>1800 chars) as a .txt file attachment; -debug flag still works for explicit file mode. th/ihtx pipe effects: added short aliases srw (sierpinskiransomware), wmm (wmm3dripple), p1280 (preview1280), rj (randomjitter).
 - 2026-07-10: Fixed attachment downloads across all bot code — switched from `attachment.url` to `attachment.proxy_url or attachment.url`. Discord CDN now requires auth; direct URLs often return 404 for fresh uploads.
@@ -257,7 +257,7 @@ def _expr_param(param: str | None, default: float) -> str:
 
 
 # Heavy command rate limiting
-HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "preview1280", "p1280", "oppositep1280", "op1280", "preview1280with640x360resize", "p1280ff!3", "p1280w16:9r", "multipitch", "mp", "multi", "lexg", "chat", "ask", "ai", "ihtxsap", "sap", "concatenate", "concat"}
+HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "preview1280", "p1280", "oppositep1280", "op1280", "preview1280with640x360resize", "p1280ff!3", "p1280w16:9r", "multipitch", "mp", "multi", "lexg", "chat", "ask", "ai", "ihtxsap", "sap", "concatenate", "concat", "join"}
 HEAVY_LIMIT_DEFAULT = 20
 HEAVY_LIMIT_OWNER = 5340
 LIMITS_FILE = Path("bot/limits.json")
@@ -8027,6 +8027,212 @@ async def concatenate_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Failed to upload result: {exc}")
 
 
+# ---------- th/join — join 2 videos side-by-side or stacked ----------
+_JOIN_VIDEO_EXTS = {".mp4", ".mov", ".webm", ".gif", ".mkv"}
+_JOIN_AUDIO_EXTS = {".mp3", ".wav", ".flac", ".ogg", ".m4a"}
+_JOIN_SUPPORTED_EXTS = _JOIN_VIDEO_EXTS | _JOIN_AUDIO_EXTS
+
+
+@bot.command(name="join", aliases=[])
+async def join_command(ctx: commands.Context, *, args: str = ""):
+    """Join two media files side-by-side (horizontal) or stacked (vertical).
+
+    Usage:
+      th/join [media1] [media2] [-vertical]
+      th/join -vertical                       (joins 2 attached/replied videos)
+      th/join https://a.mp4 https://b.mp4
+
+    Sources: two attachments, two URLs, or one attachment + one URL. They can
+    be in args, on the message, or in a replied-to message. The default layout is
+    horizontal (side-by-side). Pass `-vertical` to stack them vertically.
+    """
+    tokens = args.split()
+    vertical = any(t.lower() in {"-vertical", "--vertical", "-v"} for t in tokens)
+    tokens = [t for t in tokens if t.lower() not in {"-vertical", "--vertical", "-v"}]
+
+    url_tokens = [t for t in tokens if t.startswith(("http://", "https://"))]
+
+    sources: list[discord.Attachment | str] = []
+    if ctx.message and ctx.message.attachments:
+        sources.extend(ctx.message.attachments)
+    sources.extend(url_tokens)
+
+    if len(sources) < 2 and ctx.message and ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref.attachments:
+                sources.extend(ref.attachments)
+            else:
+                sources.extend(t for t in ref.content.split() if t.startswith(("http://", "https://")))
+        except Exception:
+            pass
+
+    sources = sources[:2]
+
+    if len(sources) != 2:
+        await ctx.reply(
+            "❌ Usage: `th/join [media1] [media2] [-vertical]`\n"
+            "Provide exactly 2 attachments and/or media URLs, either on this message "
+            "or in a reply. Default layout is horizontal (side-by-side); add `-vertical` "
+            "to stack them."
+        )
+        return
+
+    status_msg = await ctx.reply("🔗 Joining 2 files…")
+    loop = asyncio.get_event_loop()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_paths: list[str] = []
+        exts: list[str] = []
+
+        for i, src in enumerate(sources):
+            if isinstance(src, discord.Attachment):
+                name = src.filename
+            else:
+                name = urllib.parse.urlparse(src).path
+            ext = Path(name).suffix.lower()
+            if ext not in _JOIN_SUPPORTED_EXTS:
+                await status_msg.edit(
+                    content=f"❌ Source {i + 1} has an unsupported format `{ext or '(none)'}`. "
+                            f"Supported: {', '.join(sorted(_JOIN_SUPPORTED_EXTS))}"
+                )
+                return
+            exts.append(ext)
+            dest = os.path.join(tmpdir, f"src_{i}{ext}")
+            try:
+                if isinstance(src, discord.Attachment):
+                    await download_attachment(src, dest)
+                else:
+                    await download_url(src, dest)
+            except Exception as exc:
+                await status_msg.edit(content=f"❌ Failed to download source {i + 1}: {exc}")
+                return
+            input_paths.append(dest)
+
+        is_video = any(e in _JOIN_VIDEO_EXTS for e in exts)
+        is_audio = any(e in _JOIN_AUDIO_EXTS for e in exts)
+        if is_video and is_audio:
+            await status_msg.edit(content="❌ Cannot mix video and audio-only sources.")
+            return
+
+        output_path = os.path.join(tmpdir, f"joined{exts[0]}")
+
+        if is_video:
+            infos = [await loop.run_in_executor(None, _ffprobe_video_info, p) for p in input_paths]
+            widths = [i.get("width") or 1280 for i in infos]
+            heights = [i.get("height") or 720 for i in infos]
+            rates = [i.get("r_frame_rate", "30") or "30" for i in infos]
+
+            target_w = min(widths)
+            target_h = min(heights)
+            target_w += target_w % 2
+            target_h += target_h % 2
+            target_fps = rates[0]
+
+            norm_paths: list[str] = []
+            for i, in_path in enumerate(input_paths):
+                norm_path = os.path.join(tmpdir, f"norm_{i}.mp4")
+                has_audio = await loop.run_in_executor(None, _has_audio_stream, in_path)
+                vf = (
+                    f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+                    f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={target_fps}"
+                )
+                if has_audio:
+                    cmd = [
+                        "ffmpeg", "-y", "-i", in_path,
+                        "-vf", vf,
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                        "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+                        "-pix_fmt", "yuv420p", norm_path,
+                    ]
+                else:
+                    cmd = [
+                        "ffmpeg", "-y", "-i", in_path,
+                        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                        "-shortest",
+                        "-vf", vf,
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                        "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+                        "-pix_fmt", "yuv420p", norm_path,
+                    ]
+                ok, err = await loop.run_in_executor(None, lambda c=cmd: _run_ffmpeg_raw(c, 180))
+                if not ok:
+                    await status_msg.edit(content=f"❌ Failed to normalize source {i + 1}:\n```\n{err[-1200:]}\n```")
+                    return
+                norm_paths.append(norm_path)
+
+            if vertical:
+                out_w = target_w
+                out_h = target_h * 2
+                layout = "vstack=inputs=2"
+                out_h += out_h % 2
+            else:
+                out_w = target_w * 2
+                out_h = target_h
+                layout = "hstack=inputs=2"
+                out_w += out_w % 2
+
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", norm_paths[0],
+                "-i", norm_paths[1],
+                "-filter_complex", f"[0:v][1:v]{layout},format=yuv420p[outv];[0:a][1:a]amix=inputs=2:duration=longest[outa]",
+                "-map", "[outv]", "-map", "[outa]",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+                "-movflags", "+faststart", "-pix_fmt", "yuv420p",
+                output_path,
+            ]
+        else:
+            # Audio: mix the two tracks together (not side-by-side in visual sense, but a "join" mix).
+            concat_wav = os.path.join(tmpdir, "join.wav")
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", input_paths[0], "-i", input_paths[1],
+                "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=longest[aout]",
+                "-map", "[aout]",
+                "-ar", "48000", "-ac", "2", concat_wav,
+            ]
+            ok, err = await loop.run_in_executor(None, lambda: _run_ffmpeg_raw(cmd, 180))
+            if not ok:
+                await status_msg.edit(content=f"❌ Join failed:\n```\n{err[-1500:]}\n```")
+                return
+            if exts[0] == ".wav":
+                shutil.copyfile(concat_wav, output_path)
+            else:
+                encode_cmd = ["ffmpeg", "-y", "-i", concat_wav, output_path]
+                ok, err = await loop.run_in_executor(None, lambda: _run_ffmpeg_raw(encode_cmd, 120))
+                if not ok:
+                    await status_msg.edit(content=f"❌ Final encode failed:\n```\n{err[-1500:]}\n```")
+                    return
+
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            await status_msg.edit(content="❌ Join produced an empty file.")
+            return
+
+        out_size = os.path.getsize(output_path)
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Joined 2 files! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
+            return
+
+        layout_name = "vertical" if vertical else "horizontal"
+        out_filename = f"join_{layout_name}{exts[0]}"
+        try:
+            await ctx.reply(
+                content=f"✅ Joined 2 files `{layout_name}`",
+                file=discord.File(output_path, filename=out_filename),
+            )
+            await status_msg.delete()
+        except discord.HTTPException as exc:
+            await status_msg.edit(content=f"❌ Failed to upload result: {exc}")
+
+
 # ---------- th/autotune / th/autotoon — reference-based pitch correction ----------
 
 @bot.command(name="autotune", aliases=["autotoon"])
@@ -11543,6 +11749,7 @@ Fun & Utility:
 - th/presets — list all IHTX presets (chaos, glitch, melt, etc.)
 - th/ihtxhelp — full IHTX command reference
 - th/klaskycsupo — reveals the Klasky Csupo video
+- th/join [media1] [media2] [-vertical] — join 2 videos side-by-side (default) or stacked (vertical)
 
 Owner-only:
 - th/autoreply2 / th/ar2 — toggle AI auto-reply in current channel

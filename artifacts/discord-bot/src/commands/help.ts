@@ -122,6 +122,7 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
         value: [
           '`t!trim <start> <end>` — Trim audio/video/GIF (HH:MM:SS or seconds)',
           '`t!concatenate <url1> <url2> ... [fmt]` *concat* — Join 2-10 attachments/URLs into one file',
+          '`t!join [media1] [media2] [-vertical]` — Join 2 videos side-by-side (default) or stacked',
           '`t!mirror <left|right|top|bottom|deg>` — Mirror media via FFmpeg split/flip/stack',
           '`t!huehsv <hue>` *hhsv* — Hue shift via ImageMagick haldclut',
           '`t!syncaudio [alt]` *sa sync* — Sync video/audio durations by adjusting speed',
