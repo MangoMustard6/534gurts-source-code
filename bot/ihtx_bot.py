@@ -12881,4 +12881,7 @@ if __name__ == "__main__":
     if not TOKEN:
         print("ERROR: DISCORD_TOKEN environment variable not set.", file=sys.stderr)
         sys.exit(1)
+    if not CATBOX_USERHASH:
+        print("ERROR: CATBOX_USERHASH environment variable not set.", file=sys.stderr)
+        sys.exit(1)
     bot.run(TOKEN)

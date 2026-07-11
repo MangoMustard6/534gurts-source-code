@@ -6,7 +6,8 @@ A Discord bot that applies destructive visual and audio effects to videos and im
 
 - Run button starts the bot via `python3 main.py`
 - Required secret: `DISCORD_TOKEN` — your Discord bot token (set via Replit Secrets)
-- Optional secrets: `GROQ_API_KEY` (AI chat via Llama), `CATBOX_USERHASH` (Catbox.moe uploads), `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `FAL_KEY`, `REPLICATE_API_TOKEN`
+- Required secret: `CATBOX_USERHASH` — Catbox.moe userhash for uploads (bot exits at startup if missing)
+- Optional secrets: `GROQ_API_KEY` (AI chat via Llama), `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `FAL_KEY`, `REPLICATE_API_TOKEN`
 
 ## Stack
 
