@@ -104,6 +104,13 @@ export async function handleHelp(message: Message, ownerId: string): Promise<voi
           value: `\`${PREFIX}realgmajor4\` *realgm4 rgm4* — Solarization curve + dual rubberband audio mix (×1.335) + vol×2. Attach or reply-to a video.`,
         },
         {
+          name: '⏱️ TypeScript: stretch_to_length',
+          value: [
+            `\`${PREFIX}stretch_to_length <seconds>\` *stl* — Time-stretch media to hit an exact target duration (pitch preserved)`,
+            `Attach, reply-to, or pass a media URL. Example: \`${PREFIX}stl 10\``,
+          ].join('\n'),
+        },
+        {
           name: '🎵 TypeScript: ihtxsap  `/ihtxsap`',
           value: [
             `\`${PREFIX}ihtxsap <reps> <duration> <pitches> [style]\` *sap* — parallel pitch-layer processor, audio-only output (.mp3)`,
