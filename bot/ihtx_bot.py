@@ -257,7 +257,7 @@ def _expr_param(param: str | None, default: float) -> str:
 
 
 # Heavy command rate limiting
-HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "preview1280", "p1280", "oppositep1280", "op1280", "preview1280with640x360resize", "p1280ff!3", "p1280w16:9r", "multipitch", "mp", "multi", "lexg", "chat", "ask", "ai", "ihtxsap", "sap"}
+HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "preview1280", "p1280", "oppositep1280", "op1280", "preview1280with640x360resize", "p1280ff!3", "p1280w16:9r", "multipitch", "mp", "multi", "lexg", "chat", "ask", "ai", "ihtxsap", "sap", "concatenate", "concat"}
 HEAVY_LIMIT_DEFAULT = 20
 HEAVY_LIMIT_OWNER = 5340
 LIMITS_FILE = Path("bot/limits.json")
@@ -7787,6 +7787,246 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Failed to upload result: {exc}")
 
 
+# ---------- th/concatenate / th/concat — join 2-10 media files into one ----------
+
+_CONCAT_VIDEO_EXTS = {".mp4", ".mov", ".webm", ".gif", ".mkv"}
+_CONCAT_AUDIO_EXTS = {".mp3", ".wav", ".flac", ".ogg", ".m4a"}
+_CONCAT_SUPPORTED_EXTS = _CONCAT_VIDEO_EXTS | _CONCAT_AUDIO_EXTS
+_CONCAT_MAX_SOURCES = 10
+_CONCAT_FORMAT_TOKENS = {
+    "mp4": ".mp4", "mov": ".mov", "mkv": ".mkv", "webm": ".webm",
+    "mp3": ".mp3", "wav": ".wav", "flac": ".flac", "ogg": ".ogg", "m4a": ".m4a",
+}
+
+
+def _has_audio_stream(input_path: str) -> bool:
+    out = _ffprobe(input_path, "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0")
+    return bool(out.strip())
+
+
+@bot.command(name="concatenate", aliases=["concat"])
+async def concatenate_command(ctx: commands.Context, *, args: str = ""):
+    """Concatenate 2-10 media files (attachments and/or URLs) into one file, in order.
+
+    Usage:
+      th/concatenate <url1> <url2> ... [format]
+      th/concat https://a.mp4 https://b.mp4
+      th/concat https://a.mp3 https://b.mp3 https://c.mp3 wav
+
+    Also works with multiple attachments on the message, or attachments/URLs on
+    a replied-to message. All sources must be the same media type (all video,
+    or all audio) — mixing is not supported. Video output defaults to mp4;
+    audio output defaults to mp3. An optional trailing format token
+    (mp4/mov/mkv/webm for video, mp3/wav/flac/ogg/m4a for audio) overrides it.
+    Supported: mp4, mov, webm, gif, mkv, mp3, wav, flac, ogg, m4a.
+    """
+    tokens = args.split()
+
+    format_override: str | None = None
+    if tokens and tokens[-1].lower() in _CONCAT_FORMAT_TOKENS:
+        format_override = tokens.pop().lower()
+
+    url_tokens = [t for t in tokens if t.startswith(("http://", "https://"))]
+
+    # Sources: message attachments (in order) first, then URL tokens (in order).
+    sources: list[discord.Attachment | str] = list(ctx.message.attachments) + url_tokens
+
+    if not sources and ctx.message and ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref.attachments:
+                sources = list(ref.attachments)
+            else:
+                sources = [t for t in ref.content.split() if t.startswith(("http://", "https://"))]
+        except Exception:
+            pass
+
+    if len(sources) < 2:
+        await ctx.reply(
+            "❌ Usage: `th/concatenate <url1> <url2> ... [format]` (2-10 sources)\n"
+            "Provide 2+ attachments and/or media URLs on this message, or reply to "
+            "a message containing them.\n"
+            f"Supported: {', '.join(sorted(_CONCAT_SUPPORTED_EXTS))}"
+        )
+        return
+
+    if len(sources) > _CONCAT_MAX_SOURCES:
+        await ctx.reply(f"❌ Too many sources ({len(sources)}). Maximum is {_CONCAT_MAX_SOURCES}.")
+        return
+
+    status_msg = await ctx.reply(f"🔗 Concatenating {len(sources)} files…")
+    loop = asyncio.get_event_loop()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_paths: list[str] = []
+        exts: list[str] = []
+
+        for i, src in enumerate(sources):
+            if isinstance(src, discord.Attachment):
+                name = src.filename
+            else:
+                name = urllib.parse.urlparse(src).path
+            ext = Path(name).suffix.lower()
+            if ext not in _CONCAT_SUPPORTED_EXTS:
+                await status_msg.edit(
+                    content=(
+                        f"❌ Source {i + 1} has an unsupported format `{ext or '(none)'}`.\n"
+                        f"Supported: {', '.join(sorted(_CONCAT_SUPPORTED_EXTS))}"
+                    )
+                )
+                return
+            exts.append(ext)
+            dest = os.path.join(tmpdir, f"src_{i}{ext}")
+            try:
+                if isinstance(src, discord.Attachment):
+                    await download_attachment(src, dest)
+                else:
+                    await download_url(src, dest)
+            except Exception as exc:
+                await status_msg.edit(content=f"❌ Failed to download source {i + 1}: {exc}")
+                return
+            input_paths.append(dest)
+
+        is_video = any(e in _CONCAT_VIDEO_EXTS for e in exts)
+        is_audio = any(e in _CONCAT_AUDIO_EXTS for e in exts)
+        if is_video and is_audio:
+            await status_msg.edit(
+                content="❌ Cannot mix video and audio-only sources. All sources must be the same media type."
+            )
+            return
+
+        out_ext = _CONCAT_FORMAT_TOKENS.get(format_override, ".mp4" if is_video else ".mp3")
+        if format_override:
+            override_is_audio = out_ext in _CONCAT_AUDIO_EXTS
+            if override_is_audio != is_audio:
+                await status_msg.edit(
+                    content=f"❌ Format `{format_override}` doesn't match the source media type "
+                            f"({'video' if is_video else 'audio'})."
+                )
+                return
+
+        normalized_paths: list[str] = []
+
+        if is_video:
+            vinfo = await loop.run_in_executor(None, _ffprobe_video_info, input_paths[0])
+            target_w = vinfo.get("width") or 1280
+            target_h = vinfo.get("height") or 720
+            target_w += target_w % 2
+            target_h += target_h % 2
+            target_fps = vinfo.get("r_frame_rate", "30") or "30"
+
+            for i, in_path in enumerate(input_paths):
+                norm_path = os.path.join(tmpdir, f"norm_{i}.mp4")
+                has_audio = await loop.run_in_executor(None, _has_audio_stream, in_path)
+                vf = (
+                    f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+                    f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={target_fps}"
+                )
+                if has_audio:
+                    cmd = [
+                        "ffmpeg", "-y", "-i", in_path,
+                        "-vf", vf,
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                        "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+                        "-pix_fmt", "yuv420p", norm_path,
+                    ]
+                else:
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-i", in_path,
+                        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                        "-shortest",
+                        "-vf", vf,
+                        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                        "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+                        "-pix_fmt", "yuv420p", norm_path,
+                    ]
+                ok, err = await loop.run_in_executor(None, lambda c=cmd: _run_ffmpeg_raw(c, 180))
+                if not ok:
+                    await status_msg.edit(content=f"❌ Failed to normalize source {i + 1}:\n```\n{err[-1200:]}\n```")
+                    return
+                normalized_paths.append(norm_path)
+
+            output_path = os.path.join(tmpdir, f"concatenated{out_ext}")
+            concat_list = os.path.join(tmpdir, "concat.txt")
+            with open(concat_list, "w") as f:
+                for p in normalized_paths:
+                    f.write(f"file '{p}'\n")
+
+            concat_cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list]
+            if out_ext == ".mp4":
+                concat_cmd += ["-c", "copy", "-movflags", "+faststart"]
+            else:
+                concat_cmd += _concat_codec_args(out_ext)
+            concat_cmd.append(output_path)
+            ok, err = await loop.run_in_executor(None, lambda: _run_ffmpeg_raw(concat_cmd, 180))
+            if not ok:
+                await status_msg.edit(content=f"❌ Concat failed:\n```\n{err[-1500:]}\n```")
+                return
+        else:
+            for i, in_path in enumerate(input_paths):
+                norm_path = os.path.join(tmpdir, f"norm_{i}.wav")
+                cmd = [
+                    "ffmpeg", "-y", "-i", in_path,
+                    "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", norm_path,
+                ]
+                ok, err = await loop.run_in_executor(None, lambda c=cmd: _run_ffmpeg_raw(c, 120))
+                if not ok:
+                    await status_msg.edit(content=f"❌ Failed to normalize source {i + 1}:\n```\n{err[-1200:]}\n```")
+                    return
+                normalized_paths.append(norm_path)
+
+            output_path = os.path.join(tmpdir, f"concatenated{out_ext}")
+            concat_list = os.path.join(tmpdir, "concat.txt")
+            with open(concat_list, "w") as f:
+                for p in normalized_paths:
+                    f.write(f"file '{p}'\n")
+
+            concat_wav = os.path.join(tmpdir, "concat.wav")
+            concat_cmd = [
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
+                "-c", "copy", concat_wav,
+            ]
+            ok, err = await loop.run_in_executor(None, lambda: _run_ffmpeg_raw(concat_cmd, 180))
+            if not ok:
+                await status_msg.edit(content=f"❌ Concat failed:\n```\n{err[-1500:]}\n```")
+                return
+
+            if out_ext == ".wav":
+                shutil.copyfile(concat_wav, output_path)
+            else:
+                encode_cmd = ["ffmpeg", "-y", "-i", concat_wav, output_path]
+                ok, err = await loop.run_in_executor(None, lambda: _run_ffmpeg_raw(encode_cmd, 120))
+                if not ok:
+                    await status_msg.edit(content=f"❌ Final encode failed:\n```\n{err[-1500:]}\n```")
+                    return
+
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            await status_msg.edit(content="❌ Concatenation produced an empty file.")
+            return
+
+        out_size = os.path.getsize(output_path)
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Concatenated {len(sources)} files! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
+            return
+
+        out_filename = f"concat_{len(sources)}files{out_ext}"
+        try:
+            await ctx.reply(
+                content=f"✅ Concatenated {len(sources)} files into one `{out_ext.lstrip('.')}`",
+                file=discord.File(output_path, filename=out_filename),
+            )
+            await status_msg.delete()
+        except discord.HTTPException as exc:
+            await status_msg.edit(content=f"❌ Failed to upload result: {exc}")
+
+
 # ---------- th/autotune / th/autotoon — reference-based pitch correction ----------
 
 @bot.command(name="autotune", aliases=["autotoon"])
@@ -9725,6 +9965,11 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "fun",
+        "name": "th/concatenate <url1> <url2> ... [format]  (alias: concat)",
+        "value": "Join 2-10 attachments/URLs (all video or all audio) into one file, in order.",
+    },
+    {
+        "cat": "fun",
         "name": "th/invite",
         "value": "Get the link to invite IHTX to your server.",
     },
@@ -11252,6 +11497,7 @@ Heavy (media processing):
 - th/vocoder [mode] [bw] <carrier_url> — FFT phase vocoder
 - th/syncaudio [alt] — sync video and audio durations
 - th/trim <start> <end> — trim audio/video/GIF
+- th/concatenate <url1> <url2> ... [format] / th/concat — join 2-10 attachments/URLs into one file
 - th/preview1280 [start] [dur] — 12-segment TV-simulator montage
 - th/oppositep1280 [start] [dur] — inverse TV-simulator montage (negated hues, inverted pitches)
 - th/invlum [n] — luma-inversion loop
