@@ -2661,9 +2661,7 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
         b_curve = "0/1 1/0" if b_inv == "1" else "0/0 1/1"
         return f"curves=r='{r_curve}':g='{g_curve}':b='{b_curve}'"
     if name in ("invlum", "il"):
-        # InvertLuminosity via curves (fast) or lut3d (precise).  curves is
-        # pure FFmpeg -vf and can be batched with neighbouring filters.
-        return "curves=all='0/1 1/0'"
+        return f"lut3d=file={INVLUM_LUT_FILE}"
     if name == "volume":
         val = params[0] if params else "1"
         return f"volume={val}"
