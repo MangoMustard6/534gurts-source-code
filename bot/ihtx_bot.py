@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-11: Added th/join — join 2 videos side-by-side (default) or stacked (use `-vertical`). Also added to `th/ihtxhelp` / `th/help` embeds. Added th/ytdl (alias th/youtubedownload) — yt-dlp download command; sends file directly if ≤8 MB, uploads to Catbox otherwise. Added stretch pipe effect (geq centre-zoom, params: zoom|offset). Added th/pipetest (alias th/pt) — one-shot pipe effect runner.
+- 2026-07-11: Fixed th/join — the video join FFmpeg command was built but never executed, causing empty output. Also forced video output to .mp4 and fixed the uploaded filename extension. Added th/join — join 2 videos side-by-side (default) or stacked (use `-vertical`). Also added to `th/ihtxhelp` / `th/help` embeds. Added th/ytdl (alias th/youtubedownload) — yt-dlp download command; sends file directly if ≤8 MB, uploads to Catbox otherwise. Added stretch pipe effect (geq centre-zoom, params: zoom|offset). Added th/pipetest (alias th/pt) — one-shot pipe effect runner.
 - 2026-07-10: Refactored _apply_pipe_effects: extracted _ff_vf/_ff_af/_geq/_dl_file helpers and _VF_CODEC/_FF_BASE constants to eliminate repeated FFmpeg command boilerplate across ~15 effects (shake, wave, wave2, wmm3dripple, timecode, radar, jitter, randomjitter, watermark, nepeta, avflip, lut, __rawvf__, __rawaf__).
 - 2026-07-10: th/chat now auto-sends long replies (>1800 chars) as a .txt file attachment; -debug flag still works for explicit file mode. th/ihtx pipe effects: added short aliases srw (sierpinskiransomware), wmm (wmm3dripple), p1280 (preview1280), rj (randomjitter).
 - 2026-07-10: Fixed attachment downloads across all bot code — switched from `attachment.url` to `attachment.proxy_url or attachment.url`. Discord CDN now requires auth; direct URLs often return 404 for fresh uploads.
@@ -8115,7 +8115,7 @@ async def join_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content="❌ Cannot mix video and audio-only sources.")
             return
 
-        output_path = os.path.join(tmpdir, f"joined{exts[0]}")
+        output_path = os.path.join(tmpdir, f"joined{'.mp4' if is_video else exts[0]}")
 
         if is_video:
             infos = [await loop.run_in_executor(None, _ffprobe_video_info, p) for p in input_paths]
@@ -8183,6 +8183,10 @@ async def join_command(ctx: commands.Context, *, args: str = ""):
                 "-movflags", "+faststart", "-pix_fmt", "yuv420p",
                 output_path,
             ]
+            ok, err = await loop.run_in_executor(None, lambda: _run_ffmpeg_raw(cmd, 240))
+            if not ok:
+                await status_msg.edit(content=f"❌ Join failed:\n```\n{err[-1500:]}\n```")
+                return
         else:
             # Audio: mix the two tracks together (not side-by-side in visual sense, but a "join" mix).
             concat_wav = os.path.join(tmpdir, "join.wav")
@@ -8222,7 +8226,8 @@ async def join_command(ctx: commands.Context, *, args: str = ""):
             return
 
         layout_name = "vertical" if vertical else "horizontal"
-        out_filename = f"join_{layout_name}{exts[0]}"
+        out_ext = ".mp4" if is_video else exts[0]
+        out_filename = f"join_{layout_name}{out_ext}"
         try:
             await ctx.reply(
                 content=f"✅ Joined 2 files `{layout_name}`",
