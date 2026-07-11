@@ -11542,6 +11542,7 @@ Fun & Utility:
 - th/tag <name> [args] — run a custom TagScript tag
 - th/presets — list all IHTX presets (chaos, glitch, melt, etc.)
 - th/ihtxhelp — full IHTX command reference
+- th/klaskycsupo — reveals the Klasky Csupo video
 
 Owner-only:
 - th/autoreply2 / th/ar2 — toggle AI auto-reply in current channel
