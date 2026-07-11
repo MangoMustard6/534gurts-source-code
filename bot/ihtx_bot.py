@@ -2303,6 +2303,7 @@ PIPE_EFFECT_NAMES = {
     "timecode",
     "radar",
     "freakzingatesteffect", "fzte", "freaktest",
+    "stretch",
 }
 
 def _split_effect_params(value: str) -> list[str]:
@@ -3118,6 +3119,32 @@ def _apply_pipe_effects(
                 ok, err = _ff_vf(current, shake_vf, out)
                 if not ok:
                     return False, f"shake failed: {err}"
+                current = out
+                continue
+
+            # stretch — centre-zoom pixel remap via geq (ports the TS applyZoomGeq logic)
+            # params: zoom|offset  (default 1.5|<same as zoom>)
+            # zoom > 1 pulls pixels toward centre (zoom in); < 1 pushes out.
+            # offset controls the vertical zoom independently of horizontal.
+            if name == "stretch":
+                zoom   = _pfloat(params, 0, 1.5)
+                offset = _pfloat(params, 1, zoom)
+                try:
+                    vinfo = _ffprobe_video_info(current)
+                    vid_w = int(vinfo["width"])
+                    vid_h = int(vinfo["height"])
+                except Exception:
+                    vid_w, vid_h = 0, 0
+                if vid_w <= 0 or vid_h <= 0:
+                    return False, "stretch: could not probe video dimensions."
+                stretch_vf = (
+                    f"rotate=0:iw*1.1:ih*1.1,format=yuv444p,"
+                    f"geq='p((W/2)+(X-(W/2))/{zoom},(H/2)+(Y-(H/2))/{offset})',"
+                    f"scale=iw:ih,crop={vid_w}:{vid_h},format=yuv420p"
+                )
+                ok, err = _ff_vf(current, stretch_vf, out)
+                if not ok:
+                    return False, f"stretch failed: {err}"
                 current = out
                 continue
 
@@ -5860,6 +5887,110 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
         try:
             await ctx.reply(
                 content=f"✅ **invlum** done! `{powers}` power(s), `{duration}s` each.",
+                file=discord.File(output_path, filename=out_filename),
+            )
+            await status_msg.delete()
+        except discord.HTTPException as e:
+            await status_msg.edit(content=f"❌ Failed to upload: {e}")
+
+
+@bot.command(name="pipetest", aliases=["pt"])
+async def pipetest_command(ctx: commands.Context, *, effects: str = ""):
+    """Apply th/ihtx pipe effects once to an attached video/audio.
+
+    Usage:
+      th/pipetest effect1;effect2;effect3
+
+    Examples:
+      th/pipetest stretch=1.5;negate
+      th/pipetest invlum;huehsv=0.5;wave
+      th/pipetest ccshue=90;multipitch=-4|5
+
+    Attach a video (or reply to one). Pipe effects are separated by semicolons.
+    """
+    effects = effects.strip()
+    if not effects:
+        await ctx.reply(
+            "❌ No effects given.\n"
+            "**Usage:** `th/pipetest effect1;effect2;...`\n"
+            "**Example:** `th/pipetest stretch=1.5;negate`"
+        )
+        return
+
+    pipe_effects = _parse_pipe_effects(effects)
+    if not pipe_effects:
+        await ctx.reply("❌ Could not parse any effects.")
+        return
+
+    # Resolve attachment from message or replied-to message
+    attachment = None
+    if ctx.message and ctx.message.attachments:
+        attachment = ctx.message.attachments[0]
+    elif ctx.message and ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref.attachments:
+                attachment = ref.attachments[0]
+        except Exception:
+            pass
+
+    if not attachment:
+        await ctx.reply(
+            "❌ No media found. Attach a file or reply to one.\n"
+            "**Usage:** `th/pipetest effect1;effect2;...`"
+        )
+        return
+
+    if attachment.size > MAX_FILE_SIZE:
+        await ctx.reply("❌ File too large (max 25 MB).")
+        return
+
+    suffix = Path(attachment.filename).suffix.lower()
+    if suffix not in SUPPORTED_EXTENSIONS:
+        await ctx.reply(f"❌ Unsupported file type `{suffix}`.")
+        return
+
+    effect_label = effects[:120] + ("…" if len(effects) > 120 else "")
+    status_msg = await ctx.reply(f"⚙️ **pipetest** — `{effect_label}` … processing…")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = os.path.join(tmpdir, f"input{suffix}")
+        output_path = os.path.join(tmpdir, f"pipetest_out{suffix}")
+
+        try:
+            url = attachment.proxy_url or attachment.url
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    with open(input_path, "wb") as f:
+                        f.write(await resp.read())
+        except Exception as e:
+            await status_msg.edit(content=f"❌ Download failed: {e}")
+            return
+
+        loop = asyncio.get_event_loop()
+        ok, err = await loop.run_in_executor(
+            None,
+            lambda: _apply_pipe_effects(input_path, output_path, pipe_effects),
+        )
+        if not ok:
+            await status_msg.edit(content=f"❌ pipetest failed: `{err}`")
+            return
+
+        out_size = os.path.getsize(output_path)
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ **pipetest** done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large and Catbox upload failed.")
+            return
+
+        out_filename = f"pipetest_{Path(attachment.filename).stem}{suffix}"
+        try:
+            await ctx.reply(
+                content=f"✅ **pipetest** — `{effect_label}`",
                 file=discord.File(output_path, filename=out_filename),
             )
             await status_msg.delete()
