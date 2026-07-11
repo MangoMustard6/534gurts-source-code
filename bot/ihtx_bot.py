@@ -7636,6 +7636,157 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Failed to upload result: {exc}")
 
 
+# ---------- th/stretch_to_length / th/stl — time-stretch media to a target duration ----------
+
+@bot.command(name="stretch_to_length", aliases=["stl"])
+async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
+    """Time-stretch media (video+audio, or audio-only) to hit an exact target duration.
+
+    Usage:
+      th/stretch_to_length <target_seconds> [media_url]
+      th/stl 10
+      th/stl vidlen/2
+      th/stl 20 https://example.com/video.mp4
+
+    Video uses setpts + a locked framerate; audio uses the rubberband filter
+    (tempo-only, pitch preserved). Media from: attachment, replied-to message,
+    or a URL in args.
+    """
+    tokens = args.split()
+
+    media_url: str | None = None
+    other_tokens: list[str] = []
+    for tok in tokens:
+        if tok.startswith(("http://", "https://")):
+            if media_url is None:
+                media_url = tok
+        else:
+            other_tokens.append(tok)
+
+    if not other_tokens:
+        await ctx.reply(
+            "❌ Usage: `th/stretch_to_length <target_seconds>`\n"
+            "Examples: `th/stl 10` · `th/stl vidlen/2`\n"
+            "Attach, reply to, or include a media URL."
+        )
+        return
+    target_expr = other_tokens[0]
+
+    # Resolve media source (priority: attachment > reply > URL arg)
+    attachment: discord.Attachment | None = None
+    if media_url is None:
+        if ctx.message and ctx.message.attachments:
+            attachment = ctx.message.attachments[0]
+        elif ctx.message and ctx.message.reference:
+            try:
+                ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+                if ref.attachments:
+                    attachment = ref.attachments[0]
+                else:
+                    for tok in ref.content.split():
+                        if tok.startswith(("http://", "https://")):
+                            media_url = tok
+                            break
+            except Exception:
+                pass
+
+    if attachment is None and media_url is None:
+        await ctx.reply("❌ No media found. Attach, reply to, or provide a media URL.")
+        return
+
+    src_name = attachment.filename if attachment else urllib.parse.urlparse(media_url).path
+    suffix = Path(src_name).suffix.lower()
+    if not suffix:
+        suffix = ".mp4"
+    if suffix not in _TRIM_SUPPORTED_EXTS:
+        await ctx.reply(
+            f"❌ Unsupported format `{suffix}`.\n"
+            f"Supported: {', '.join(sorted(_TRIM_SUPPORTED_EXTS))}"
+        )
+        return
+
+    status_msg = await ctx.reply("⏱️ Stretching…")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = os.path.join(tmpdir, f"input{suffix}")
+
+        try:
+            if attachment:
+                await download_attachment(attachment, input_path)
+            else:
+                await download_url(media_url, input_path)
+        except Exception as exc:
+            await status_msg.edit(content=f"❌ Failed to download media: {exc}")
+            return
+
+        loop = asyncio.get_event_loop()
+        vidlen = await loop.run_in_executor(None, _ffprobe_duration, input_path)
+        if vidlen <= 0:
+            await status_msg.edit(content="❌ Could not read media duration.")
+            return
+
+        dur_ok, dur_or_error = _safe_awk_duration(target_expr, vidlen)
+        if not dur_ok:
+            await status_msg.edit(content=f"❌ {dur_or_error}")
+            return
+        target_duration = float(dur_or_error)
+
+        ratio = vidlen / target_duration
+
+        output_path = os.path.join(tmpdir, f"stretched{suffix}")
+        _audio_only_exts = {".mp3", ".wav", ".flac", ".ogg", ".m4a"}
+
+        if suffix in _audio_only_exts:
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", input_path,
+                "-af", f"rubberband=tempo={ratio:.10f}",
+                output_path,
+            ]
+        else:
+            vinfo = await loop.run_in_executor(None, _ffprobe_video_info, input_path)
+            framerate = vinfo.get("r_frame_rate", "30") or "30"
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", input_path,
+                "-vf", f"setpts=1/{ratio:.10f}*PTS,fps={framerate}",
+                "-af", f"rubberband=tempo={ratio:.10f}",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart",
+                "-pix_fmt", "yuv420p",
+                output_path,
+            ]
+
+        ok, err = await loop.run_in_executor(None, lambda: _run_ffmpeg_raw(cmd, 120))
+        if not ok:
+            await status_msg.edit(content=f"❌ FFmpeg failed:\n```\n{err[-1500:]}\n```")
+            return
+
+        out_size = os.path.getsize(output_path)
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Stretched to `{target_duration:.4f}s`! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
+            return
+
+        stem = Path(src_name).stem
+        out_filename = f"stl_{target_duration:.4f}s_{stem}{suffix}"
+
+        try:
+            await ctx.reply(
+                content=f"✅ Stretched `{vidlen:.4f}s` → `{target_duration:.4f}s` (ratio `{ratio:.4f}`)",
+                file=discord.File(output_path, filename=out_filename),
+            )
+            await status_msg.delete()
+        except discord.HTTPException as exc:
+            await status_msg.edit(content=f"❌ Failed to upload result: {exc}")
+
+
 # ---------- th/autotune / th/autotoon — reference-based pitch correction ----------
 
 @bot.command(name="autotune", aliases=["autotoon"])
