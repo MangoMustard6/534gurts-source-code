@@ -2949,17 +2949,9 @@ def _apply_pipe_effects(
                 current = out
                 continue
 
-            # Rubber Band R3 multipitch
+            # Rubber Band R3 multipitch (add `bungee` or `--bungee` flag for bungee mode)
             if name in ("multipitch", "mp", "multi"):
                 ok, err = _run_multipitch_rb3(current, out, params)
-                if not ok:
-                    return False, err
-                current = out
-                continue
-
-            # Bungee pitch pipe effect (mirrors th/multipitch_bungee / mpb)
-            if name in ("bungee", "mpb"):
-                ok, err = _run_bungee_pipe(current, out, params)
                 if not ok:
                     return False, err
                 current = out
@@ -4545,6 +4537,110 @@ def _run_fileaa_with_fallback(
     return ok, ("" if ok else f"amix failed: {err}")
 
 
+def _run_multipitch_bungee(
+    input_path: str,
+    output_path: str,
+    pitch_values: list[str],
+) -> tuple[bool, str]:
+    """Bungee mode for the multipitch pipe effect.
+
+    Mirrors the standalone th/multipitch_bungee (mpb) pipeline:
+      1. Transcode input to FFV1/PCM_S16LE temp video.
+      2. Extract audio with asetrate=44100/2.
+      3. Run multipitch binary with <pitches> --bungee --no-normalize.
+      4. Remux processed audio back over the original video stream.
+
+    Params are semicolon/whitespace-separated pitch values (same as normal multipitch).
+    """
+    flattened: list[str] = []
+    for pv in pitch_values:
+        flattened.extend(
+            v.strip()
+            for v in re.split(r"[;|,\s]+", pv)
+            if v.strip() and v.strip().lower() not in ("bungee", "--bungee")
+        )
+
+    if not flattened:
+        return False, "❌ No pitch values specified for bungee mode."
+
+    if len(flattened) > MAX_PITCHES:
+        return False, f"❌ Too many pitch values (maximum: {MAX_PITCHES})."
+
+    try:
+        semitones = [float(v) for v in flattened]
+    except ValueError as exc:
+        return False, f"❌ Invalid pitch value in bungee mode: {exc}"
+
+    if not _ensure_multipitch_bin():
+        return False, "❌ Multipitch binary unavailable — download failed."
+
+    has_video = bool(_ffprobe(
+        input_path,
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_type",
+        "-of", "default=nw=1:nk=1",
+    ).strip())
+
+    pitch_arg = ",".join(
+        str(int(s)) if s == int(s) else str(s)
+        for s in semitones
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # 1. FFV1/PCM temp video
+        temp_video = os.path.join(tmpdir, "bungee_temp.mp4")
+        ok, err = _run_ffmpeg_raw([
+            "ffmpeg", "-y", "-i", input_path,
+            "-f", "mp4", "-preset", "ultrafast",
+            "-c:v", "ffv1", "-c:a", "pcm_s16le",
+            temp_video,
+        ], timeout=120)
+        if not ok:
+            return False, f"bungee: transcode failed: {err}"
+
+        # 2. Extract audio with octave-down sample rate
+        half_wav = os.path.join(tmpdir, "bungee_half.wav")
+        ok, err = _run_ffmpeg_raw([
+            "ffmpeg", "-y", "-i", temp_video,
+            "-af", "asetrate=22050",
+            "-c:a", "pcm_s16le",
+            half_wav,
+        ], timeout=120)
+        if not ok:
+            return False, f"bungee: audio extraction failed: {err}"
+
+        # 3. Run bungee pitch processor
+        out_wav = os.path.join(tmpdir, "bungee_out.wav")
+        res = subprocess.run(
+            [_MULTIPITCH_BIN, half_wav, out_wav, pitch_arg, "--bungee", "--no-normalize"],
+            capture_output=True, timeout=300,
+        )
+        if res.returncode != 0:
+            stderr_note = res.stderr.decode(errors="replace")[-300:] if res.stderr else ""
+            return False, f"bungee: multipitch binary failed: {stderr_note}"
+
+        # 4. Remux
+        if has_video:
+            ok, err = _run_ffmpeg_raw([
+                "ffmpeg", "-y", "-i", temp_video, "-i", out_wav,
+                "-map", "0:v", "-map", "1:a",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", "-b:a", "192k",
+                "-pix_fmt", "yuv420p",
+                output_path,
+            ], timeout=180)
+        else:
+            ok, err = _run_ffmpeg_raw([
+                "ffmpeg", "-y", "-i", out_wav,
+                "-c:a", "aac", "-b:a", "192k",
+                output_path,
+            ], timeout=180)
+        if not ok:
+            return False, f"bungee: remux failed: {err}"
+
+    return True, ""
+
+
 def _run_multipitch_rb3(
     input_path: str,
     output_path: str,
@@ -4560,8 +4656,18 @@ def _run_multipitch_rb3(
          audio-only when the input has no video.
 
     Accepts ; | , or whitespace as pitch separators.
+    Add the `bungee` or `--bungee` flag anywhere in the params to switch to
+    bungee mode (asetrate=22050 + binary --bungee --no-normalize).
     """
-    # ── 1. Flatten & parse pitch values ──────────────────────────────────────
+    # ── 1. Detect bungee mode ───────────────────────────────────────────────
+    use_bungee = any(
+        p.strip().lower() in ("bungee", "--bungee")
+        for p in pitch_values
+    )
+    if use_bungee:
+        return _run_multipitch_bungee(input_path, output_path, pitch_values)
+
+    # ── 2. Flatten & parse pitch values ──────────────────────────────────────
     flattened: list[str] = []
     for pv in pitch_values:
         flattened.extend(
@@ -4589,11 +4695,11 @@ def _run_multipitch_rb3(
             seen.add(val)
             semitones.append(val)
 
-    # ── 2. Ensure binary is available ────────────────────────────────────────
+    # ── 3. Ensure binary is available ────────────────────────────────────────
     if not _ensure_multipitch_bin():
         return False, "❌ Multipitch binary unavailable — download failed."
 
-    # ── 3. Probe input ───────────────────────────────────────────────────────
+    # ── 4. Probe input ───────────────────────────────────────────────────────
     has_video = bool(_ffprobe(
         input_path,
         "-select_streams", "v:0",
@@ -4605,7 +4711,7 @@ def _run_multipitch_rb3(
     cap = str(int(min(actual_dur, MAX_DURATION)) + 1) if actual_dur > 0 else str(MAX_DURATION)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # ── 4. Extract 16-bit PCM WAV (required by fileaa) ───────────────────
+        # ── 5. Extract 16-bit PCM WAV (required by fileaa) ───────────────────
         base_wav = os.path.join(tmpdir, "base.wav")
         ok, err = _run_ffmpeg_raw([
             "ffmpeg", "-y",
@@ -4619,7 +4725,7 @@ def _run_multipitch_rb3(
         if not ok:
             return False, f"Audio extraction failed: {err}"
 
-        # ── 5. Run pitch shifting (all pitches via unified fallback) ───────
+        # ── 6. Run pitch shifting (all pitches via unified fallback) ───────
         pitch_arg = ",".join(
             str(int(s)) if s == int(s) else str(s)
             for s in semitones
@@ -4633,7 +4739,7 @@ def _run_multipitch_rb3(
         if not ok_pitch:
             return False, f"❌ Multipitch processing failed: {err_pitch}"
 
-        # ── 6. Remux pitched audio with original video (or audio-only) ───────
+        # ── 7. Remux pitched audio with original video (or audio-only) ───────
         # Use -c:v copy to preserve original timestamps exactly — re-encoding
         # would reset the timebase and cause the video to play back faster.
         if has_video:
@@ -4665,91 +4771,6 @@ def _run_multipitch_rb3(
 
 # Keep the old name as an alias so legacy pipe-effect calls still resolve
 _run_multipitch = _run_multipitch_rb3
-
-
-def _run_bungee_pipe(
-    input_path: str,
-    output_path: str,
-    params: list[str],
-) -> tuple[bool, str]:
-    """Bungee pitch pipe effect — keeps video, shifts audio via the multipitch binary.
-
-    Params: [pitch_factor]  (default 1.5)
-    Pipeline mirrors the standalone th/multipitch_bungee (mpb) command:
-      1. Transcode input to FFV1/PCM_S16LE temp video
-      2. Extract audio with asetrate=44100/2
-      3. Run multipitch binary: <in> <out> <pitch> --bungee --no-normalize
-      4. Remux processed audio back over the original video stream
-    """
-    pitch = params[0].strip() if params else "1.5"
-    try:
-        float(pitch)
-    except ValueError:
-        return False, f"bungee: pitch must be a number (got {pitch!r})"
-
-    if not _ensure_multipitch_bin():
-        return False, "bungee: multipitch binary unavailable"
-
-    has_video = bool(_ffprobe(
-        input_path,
-        "-select_streams", "v:0",
-        "-show_entries", "stream=codec_type",
-        "-of", "default=nw=1:nk=1",
-    ).strip())
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # 1. FFV1/PCM temp video
-        temp_video = os.path.join(tmpdir, "temp.mp4")
-        ok, err = _run_ffmpeg_raw([
-            "ffmpeg", "-y", "-i", input_path,
-            "-f", "mp4", "-preset", "ultrafast",
-            "-c:v", "ffv1", "-c:a", "pcm_s16le",
-            temp_video,
-        ], timeout=120)
-        if not ok:
-            return False, f"bungee: transcode failed: {err}"
-
-        # 2. Extract audio with octave-down sample rate
-        half_wav = os.path.join(tmpdir, "half.wav")
-        ok, err = _run_ffmpeg_raw([
-            "ffmpeg", "-y", "-i", temp_video,
-            "-af", "asetrate=22050",
-            "-c:a", "pcm_s16le",
-            half_wav,
-        ], timeout=120)
-        if not ok:
-            return False, f"bungee: audio extraction failed: {err}"
-
-        # 3. Run bungee pitch processor
-        out_wav = os.path.join(tmpdir, "out.wav")
-        res = subprocess.run(
-            [_MULTIPITCH_BIN, half_wav, out_wav, pitch, "--bungee", "--no-normalize"],
-            capture_output=True, timeout=300,
-        )
-        if res.returncode != 0:
-            stderr_note = res.stderr.decode(errors="replace")[-300:] if res.stderr else ""
-            return False, f"bungee: multipitch binary failed: {stderr_note}"
-
-        # 4. Remux
-        if has_video:
-            ok, err = _run_ffmpeg_raw([
-                "ffmpeg", "-y", "-i", temp_video, "-i", out_wav,
-                "-map", "0:v", "-map", "1:a",
-                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                "-c:a", "aac", "-b:a", "192k",
-                "-pix_fmt", "yuv420p",
-                output_path,
-            ], timeout=180)
-        else:
-            ok, err = _run_ffmpeg_raw([
-                "ffmpeg", "-y", "-i", out_wav,
-                "-c:a", "aac", "-b:a", "192k",
-                output_path,
-            ], timeout=180)
-        if not ok:
-            return False, f"bungee: remux failed: {err}"
-
-    return True, ""
 
 
 def _run_multipitch_old(
@@ -6888,16 +6909,16 @@ def _run_ihtxsap(
 
             # ── Bungee ─────────────────────────────────────────────────────────
             else:
-                # Tier 1: fileaa --bungee (all pitches, single call)
+                # Tier 1: multipitch --bungee --no-normalize (all pitches, single call)
                 if _ensure_multipitch_bin():
                     res = subprocess.run(
-                        [_MULTIPITCH_BIN, src, dst, pitch_arg, "--bungee"],
+                        [_MULTIPITCH_BIN, src, dst, pitch_arg, "--bungee", "--no-normalize"],
                         capture_output=True, timeout=300,
                     )
                     if res.returncode == 0:
                         return True, ""
                     stderr_note = res.stderr.decode(errors="replace")[-400:]
-                    print(f"[ihtxsap] fileaa --bungee failed (exit {res.returncode}): {stderr_note}")
+                    print(f"[ihtxsap] multipitch --bungee failed (exit {res.returncode}): {stderr_note}")
 
                 # Tier 2: FFmpeg asetrate per pitch + amix
                 layer_paths = []
