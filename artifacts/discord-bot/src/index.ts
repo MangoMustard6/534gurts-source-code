@@ -30,6 +30,7 @@ import { handleFfmpegProcess } from './commands/ffmpegprocess.js';
 import { handleRealGMajor4 } from './commands/realgmajor4.js';
 import { handleMultipitch2 } from './commands/multipitch2.js';
 import { handleIhtxSap, handleIhtxSapInteraction, IHTXSAP_STYLE_CHOICES } from './commands/ihtxsap.js';
+import { handleMultipitchBungee, handleMultipitchBungeeInteraction } from './commands/multipitchbungee.js';
 import { handleStretchToLength } from './commands/stretchtolength.js';
 import { handleBlockuserCommand, handleUnblockuserCommand, isBlocked as isUserBlocked } from './commands/blockuser.js';
 import { handleBlockchannelCommand, handleUnblockchannelCommand, isBlockedInChannel } from './commands/blockchannel.js';
@@ -79,6 +80,17 @@ const SLASH_COMMANDS = [
       opt.setName('volume').setDescription('Output volume multiplier after mix, e.g. 8 (default: 1)').setRequired(false),
     )
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('multipitch_bungee')
+    .setDescription('Multipitch Bungee: pitch-shifted bungee processor with video passthrough')
+    .addAttachmentOption((opt) =>
+      opt.setName('file').setDescription('Audio or video file to process (images rejected)').setRequired(true),
+    )
+    .addNumberOption((opt) =>
+      opt.setName('pitch').setDescription('Pitch factor, e.g. 1.5 (default: 1.5)').setRequired(false),
+    )
+    .toJSON(),
 ];
 
 // ── Discord client ───────────────────────────────────────────────────────────
@@ -99,7 +111,7 @@ client.once('clientReady', async (c) => {
   console.log(`[IHTX-TS] Logged in as ${c.user.tag}`);
   console.log(`[IHTX-TS] Prefix: ${PREFIX}`);
   console.log(`[IHTX-TS] Owner ID: ${BOT_OWNER_ID || '(not set)'}`);
-  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitchihtx, multipitch2, ihtxsap, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, bytebeat, ffmpegprocess, realgmajor4, stretch_to_length`);
+  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitchihtx, multipitch2, ihtxsap, multipitch_bungee, mpb, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, bytebeat, ffmpegprocess, realgmajor4, stretch_to_length`);
 
   // Register slash commands.
   // Set BOT_GUILD_ID env var for instant guild-level registration (dev),
@@ -267,6 +279,11 @@ client.on('messageCreate', async (message: Message) => {
         await handleIhtxSap(message);
         break;
 
+      case 'multipitch_bungee':
+      case 'mpb':
+        await handleMultipitchBungee(message);
+        break;
+
       case 'stretch_to_length':
       case 'stl':
         await handleStretchToLength(message, rest);
@@ -313,6 +330,9 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         break;
       case 'ihtxsap':
         await handleIhtxSapInteraction(slash);
+        break;
+      case 'multipitch_bungee':
+        await handleMultipitchBungeeInteraction(slash);
         break;
       default:
         break;
