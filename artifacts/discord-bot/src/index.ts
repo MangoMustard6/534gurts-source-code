@@ -11,7 +11,6 @@ import {
 } from 'discord.js';
 import { BOT_TOKEN, BOT_OWNER_ID, PREFIX } from './config.js';
 import { runYtdl } from './commands/ytdl.js';
-import { handleMultipitchIHTX } from './commands/multipitchihtx.js';
 import { handleHelp } from './commands/help.js';
 import { handleCoinflip } from './commands/games/coinflip.js';
 import { handleDice } from './commands/games/dice.js';
@@ -83,12 +82,12 @@ const SLASH_COMMANDS = [
 
   new SlashCommandBuilder()
     .setName('multipitch_bungee')
-    .setDescription('Multipitch Bungee: pitch-shifted bungee processor with video passthrough')
+    .setDescription('Multipitch Bungee: bungee pitch-shifter with video passthrough, multi-pitch support')
     .addAttachmentOption((opt) =>
       opt.setName('file').setDescription('Audio or video file to process (images rejected)').setRequired(true),
     )
-    .addNumberOption((opt) =>
-      opt.setName('pitch').setDescription('Pitch factor, e.g. 1.5 (default: 1.5)').setRequired(false),
+    .addStringOption((opt) =>
+      opt.setName('pitches').setDescription('Pipe/comma-separated semitones, e.g. -7|7 (default: 1.5)').setRequired(false),
     )
     .toJSON(),
 ];
@@ -111,7 +110,7 @@ client.once('clientReady', async (c) => {
   console.log(`[IHTX-TS] Logged in as ${c.user.tag}`);
   console.log(`[IHTX-TS] Prefix: ${PREFIX}`);
   console.log(`[IHTX-TS] Owner ID: ${BOT_OWNER_ID || '(not set)'}`);
-  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitchihtx, multipitch2, ihtxsap, multipitch_bungee, mpb, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, bytebeat, ffmpegprocess, realgmajor4, stretch_to_length`);
+  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitch2, ihtxsap, multipitch_bungee, mpb, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, bytebeat, ffmpegprocess, realgmajor4, stretch_to_length`);
 
   // Register slash commands.
   // Set BOT_GUILD_ID env var for instant guild-level registration (dev),
@@ -182,10 +181,6 @@ client.on('messageCreate', async (message: Message) => {
       case 'ytdl':
       case 'youtubedownload':
         await runYtdl(message);
-        break;
-
-      case 'multipitchihtx':
-        await handleMultipitchIHTX(message, args, BOT_OWNER_ID);
         break;
 
       case 'help':

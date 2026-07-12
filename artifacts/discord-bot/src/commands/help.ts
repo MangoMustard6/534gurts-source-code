@@ -100,7 +100,7 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
           '`th/invlum [n]` *il* — Luma-inversion N times, all iterations concatenated',
           '`th/preview1280 [start] [dur]` *p1280 pv1280* — 12-segment TV-simulator montage',
           '`th/multipitch <semis>` *mp multi* — Multi-voice pitch shift (Rubber Band R3): `th/multipitch 25|5|8.5`',
-          '`th/multipitch_bungee [pitch]` *mpb* — Bungee pitch-shifter pipeline, video passthrough (pitch default 1.5)',
+          '`th/multipitch_bungee [-7|7]` *mpb* — Bungee pitch-shifter, video passthrough, multi-pitch (e.g. `-7|7`; default `1.5`)',
           '`th/ffmpeg <args>` — Raw FFmpeg args on attachment: `th/ffmpeg -vf negate`',
           '`th/realgmajor4` *realgm4 rgm4* — RGB invert + pitch-shifted overlay + doubled volume',
           '`th/freakzingatesteffect` *fzte freaktest* — Full preset: invert + TV sim + wave + mirror + drawtext + mp3',
@@ -146,18 +146,6 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
           '`th/ytdl <url or search>` *youtubedownload* — Download video from URL or search query → Discord or catbox',
           '`th/ffmpegprocess <args>` *fmp* — FFmpeg on attachment with ffprobe metadata inspection (TypeScript bot)',
           '`th/catbox` *cb upload* — Upload attachment to catbox.moe (200 MB, permanent link)',
-        ].join('\n'),
-      },
-      {
-        name: '🎛️ TypeScript: th/multipitchihtx',
-        value: [
-          `\`pitches=0|-0.1|0.1\` — explicit semitone offsets, pipe-separated`,
-          `\`repetitions=<n>\` — auto N evenly-spaced layers (default 20, max **${baseReps}${boostBonus}**)`,
-          `\`spread=<n>\` — semitone range for auto mode (default 0.4)`,
-          `\`duration=<sec>\` — stretch all layers to this length via rubberband --duration`,
-          `\`engine=<r2|r3|r4>\` · \`window=<long|short>\``,
-          `Example: \`${PREFIX}multipitchihtx repetitions=50 spread=1.5 engine=r3\``,
-          `Example: \`${PREFIX}multipitchihtx pitches=-0.5|0|0.5 duration=30\``,
         ].join('\n'),
       },
       {
