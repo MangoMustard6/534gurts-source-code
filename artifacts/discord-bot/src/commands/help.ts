@@ -250,8 +250,8 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
       {
         name: '🚫 Blocking',
         value: [
-          '`t!blockuser` / `t!unblockuser <@user>` — Global user blocklist',
-          '`t!blockchannel` / `t!unblockchannel` — Block channels from bot commands',
+          '`th/blockuser` / `th/unblockuser <@user>` — Global user blocklist',
+          '`th/blockchannel` / `th/unblockchannel` — Block users from bot commands in this channel',
           '`t!keywordblock <kw> [#ch]` *kb* — Block a keyword (channel or global)',
           '`t!keywordblockremove <kw> [#ch]` *kbr* — Remove keyword block',
           '`t!keywordblockmsg <kw> <msg>` *kbmsg* — Custom reply for keyword block',
