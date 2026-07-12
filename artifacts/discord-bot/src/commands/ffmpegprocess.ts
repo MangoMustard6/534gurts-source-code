@@ -8,8 +8,8 @@ import { PROCESS_TIMEOUTS } from '../config.js';
 import { _upload_to_catbox } from '../utils/catbox.js';
 
 const USAGE =
-  '**Usage:** `t!ffmpegprocess <ffmpeg args>` *(alias: fmp)*  — attach or reply-to a file\n' +
-  '**Example:** `t!ffmpegprocess -vf scale=1280:-1 -c:v libx264 -crf 23`\n' +
+  '**Usage:** `th/ffmpegprocess <ffmpeg args>` *(alias: fmp)*  — attach or reply-to a file\n' +
+  '**Example:** `th/ffmpegprocess -vf scale=1280:-1 -c:v libx264 -crf 23`\n' +
   'Args are placed between `-i <input>` and `<output>`. Input metadata is probed and shown in the footer.';
 
 async function probeValue(args: string[]): Promise<string> {
