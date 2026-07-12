@@ -30,6 +30,10 @@ import { PROCESS_TIMEOUTS } from '../config.js';
 // The TS bot's cwd is artifacts/discord-bot, so go up two levels.
 const FILEAA_BIN = path.resolve(process.cwd(), '../../bot/fileaa');
 
+// multipitch binary — used by the Bungee style and by th/multipitch_bungee (mpb).
+const MULTIPITCH_BIN = path.resolve(process.cwd(), '../../bot/multipitch');
+const MULTIPITCH_URL = 'https://file.garden/aTXso15ukD3mnuPI/multipitch';
+
 const IMAGE_EXTENSIONS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'svg', 'ico', 'avif', 'heic',
 ]);
@@ -251,21 +255,34 @@ async function layerBungeeFallback(
   ], { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
 }
 
+async function ensureMultipitchBinary(): Promise<boolean> {
+  if (fs.existsSync(MULTIPITCH_BIN)) return true;
+  try {
+    const binDir = path.dirname(MULTIPITCH_BIN);
+    fs.mkdirSync(binDir, { recursive: true });
+    await downloadUrl(MULTIPITCH_URL, MULTIPITCH_BIN);
+    try { execFileSync('chmod', ['+x', MULTIPITCH_BIN]); } catch { /* ignore */ }
+    return fs.existsSync(MULTIPITCH_BIN);
+  } catch (err) {
+    console.error('[ihtxsap] failed to download multipitch binary:', err);
+    return false;
+  }
+}
+
 /**
- * Bungee tier 1: fileaa --bungee handles ALL pitches in one call and
- * writes a pre-mixed WAV directly to `out`.
+ * Bungee tier 1: multipitch binary with --bungee --no-normalize handles ALL
+ * pitches in one call and writes a pre-mixed WAV directly to `out`.
  * pitchesCsv e.g. "-7,8" — comma-separated semitone values.
  */
-async function runFileaaBungee(
+async function runMultipitchBungee(
   inputWav: string,
   out: string,
   pitchesCsv: string,
 ): Promise<{ code: number; stderr: string }> {
-  if (!fs.existsSync(FILEAA_BIN)) {
-    return { code: 1, stderr: 'fileaa binary not found' };
-  }
-  try { execFileSync('chmod', ['+x', FILEAA_BIN]); } catch { /* ignore */ }
-  return spawnAsync(FILEAA_BIN, [inputWav, out, pitchesCsv, '--bungee'],
+  const ok = await ensureMultipitchBinary();
+  if (!ok) return { code: 1, stderr: 'multipitch binary not found / download failed' };
+  try { execFileSync('chmod', ['+x', MULTIPITCH_BIN]); } catch { /* ignore */ }
+  return spawnAsync(MULTIPITCH_BIN, [inputWav, out, pitchesCsv, '--bungee', '--no-normalize'],
     { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
 }
 
@@ -319,10 +336,10 @@ async function runSap(
   // ── Bungee: fileaa --bungee (one call, all pitches → pre-mixed WAV) ─────
   if (opts.style === 'bungee') {
     await setStatus(`⏳ Bungee pitch processing (${opts.pitches.length} voice${opts.pitches.length > 1 ? 's' : ''})…`);
-    const fileaaResult = await runFileaaBungee(inputWav, mixedWav, pitchesCsv);
-    if (fileaaResult.code !== 0) {
+    const bungeeResult = await runMultipitchBungee(inputWav, mixedWav, pitchesCsv);
+    if (bungeeResult.code !== 0) {
       // Fallback: per-pitch asetrate + amix
-      console.log(`[ihtxsap] fileaa --bungee failed (${fileaaResult.stderr.slice(-200)}), using asetrate fallback`);
+      console.log(`[ihtxsap] multipitch --bungee failed (${bungeeResult.stderr.slice(-200)}), using asetrate fallback`);
       await setStatus(`⏳ Bungee fallback — processing ${opts.pitches.length} voice${opts.pitches.length > 1 ? 's' : ''} via FFmpeg…`);
       const layerPaths: string[] = [];
       for (let i = 0; i < opts.pitches.length; i++) {
@@ -361,7 +378,7 @@ async function runSap(
       }
     }
     // Apply volume to the pre-mixed fileaa output if needed
-    if (fileaaResult.code === 0 && opts.volume !== 1) {
+    if (bungeeResult.code === 0 && opts.volume !== 1) {
       const volWav = path.join(tmpDir, 'mixed_vol.wav');
       const vr = await spawnAsync('ffmpeg', [
         '-y', '-i', mixedWav, '-af', `volume=${opts.volume.toFixed(6)}`,
