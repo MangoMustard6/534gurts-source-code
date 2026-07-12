@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-12: Fixed `zoom` pipe effect crash when s < 1 (zoom-out): old logic used `crop` which tried to extract more pixels than existed. Now s >= 1 uses crop (zoom-in), s < 1 uses pad with black bars (zoom-out).
 - 2026-07-12: Added per-voice volume boost to multipitch pipe effect (bungee + normal): volume = number of voices during remux (2 voices → volume=2, 3 voices → volume=3).
 - 2026-07-12: Scaled th/ihtx tagscript timeout per-rep: base 180s + 6s per export so high-rep runs (up to 1000) don't get killed mid-process. Full codebase scan confirmed no remaining `source is not defined` bugs outside the five commands already fixed.
 - 2026-07-12: Raised MAX_REPETITIONS from 100 → 1000 for th/ihtx.
@@ -2601,18 +2602,22 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
             height = "-2"
         return f"scale={width}:{height}"
     if name == "zoom":
-        # Updated: scale+crop zoom effect (matches TypeScript spec).
-        # params: amount (default 2). Scales up by amount, then crops center back
-        # to original dimensions, producing a zoom-in effect.
+        # Scale+crop zoom effect.  s > 1 zooms in (crop center), s < 1 zooms out (pad black).
         try:
             s = float(params[0]) if params else 2.0
         except (ValueError, TypeError):
             s = 2.0
-        s = max(0.1, s)
-        return (
-            f"scale=iw*{s}:ih*{s},"
-            f"crop=iw/{s}:ih/{s}:(iw-iw/{s})/2:(ih-ih/{s})/2"
-        )
+        s = max(0.01, s)
+        if s >= 1:
+            return (
+                f"scale=iw*{s}:ih*{s},"
+                f"crop=iw/{s}:ih/{s}:(iw-iw/{s})/2:(ih-ih/{s})/2"
+            )
+        else:
+            return (
+                f"scale=iw*{s}:ih*{s},"
+                f"pad=iw/{s}:ih/{s}:(iw/{s}-iw)/2:(ih/{s}-ih)/2:black"
+            )
     if name == "ripple":
         # Radial displacement using geq with hypot/sin/cos formulas.
         # params: speed|frequency|amplitude|phase  (all optional, may be expressions)
