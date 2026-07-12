@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-12: Added per-voice volume scaling to multipitch pipe effect (bungee + normal): `_mp_vol = 1.0 / len(semitones)` applied during remux so mixed voices don't clip (e.g. 2 voices → volume=0.5).
+- 2026-07-12: Added per-voice volume boost to multipitch pipe effect (bungee + normal): volume = number of voices during remux (2 voices → volume=2, 3 voices → volume=3).
 - 2026-07-12: Scaled th/ihtx tagscript timeout per-rep: base 180s + 6s per export so high-rep runs (up to 1000) don't get killed mid-process. Full codebase scan confirmed no remaining `source is not defined` bugs outside the five commands already fixed.
 - 2026-07-12: Raised MAX_REPETITIONS from 100 → 1000 for th/ihtx.
 - 2026-07-12: Fixed NameError `source is not defined` in th/stl, th/trim, th/addsource, th/mirror, th/autotune — all five commands used `attachment`/`media_url`/`base_url` to resolve media but then accidentally referenced the undefined `source` variable when building the filename and calling download helpers.
@@ -4638,8 +4638,8 @@ def _run_multipitch_bungee(
             stderr_note = res.stderr.decode(errors="replace")[-300:] if res.stderr else ""
             return False, f"bungee: multipitch binary failed: {stderr_note}"
 
-        # 5. Remux with per-voice volume scaling (prevents clipping when mixing many voices)
-        _bungee_vol = 1.0 / len(semitones)
+        # 5. Remux with per-voice volume boost (louder with more voices)
+        _bungee_vol = float(len(semitones))
         if has_video:
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y", "-i", temp_video, "-i", out_wav,
@@ -4765,7 +4765,7 @@ def _run_multipitch_rb3(
         # ── 7. Remux pitched audio with original video (or audio-only) ───────
         # Use -c:v copy to preserve original timestamps exactly — re-encoding
         # would reset the timebase and cause the video to play back faster.
-        _mp_vol = 1.0 / len(semitones)
+        _mp_vol = float(len(semitones))
         if has_video:
             dur_flag = str(round(actual_dur, 6)) if actual_dur > 0 else cap
             ok, err = _run_ffmpeg_raw([
