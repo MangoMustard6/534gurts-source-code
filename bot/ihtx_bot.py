@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-12: Raised MAX_REPETITIONS from 100 → 1000 for th/ihtx.
 - 2026-07-12: Fixed NameError `source is not defined` in th/stl, th/trim, th/addsource, th/mirror, th/autotune — all five commands used `attachment`/`media_url`/`base_url` to resolve media but then accidentally referenced the undefined `source` variable when building the filename and calling download helpers.
 - 2026-07-12: Updated `mpb`/`bungee`: pipe effect now probes actual audio sample rate and uses sr/2 (was hardcoded 22050). Added standalone `th/mpb` / `th/multipitch_bungee` command to Python bot. Both pipe effect and standalone accept multi-pitch values (pipe/semicolon/comma separated, e.g. `-7|7`). Removed `th/multipitchihtx` from TS bot. Added `mpb`/`bungee` as Bungee pitch type in `th/ihtxsap`.
 - 2026-07-12: Added th/join, th/pipetest, th/freakzingatesteffect (th/fzte), and th/youtubedownload (th/ytdl) to `th/ihtxhelp` / `th/bothelp` browse entries so the new commands appear in the Python bot's embed help.
@@ -618,7 +619,7 @@ VIDEO_EXTENSIONS      = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".gif"}
 AUDIO_VIDEO_EXTS      = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 MAX_FILE_SIZE         = 25 * 1024 * 1024
 CATBOX_THRESHOLD      = 8  * 1024 * 1024   # upload to catbox above this, Discord limit is 25 MB
-MAX_REPETITIONS       = 100
+MAX_REPETITIONS       = 1000
 MAX_DURATION          = 600
 
 # Effect filter definitions
