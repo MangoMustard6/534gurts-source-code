@@ -272,6 +272,22 @@ client.on('messageCreate', async (message: Message) => {
         await handleStretchToLength(message, rest);
         break;
 
+      case 'blockuser':
+        await handleBlockuserCommand(message);
+        break;
+
+      case 'unblockuser':
+        await handleUnblockuserCommand(message);
+        break;
+
+      case 'blockchannel':
+        await handleBlockchannelCommand(message);
+        break;
+
+      case 'unblockchannel':
+        await handleUnblockchannelCommand(message);
+        break;
+
       default:
         break;
     }
