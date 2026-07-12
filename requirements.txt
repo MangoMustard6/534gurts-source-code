@@ -12,3 +12,8 @@ psycopg2-binary
 python-dotenv
 uvloop
 yt-dlp>=2026.7.4
+email_validator
+flask
+flask-sqlalchemy
+gunicorn
+psycopg2-binary
