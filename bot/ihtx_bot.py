@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-12: Fixed NameError `source is not defined` in th/stl, th/trim, th/addsource, th/mirror, th/autotune — all five commands used `attachment`/`media_url`/`base_url` to resolve media but then accidentally referenced the undefined `source` variable when building the filename and calling download helpers.
 - 2026-07-12: Updated `mpb`/`bungee`: pipe effect now probes actual audio sample rate and uses sr/2 (was hardcoded 22050). Added standalone `th/mpb` / `th/multipitch_bungee` command to Python bot. Both pipe effect and standalone accept multi-pitch values (pipe/semicolon/comma separated, e.g. `-7|7`). Removed `th/multipitchihtx` from TS bot. Added `mpb`/`bungee` as Bungee pitch type in `th/ihtxsap`.
 - 2026-07-12: Added th/join, th/pipetest, th/freakzingatesteffect (th/fzte), and th/youtubedownload (th/ytdl) to `th/ihtxhelp` / `th/bothelp` browse entries so the new commands appear in the Python bot's embed help.
 - 2026-07-12: Disabled the default discord.py `th/help` command so the Python bot no longer sends a non-embed text help; the TypeScript bot's live embed `th/help` is now the only `th/help` response.
@@ -7695,7 +7696,7 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
         return
 
     # Determine file extension
-    src_name = source.filename if attachment else urllib.parse.urlparse(media_url).path
+    src_name = attachment.filename if attachment else urllib.parse.urlparse(media_url).path
     suffix = Path(src_name).suffix.lower()
     if not suffix:
         suffix = ".mp4"
@@ -7714,9 +7715,9 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
         # Download
         try:
             if attachment:
-                await download_attachment(source, input_path)
+                await download_attachment(attachment, input_path)
             else:
-                await download_url(source, input_path)
+                await download_url(media_url, input_path)
         except Exception as exc:
             await status_msg.edit(content=f"❌ Failed to download media: {exc}")
             return
@@ -7864,7 +7865,7 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
         await ctx.reply("❌ No media found. Attach, reply to, or provide a media URL.")
         return
 
-    src_name = source.filename if attachment else urllib.parse.urlparse(media_url).path
+    src_name = attachment.filename if attachment else urllib.parse.urlparse(media_url).path
     suffix = Path(src_name).suffix.lower()
     if not suffix:
         suffix = ".mp4"
@@ -7882,9 +7883,9 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
 
         try:
             if attachment:
-                await download_attachment(source, input_path)
+                await download_attachment(attachment, input_path)
             else:
-                await download_url(source, input_path)
+                await download_url(media_url, input_path)
         except Exception as exc:
             await status_msg.edit(content=f"❌ Failed to download media: {exc}")
             return
@@ -8469,7 +8470,7 @@ async def autotune_command(ctx: commands.Context, *, args: str = ""):
         await ctx.reply("❌ No media found. Attach a video/audio, reply to one, or include a media URL.")
         return
 
-    src_name = source.filename if attachment else urllib.parse.urlparse(media_url).path
+    src_name = attachment.filename if attachment else urllib.parse.urlparse(media_url).path
     suffix = Path(src_name).suffix.lower() or ".mp4"
     if suffix not in _AUTOTUNE_EXTS:
         await ctx.reply(f"❌ Unsupported format `{suffix}`. Supported: {', '.join(sorted(_AUTOTUNE_EXTS))}")
@@ -8498,9 +8499,9 @@ async def autotune_command(ctx: commands.Context, *, args: str = ""):
         await status_msg.edit(content="⬇️ Downloading your media…")
         try:
             if attachment:
-                await download_attachment(source, input_path)
+                await download_attachment(attachment, input_path)
             else:
-                await download_url(source, input_path)
+                await download_url(media_url, input_path)
         except Exception as exc:
             await status_msg.edit(content=f"❌ Media download failed: {exc}")
             return
@@ -8625,7 +8626,7 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
         await ctx.reply("❌ No base video found. Attach one to the message or reply to a message that has one.")
         return
 
-    src_name = source.filename if attachment else urllib.parse.urlparse(base_url).path
+    src_name = attachment.filename if attachment else urllib.parse.urlparse(base_url).path
     suffix   = Path(src_name).suffix.lower() or ".mp4"
 
     status_msg = await ctx.reply("⬇️ Downloading base video…", mention_author=False)
@@ -8641,7 +8642,7 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
             if attachment:
                 await download_attachment(attachment, base_path)
             else:
-                await download_url(source, base_path)
+                await download_url(base_url, base_path)
         except Exception as exc:
             await status_msg.edit(content=f"❌ Base download failed: `{exc}`")
             return
@@ -8782,7 +8783,7 @@ async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str =
         await ctx.reply("❌ No media found. Attach, reply to, or provide media.")
         return
 
-    src_name = source.filename if attachment else urllib.parse.urlparse(media_url).path
+    src_name = attachment.filename if attachment else urllib.parse.urlparse(media_url).path
     suffix = Path(src_name).suffix.lower()
     if not suffix:
         suffix = ".mp4"
@@ -8802,9 +8803,9 @@ async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str =
 
         try:
             if attachment:
-                await download_attachment(source, input_path)
+                await download_attachment(attachment, input_path)
             else:
-                await download_url(source, input_path)
+                await download_url(media_url, input_path)
         except Exception as exc:
             await status_msg.edit(content=f"❌ Failed to download media: {exc}")
             return
