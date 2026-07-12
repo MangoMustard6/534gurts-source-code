@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-12: Added per-voice volume scaling to multipitch pipe effect (bungee + normal): `_mp_vol = 1.0 / len(semitones)` applied during remux so mixed voices don't clip (e.g. 2 voices → volume=0.5).
 - 2026-07-12: Scaled th/ihtx tagscript timeout per-rep: base 180s + 6s per export so high-rep runs (up to 1000) don't get killed mid-process. Full codebase scan confirmed no remaining `source is not defined` bugs outside the five commands already fixed.
 - 2026-07-12: Raised MAX_REPETITIONS from 100 → 1000 for th/ihtx.
 - 2026-07-12: Fixed NameError `source is not defined` in th/stl, th/trim, th/addsource, th/mirror, th/autotune — all five commands used `attachment`/`media_url`/`base_url` to resolve media but then accidentally referenced the undefined `source` variable when building the filename and calling download helpers.
@@ -4637,19 +4638,23 @@ def _run_multipitch_bungee(
             stderr_note = res.stderr.decode(errors="replace")[-300:] if res.stderr else ""
             return False, f"bungee: multipitch binary failed: {stderr_note}"
 
-        # 5. Remux
+        # 5. Remux with per-voice volume scaling (prevents clipping when mixing many voices)
+        _bungee_vol = 1.0 / len(semitones)
         if has_video:
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y", "-i", temp_video, "-i", out_wav,
                 "-map", "0:v", "-map", "1:a",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-af", f"volume={_bungee_vol:.6f}",
                 "-c:a", "aac", "-b:a", "192k",
                 "-pix_fmt", "yuv420p",
                 output_path,
             ], timeout=180)
         else:
             ok, err = _run_ffmpeg_raw([
-                "ffmpeg", "-y", "-i", out_wav,
+                "ffmpeg", "-y",
+                "-i", out_wav,
+                "-af", f"volume={_bungee_vol:.6f}",
                 "-c:a", "aac", "-b:a", "192k",
                 output_path,
             ], timeout=180)
@@ -4760,6 +4765,7 @@ def _run_multipitch_rb3(
         # ── 7. Remux pitched audio with original video (or audio-only) ───────
         # Use -c:v copy to preserve original timestamps exactly — re-encoding
         # would reset the timebase and cause the video to play back faster.
+        _mp_vol = 1.0 / len(semitones)
         if has_video:
             dur_flag = str(round(actual_dur, 6)) if actual_dur > 0 else cap
             ok, err = _run_ffmpeg_raw([
@@ -4769,7 +4775,8 @@ def _run_multipitch_rb3(
                 "-map", "0:v",
                 "-map", "1:a",
                 "-c:v", "copy",
-                "-c:a", "pcm_s16le",
+                "-af", f"volume={_mp_vol:.6f}",
+                "-c:a", "aac", "-b:a", "192k",
                 "-t", dur_flag,
                 output_path,
             ], timeout=300)
@@ -4777,6 +4784,7 @@ def _run_multipitch_rb3(
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y",
                 "-i", out_wav,
+                "-af", f"volume={_mp_vol:.6f}",
                 "-c:a", "aac", "-b:a", "192k",
                 output_path,
             ], timeout=180)
