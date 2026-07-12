@@ -2602,22 +2602,19 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
             height = "-2"
         return f"scale={width}:{height}"
     if name == "zoom":
-        # Scale+crop zoom effect.  s > 1 zooms in (crop center), s < 1 zooms out (pad black).
+        # Pixel-remap zoom via geq (ports TS zoom logic):
+        #   s > 1 zooms in, s < 1 zooms out.  Works via reverse-sampling:
+        #   each output pixel is pulled from a position scaled around centre.
         try:
-            s = float(params[0]) if params else 2.0
+            s = float(params[0]) if params else 1.5
         except (ValueError, TypeError):
-            s = 2.0
+            s = 1.5
         s = max(0.01, s)
-        if s >= 1:
-            return (
-                f"scale=iw*{s}:ih*{s},"
-                f"crop=iw/{s}:ih/{s}:(iw-iw/{s})/2:(ih-ih/{s})/2"
-            )
-        else:
-            return (
-                f"scale=iw*{s}:ih*{s},"
-                f"pad=iw/{s}:ih/{s}:(iw/{s}-iw)/2:(ih/{s}-ih)/2:black"
-            )
+        return (
+            f"format=yuv444p,rotate=0:iw*1.1:ih*1.1,"
+            f"geq='p((W/2)+(X-(W/2))/{s},(H/2)+(Y-(H/2))/{s})',"
+            f"scale=iw:ih,crop=iw/1.1:ih/1.1:(iw-iw/1.1)/2:(ih-ih/1.1)/2,format=yuv420p"
+        )
     if name == "ripple":
         # Radial displacement using geq with hypot/sin/cos formulas.
         # params: speed|frequency|amplitude|phase  (all optional, may be expressions)
