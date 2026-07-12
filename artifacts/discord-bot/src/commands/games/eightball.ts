@@ -28,7 +28,7 @@ export async function handleEightBall(message: Message, args: string[], ownerId:
   const question = args.join(' ').trim();
 
   if (!question) {
-    await message.reply('❌ Ask a question!\nExample: `t!8ball Will I win today?`');
+    await message.reply('❌ Ask a question!\nExample: `th/8ball Will I win today?`');
     return;
   }
 

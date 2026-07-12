@@ -7,7 +7,7 @@ export async function handleChoose(message: Message, args: string[], ownerId: st
 
   if (options.length < 2) {
     await message.reply(
-      '❌ Provide at least 2 options separated by `|`.\nExample: `t!choose pizza | tacos | sushi`',
+      '❌ Provide at least 2 options separated by `|`.\nExample: `th/choose pizza | tacos | sushi`',
     );
     return;
   }

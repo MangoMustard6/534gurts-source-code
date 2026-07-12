@@ -1,7 +1,7 @@
 /**
  * bytebeat.ts — Bytebeat audio generator
  *
- * Shared core used by both the prefix command (t!bytebeat) and the slash
+ * Shared core used by both the prefix command (th/bytebeat) and the slash
  * command (/bytebeat). Generates 5 s of raw u8 mono PCM at 8 kHz by
  * evaluating a mathematical formula for each sample index t (0–39 999),
  * then transcodes to AAC/MP4 via fluent-ffmpeg.
@@ -140,16 +140,16 @@ export async function executeByteBeat(formula: string): Promise<BytebeatResult> 
   return { ok: true, filePath: outputPath, tmpDir };
 }
 
-// ── Prefix handler: t!bytebeat <formula> ────────────────────────────────────
+// ── Prefix handler: th/bytebeat <formula> ────────────────────────────────────
 
 const PREFIX_USAGE =
-  '**t!bytebeat** — Generate Bytebeat audio\n' +
-  'Usage: `t!bytebeat <formula>`\n' +
+  '**th/bytebeat** — Generate Bytebeat audio\n' +
+  'Usage: `th/bytebeat <formula>`\n' +
   '`t` = sample index (0 – 39 999) · 8 000 Hz · 5 s · output: MP4 / AAC\n\n' +
   '**Examples:**\n' +
-  '`t!bytebeat t*(t>>5|t>>8)`\n' +
-  '`t!bytebeat (t>>6|t|t>>(t>>16))*10+t*(t>>11)&74`\n' +
-  '`t!bytebeat t*(42&t>>10)`';
+  '`th/bytebeat t*(t>>5|t>>8)`\n' +
+  '`th/bytebeat (t>>6|t|t>>(t>>16))*10+t*(t>>11)&74`\n' +
+  '`th/bytebeat t*(42&t>>10)`';
 
 export async function handleBytebeat(message: Message, rest: string): Promise<void> {
   const formula = rest.trim();

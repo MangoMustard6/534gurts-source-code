@@ -8,8 +8,8 @@ import { PROCESS_TIMEOUTS } from '../config.js';
 import { _upload_to_catbox } from '../utils/catbox.js';
 
 const USAGE =
-  '**Usage:** `t!stretch_to_length <target_seconds>` *(alias: stl)* — attach, reply-to, or pass a media URL\n' +
-  '**Example:** `t!stl 10`\n' +
+  '**Usage:** `th/stretch_to_length <target_seconds>` *(alias: stl)* — attach, reply-to, or pass a media URL\n' +
+  '**Example:** `th/stl 10`\n' +
   'Video is re-timed with `setpts` + a locked framerate; audio tempo is changed with `rubberband` (pitch preserved).';
 
 const VIDEO_EXTS = new Set(['.mp4', '.mov', '.mkv', '.webm', '.avi', '.gif']);

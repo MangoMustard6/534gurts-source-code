@@ -27,7 +27,7 @@ function runYtDlp(args: string[]): Promise<{ stdout: string; stderr: string }> {
 export async function runYtdl(message: Message): Promise<void> {
   const trimmed = message.content.trim();
 
-  const PREFIXES = ["roxi youtubedownload", "roxi ytdl"];
+  const PREFIXES = ["th/youtubedownload", "th/ytdl"];
   const matchedPrefix = PREFIXES.find((p) =>
     trimmed.toLowerCase().startsWith(p + " ") || trimmed.toLowerCase() === p
   );
@@ -37,10 +37,10 @@ export async function runYtdl(message: Message): Promise<void> {
 
   if (!query) {
     await message.reply(
-      "❌ **Usage:** `t!ytdl <URL or search query>` / `t!youtubedownload <URL or search query>`\n" +
+      "❌ **Usage:** `th/ytdl <URL or search query>` / `th/youtubedownload <URL or search query>`\n" +
       "Examples:\n" +
-      "• `t!ytdl https://youtube.com/watch?v=...`\n" +
-      "• `t!ytdl never gonna give you up`",
+      "• `th/ytdl https://youtube.com/watch?v=...`\n" +
+      "• `th/ytdl never gonna give you up`",
     );
     return;
   }
@@ -110,7 +110,7 @@ export async function runYtdl(message: Message): Promise<void> {
       await message.reply(`✅ **${title}**\n📦 Too large for Discord → ${catboxUrl}`);
     }
   } catch (err) {
-    logger.error({ err }, "t!ytdl failed");
+    logger.error({ err }, "th/ytdl failed");
     const msg = err instanceof Error ? err.message : "Unknown error";
     const msgLower = msg.toLowerCase();
     // Classify common yt-dlp errors into user-friendly messages

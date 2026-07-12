@@ -7,7 +7,7 @@ import { makeTempDir, cleanupDir, listDir } from '../utils/temp.js';
 import { PROCESS_TIMEOUTS } from '../config.js';
 import { _upload_to_catbox } from '../utils/catbox.js';
 
-const USAGE = '**Usage:** `t!download <url>`  *(aliases: dl, dv, dlv)*';
+const USAGE = '**Usage:** `th/download <url>`  *(aliases: dl, dv, dlv)*';
 
 function validateUrl(raw: string): URL | null {
   try {

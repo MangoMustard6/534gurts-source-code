@@ -7,7 +7,7 @@ import { makeTempDir, cleanupDir, downloadUrl } from '../utils/temp.js';
 import { VIDEO_EXTENSIONS, LIMITS, PROCESS_TIMEOUTS } from '../config.js';
 
 const USAGE = [
-  '**Usage:** `t!multipitchihtx [options]` — attach a video/audio file',
+  '**Usage:** `th/multipitchihtx [options]` — attach a video/audio file',
   '',
   '**Pitch mode (pick one):**',
   '`pitches=0.1|0.2|-0.3` — explicit semitone offsets, pipe-separated',
@@ -25,9 +25,9 @@ const USAGE = [
   '`window=<long|short>` — window mode (default: long)',
   '',
   '**Examples:**',
-  '`t!multipitchihtx pitches=0|-0.1|0.1|-0.2|0.2`',
-  '`t!multipitchihtx repetitions=10 spread=1.0 concat=3`',
-  '`t!multipitchihtx concat=5 duration=8 spread=0.8 engine=r2`',
+  '`th/multipitchihtx pitches=0|-0.1|0.1|-0.2|0.2`',
+  '`th/multipitchihtx repetitions=10 spread=1.0 concat=3`',
+  '`th/multipitchihtx concat=5 duration=8 spread=0.8 engine=r2`',
 ].join('\n');
 
 type Engine = 'r2' | 'r3' | 'r4';

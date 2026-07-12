@@ -18,7 +18,7 @@ export async function handleRoulette(message: Message, args: string[], ownerId: 
 
   if (!bet) {
     await message.reply(
-      '❌ Place a bet!\n**Options:** `red`, `black`, `green`, or a number `0`–`36`\nExample: `t!roulette red`',
+      '❌ Place a beth/\n**Options:** `red`, `black`, `green`, or a number `0`–`36`\nExample: `th/roulette red`',
     );
     return;
   }

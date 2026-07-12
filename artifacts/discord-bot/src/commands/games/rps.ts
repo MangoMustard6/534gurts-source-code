@@ -20,7 +20,7 @@ export async function handleRPS(message: Message, args: string[], ownerId: strin
   const input = args[0]?.toLowerCase().trim();
 
   if (!input || !CHOICES.includes(input as Choice)) {
-    await message.reply('❌ Choose `rock`, `paper`, or `scissors`.\nExample: `t!rps rock`');
+    await message.reply('❌ Choose `rock`, `paper`, or `scissors`.\nExample: `th/rps rock`');
     return;
   }
 

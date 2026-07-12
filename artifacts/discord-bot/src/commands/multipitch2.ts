@@ -6,14 +6,14 @@
  * Wave Hammer limiter filter.
  *
  * Command syntax (prefix):
- *   t!multipitch2 <pitch1>|<pitch2>|...[||<wave-hammer-type>] [sr=<rate>]
+ *   th/multipitch2 <pitch1>|<pitch2>|...[||<wave-hammer-type>] [sr=<rate>]
  *
  * Wave hammer types: G-Major_17 | Evil_Rampaging_Sorcerer
  *
  * Examples:
- *   t!multipitch2 7|8|9
- *   t!multipitch2 7|8|9||G-Major_17
- *   t!multipitch2 -3|0|4||Evil_Rampaging_Sorcerer sr=48000
+ *   th/multipitch2 7|8|9
+ *   th/multipitch2 7|8|9||G-Major_17
+ *   th/multipitch2 -3|0|4||Evil_Rampaging_Sorcerer sr=48000
  */
 
 import { Message, AttachmentBuilder } from 'discord.js';
@@ -35,7 +35,7 @@ const WAVE_HAMMERS: ReadonlySet<string> = new Set<WaveHammer>(['G-Major_17', 'Ev
 // ── Usage string ─────────────────────────────────────────────────────────────
 
 const USAGE = [
-  '**Usage:** `t!multipitch2 <pitches> [||<wave-hammer>] [sr=<rate>]` — attach a video/audio file',
+  '**Usage:** `th/multipitch2 <pitches> [||<wave-hammer>] [sr=<rate>]` — attach a video/audio file',
   '',
   '**Pitches** (pipe-separated integers, e.g. `7|8|9` or `-3|0|4`)',
   '',
@@ -47,9 +47,9 @@ const USAGE = [
   '`sr=44100` — processing sample rate (default: 44100)',
   '',
   '**Examples:**',
-  '`t!multipitch2 7|8|9`',
-  '`t!multipitch2 7|8|9||G-Major_17`',
-  '`t!multipitch2 -3|0|4||Evil_Rampaging_Sorcerer sr=48000`',
+  '`th/multipitch2 7|8|9`',
+  '`th/multipitch2 7|8|9||G-Major_17`',
+  '`th/multipitch2 -3|0|4||Evil_Rampaging_Sorcerer sr=48000`',
 ].join('\n');
 
 // ── Argument parser ───────────────────────────────────────────────────────────
