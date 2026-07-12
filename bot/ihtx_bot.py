@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-12: Updated th/gradientmap and gradientmap/gmap pipe effect to build the gradient map from a grayscale source: both branches now use `format=gray` so the FFmpeg curves correctly map input luminance to the target RGBA gradient stops.
 - 2026-07-11: Updated th/fzte / th/freakzingatesteffect pipeline to: invlum,huehsv=0.62,ccshue=110,channelblend=b|g|r,invlum,rotate=-0.78539815,tvsim=0.9;4,wave=0|15.000|0.8000|0.3466666667|0|0|0|0|0,rotate=0.78539815,mirror=90|0.840,mirror=right,mirror=bottom,ffmpeg(scale/drawtext/negate),mp3. Fixed th/join — the video join FFmpeg command was built but never executed, causing empty output. Also forced video output to .mp4 and fixed the uploaded filename extension. Added th/join — join 2 videos side-by-side (default) or stacked (use `-vertical`). Also added to `th/ihtxhelp` / `th/help` embeds. Added th/ytdl (alias th/youtubedownload) — yt-dlp download command; sends file directly if ≤8 MB, uploads to Catbox otherwise. Added stretch pipe effect (geq centre-zoom, params: zoom|offset). Added th/pipetest (alias th/pt) — one-shot pipe effect runner.
 - 2026-07-11: Added replied-to plain HTTP(S) URL support for media commands that previously only accepted attachments.
 - 2026-07-10: Refactored _apply_pipe_effects: extracted _ff_vf/_ff_af/_geq/_dl_file helpers and _VF_CODEC/_FF_BASE constants to eliminate repeated FFmpeg command boilerplate across ~15 effects (shake, wave, wave2, wmm3dripple, timecode, radar, jitter, randomjitter, watermark, nepeta, avflip, lut, __rawvf__, __rawaf__).
@@ -951,7 +952,7 @@ def _build_gradientmap_filter(params: list[str]) -> tuple[bool, str, str]:
 
     vf = (
         f"split=3[_gm_a][_gm_b][_gm_t];"
-        f"[_gm_a]format=rgb24,curves=r='{r_c}':g='{g_c}':b='{b_c}'[_gm_aa];"
+        f"[_gm_a]format=gray,curves=r='{r_c}':g='{g_c}':b='{b_c}'[_gm_aa];"
         f"[_gm_b]format=gray,curves=all='{a_c}'[_gm_bb];"
         f"[_gm_aa][_gm_bb]alphamerge[_gm_c];"
         f"[_gm_t][_gm_c]overlay"
