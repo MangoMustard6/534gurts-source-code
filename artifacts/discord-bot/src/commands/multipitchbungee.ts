@@ -3,12 +3,12 @@
  *
  * Port of the standalone bungee pitch-shifter pipeline:
  *   1. Transcode input to FFV1/PCM_S16LE temp video
- *   2. Extract audio shifted down one octave via asetrate=sr/2
- *   3. Run the cached `multipitch` binary with --bungee --no-normalize
+ *   2. Probe actual audio sample rate; extract audio at sr/2 via asetrate
+ *   3. Run the cached `multipitch` binary with <pitches> --bungee --no-normalize
  *   4. Mux processed audio back onto the original video stream
  *
- * Prefix: th/multipitch_bungee [pitch]  (alias: mpb)
- * Default pitch: 1.5
+ * Prefix: th/multipitch_bungee [-7|7]  (alias: mpb)
+ * Pitches: pipe/semicolon/comma/space separated semitone values (default: 1.5)
  */
 
 import fs from 'fs';
@@ -24,7 +24,7 @@ import { PROCESS_TIMEOUTS } from '../config.js';
 
 const MULTIPITCH_BIN = path.resolve(process.cwd(), '../../bot/multipitch');
 const MULTIPITCH_URL = 'https://file.garden/aTXso15ukD3mnuPI/multipitch';
-const SAMPLE_RATE = 44100;
+const FALLBACK_SAMPLE_RATE = 44100;
 
 const IMAGE_EXTENSIONS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'svg', 'ico', 'avif', 'heic',
@@ -36,11 +36,13 @@ const ACCEPTED_EXTENSIONS = new Set([
 ]);
 
 export const PREFIX_USAGE = [
-  '**Usage:** `th/multipitch_bungee [pitch]`  — alias: `mpb`',
+  '**Usage:** `th/multipitch_bungee [pitches]`  — alias: `mpb`',
   '',
-  '  `pitch` — pitch factor passed to the bungee processor (default: `1.5`)',
+  '  `pitches` — pipe/semicolon/comma-separated semitone values (default: `1.5`)',
   '',
-  '**Example:** `th/multipitch_bungee 2.0`',
+  '**Examples:**',
+  '  `th/mpb -7|7` — two-voice bungee at −7 and +7 semitones',
+  '  `th/mpb 1.5` — single voice at +1.5 semitones',
   'Attach a video or audio file, reply to one, or have one in recent channel history.',
 ].join('\n');
 
@@ -58,6 +60,37 @@ async function ensureMultipitchBinary(): Promise<boolean> {
     console.error('[mpb] failed to download multipitch binary:', err);
     return false;
   }
+}
+
+// ── Sample rate probe ────────────────────────────────────────────────────────
+
+async function getAudioSampleRate(filePath: string): Promise<number> {
+  const probe = await spawnAsync('ffprobe', [
+    '-v', 'quiet',
+    '-print_format', 'json',
+    '-show_streams',
+    filePath,
+  ], { timeout: 30_000 });
+  if (probe.code !== 0) return FALLBACK_SAMPLE_RATE;
+  try {
+    const data = JSON.parse(probe.stdout) as { streams?: Array<{ codec_type?: string; sample_rate?: string }> };
+    const audio = data.streams?.find((s) => s.codec_type === 'audio');
+    const sr = audio?.sample_rate ? parseInt(audio.sample_rate, 10) : NaN;
+    return isNaN(sr) || sr <= 0 ? FALLBACK_SAMPLE_RATE : sr;
+  } catch {
+    return FALLBACK_SAMPLE_RATE;
+  }
+}
+
+// ── Pitch parsing ─────────────────────────────────────────────────────────────
+
+function parsePitches(raw: string): string | null {
+  const values = raw.trim().split(/[|;,\s]+/).map((v) => v.trim()).filter(Boolean);
+  if (!values.length) return null;
+  for (const v of values) {
+    if (isNaN(Number(v))) return null;
+  }
+  return values.join(',');
 }
 
 // ── Attachment resolution ────────────────────────────────────────────────────
@@ -94,7 +127,7 @@ async function resolveAttachment(
 // ── Core pipeline ────────────────────────────────────────────────────────────
 
 async function runBungee(
-  pitch: string,
+  pitchArg: string,
   fileUrl: string,
   fileExt: string,
   tmpDir: string,
@@ -112,7 +145,7 @@ async function runBungee(
   const inputRaw = path.join(tmpDir, `input.${fileExt}`);
   await downloadUrl(fileUrl, inputRaw);
 
-  // 2. Transcode to FFV1/PCM_S16LE temp video (mirrors the original script)
+  // 2. Transcode to FFV1/PCM_S16LE temp video
   await setStatus('⏳ Transcoding to FFV1/PCM temp…');
   const tempVideo = path.join(tmpDir, 'temp.mp4');
   const transcode = await spawnAsync('ffmpeg', [
@@ -126,12 +159,14 @@ async function runBungee(
     return null;
   }
 
-  // 3. Extract audio with sample rate halved (asetrate=sr/2)
-  await setStatus('⏳ Extracting audio with octave-down sample rate…');
+  // 3. Probe actual audio sample rate, then extract at sr/2
+  await setStatus('⏳ Probing sample rate and extracting audio…');
+  const sr = await getAudioSampleRate(tempVideo);
+  const halfRate = Math.floor(sr / 2);
   const halfWav = path.join(tmpDir, 'half.wav');
   const extract = await spawnAsync('ffmpeg', [
     '-y', '-i', tempVideo,
-    '-af', `asetrate=${SAMPLE_RATE / 2}`,
+    '-af', `asetrate=${halfRate}`,
     '-c:a', 'pcm_s16le',
     halfWav,
   ], { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
@@ -141,17 +176,17 @@ async function runBungee(
   }
 
   // 4. Run the bungee pitch processor
-  await setStatus(`⏳ Running bungee pitch processor (pitch ${pitch})…`);
+  await setStatus(`⏳ Running bungee pitch processor (pitches: ${pitchArg})…`);
   const outWav = path.join(tmpDir, 'out.wav');
   const bungee = await spawnAsync(MULTIPITCH_BIN, [
-    halfWav, outWav, pitch, '--bungee', '--no-normalize',
+    halfWav, outWav, pitchArg, '--bungee', '--no-normalize',
   ], { timeout: PROCESS_TIMEOUTS.RUBBERBAND_MS });
   if (bungee.code !== 0) {
     await setStatus(`❌ Bungee processor failed.\n\`\`\`\n${bungee.stderr.slice(-400)}\n\`\`\``);
     return null;
   }
 
-  // 5. Mux processed audio back onto the original video stream, encode to MP4
+  // 5. Mux processed audio back onto the original video stream
   await setStatus('⏳ Muxing final output…');
   const outputMp4 = path.join(tmpDir, 'multipitch_bungee.mp4');
   const mux = await spawnAsync('ffmpeg', [
@@ -179,9 +214,10 @@ export async function handleMultipitchBungee(message: Message): Promise<void> {
   if (cmdEnd === -1) cmdEnd = lower.indexOf('mpb');
   const body = content.slice(cmdEnd + (lower.indexOf('multipitch_bungee') === cmdEnd ? 'multipitch_bungee'.length : 'mpb'.length)).trim();
 
-  const pitch = body ? body.split(/\s+/)[0].trim() : '1.5';
-  if (body && isNaN(Number(pitch))) {
-    await message.reply(`❌ Pitch must be a number.\n\n${PREFIX_USAGE}`);
+  const rawPitches = body.split(/\s+/)[0]?.trim() || '1.5';
+  const pitchArg = parsePitches(rawPitches);
+  if (!pitchArg) {
+    await message.reply(`❌ Invalid pitch values — use pipe/semicolon/comma separated numbers, e.g. \`-7|7\`.\n\n${PREFIX_USAGE}`);
     return;
   }
 
@@ -203,9 +239,7 @@ export async function handleMultipitchBungee(message: Message): Promise<void> {
     return;
   }
 
-  const status = await message.reply(
-    `⏳ Multipitch Bungee — pitch **${pitch}**`,
-  );
+  const status = await message.reply(`⏳ Multipitch Bungee — pitches: **${pitchArg.replace(/,/g, ' | ')}**`);
 
   let last = '';
   const setStatus = async (s: string) => {
@@ -215,7 +249,7 @@ export async function handleMultipitchBungee(message: Message): Promise<void> {
 
   const tmpDir = makeTempDir('mpb');
   try {
-    const result = await runBungee(pitch, att.url, ext, tmpDir, setStatus, message.guild);
+    const result = await runBungee(pitchArg, att.url, ext, tmpDir, setStatus, message.guild);
     if (!result) return;
 
     if (!fs.existsSync(result)) { await setStatus('❌ Output file was not created.'); return; }
@@ -227,7 +261,7 @@ export async function handleMultipitchBungee(message: Message): Promise<void> {
     }
 
     await status.edit({
-      content: `✅ Multipitch Bungee done! pitch **${pitch}**`,
+      content: `✅ Multipitch Bungee done! pitches: **${pitchArg.replace(/,/g, ' | ')}**`,
       files: [{ attachment: result, name: 'multipitch_bungee.mp4' }],
     });
   } catch (err) {
@@ -244,7 +278,12 @@ export async function handleMultipitchBungeeInteraction(slash: ChatInputCommandI
   await slash.deferReply();
 
   const attachment = slash.options.getAttachment('file', true);
-  const pitch = String(slash.options.getNumber('pitch') ?? 1.5);
+  const rawPitches = slash.options.getString('pitches') ?? '1.5';
+  const pitchArg = parsePitches(rawPitches);
+  if (!pitchArg) {
+    await slash.editReply(`❌ Invalid pitch values — use pipe/semicolon/comma separated numbers, e.g. \`-7|7\`.`);
+    return;
+  }
 
   const ext = (attachment.name?.split('.').pop() ?? '').toLowerCase();
   if (IMAGE_EXTENSIONS.has(ext)) {
@@ -262,11 +301,11 @@ export async function handleMultipitchBungeeInteraction(slash: ChatInputCommandI
     try { await slash.editReply(s); } catch { /* ignore */ }
   };
 
-  await setStatus(`⏳ Multipitch Bungee — pitch **${pitch}**`);
+  await setStatus(`⏳ Multipitch Bungee — pitches: **${pitchArg.replace(/,/g, ' | ')}**`);
 
   const tmpDir = makeTempDir('mpb');
   try {
-    const result = await runBungee(pitch, attachment.url, ext, tmpDir, setStatus, slash.guild);
+    const result = await runBungee(pitchArg, attachment.url, ext, tmpDir, setStatus, slash.guild);
     if (!result) return;
 
     if (!fs.existsSync(result)) { await setStatus('❌ Output file was not created.'); return; }
@@ -278,7 +317,7 @@ export async function handleMultipitchBungeeInteraction(slash: ChatInputCommandI
     }
 
     await slash.editReply({
-      content: `✅ Multipitch Bungee done! pitch **${pitch}**`,
+      content: `✅ Multipitch Bungee done! pitches: **${pitchArg.replace(/,/g, ' | ')}**`,
       files: [{ attachment: result, name: 'multipitch_bungee.mp4' }],
     });
   } catch (err) {
