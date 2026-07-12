@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-12: Scaled th/ihtx tagscript timeout per-rep: base 180s + 6s per export so high-rep runs (up to 1000) don't get killed mid-process. Full codebase scan confirmed no remaining `source is not defined` bugs outside the five commands already fixed.
 - 2026-07-12: Raised MAX_REPETITIONS from 100 → 1000 for th/ihtx.
 - 2026-07-12: Fixed NameError `source is not defined` in th/stl, th/trim, th/addsource, th/mirror, th/autotune — all five commands used `attachment`/`media_url`/`base_url` to resolve media but then accidentally referenced the undefined `source` variable when building the filename and calling download helpers.
 - 2026-07-12: Updated `mpb`/`bungee`: pipe effect now probes actual audio sample rate and uses sr/2 (was hardcoded 22050). Added standalone `th/mpb` / `th/multipitch_bungee` command to Python bot. Both pipe effect and standalone accept multi-pitch values (pipe/semicolon/comma separated, e.g. `-7|7`). Removed `th/multipitchihtx` from TS bot. Added `mpb`/`bungee` as Bungee pitch type in `th/ihtxsap`.
@@ -2876,6 +2877,7 @@ def _apply_pipe_effects(
     output_path: str,
     effects: list[tuple[str, list[str]]],
     _in_split: bool = False,
+    step_timeout: int = 180,
 ) -> tuple[bool, str]:
     """Apply pipe effects sequentially — each effect is rendered individually
     before the next begins (no filter batching).
@@ -2997,7 +2999,7 @@ def _apply_pipe_effects(
                 ok, err = _run_ffmpeg_raw(
                     _FF_BASE + ["-i", current, "-vf", f"lut3d={lut_path},format=yuv420p",
                                 *_VF_CODEC, "-movflags", "+faststart", out],
-                    timeout=180,
+                    timeout=step_timeout,
                 )
                 if not ok:
                     return False, f"lut3d failed: {err}"
@@ -3043,7 +3045,7 @@ def _apply_pipe_effects(
                                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
                                 "-c:a", "aac", "-b:a", "192k",
                                 "-movflags", "+faststart", "-pix_fmt", "yuv420p", out],
-                    timeout=120,
+                    timeout=step_timeout,
                 )
                 if not ok:
                     return False, f"trim failed: {err}"
@@ -3065,7 +3067,7 @@ def _apply_pipe_effects(
                     _FF_BASE + ["-i", current, "-vf", vf_speed, "-af", af_speed,
                                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", out],
-                    timeout=180,
+                    timeout=step_timeout,
                 )
                 if not ok:
                     return False, f"speed failed: {err}"
@@ -3088,7 +3090,7 @@ def _apply_pipe_effects(
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                     "-i", current,
                 ] + user_args + audio_map + [out]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+                ok, err = _run_ffmpeg_raw(cmd, timeout=step_timeout)
                 if not ok:
                     return False, f"ffmpeg() pipe step failed: {err}"
                 current = out
@@ -3112,7 +3114,7 @@ def _apply_pipe_effects(
                     ok, err = _run_ffmpeg_raw(
                         _FF_BASE + ["-i", current, "-af", af,
                                     "-c:v", "copy", *audio_codec_args, audio_out],
-                        timeout=180,
+                        timeout=step_timeout,
                     )
                     if not ok:
                         return False, f"Audio filter '{name}' failed: {err}"
@@ -3137,7 +3139,7 @@ def _apply_pipe_effects(
                     f"Y+({v_amt})*(2*mod(1000*sin(N+1000)*78.233,1)-1))',"
                     f"crop={vid_w}:{vid_h},format=yuv420p"
                 )
-                ok, err = _ff_vf(current, shake_vf, out)
+                ok, err = _ff_vf(current, shake_vf, out, timeout=step_timeout)
                 if not ok:
                     return False, f"shake failed: {err}"
                 current = out
@@ -3163,7 +3165,7 @@ def _apply_pipe_effects(
                     f"geq='p((W/2)+(X-(W/2))/{zoom},(H/2)+(Y-(H/2))/{offset})',"
                     f"scale=iw:ih,crop={vid_w}:{vid_h},format=yuv420p"
                 )
-                ok, err = _ff_vf(current, stretch_vf, out)
+                ok, err = _ff_vf(current, stretch_vf, out, timeout=step_timeout)
                 if not ok:
                     return False, f"stretch failed: {err}"
                 current = out
@@ -3232,7 +3234,7 @@ def _apply_pipe_effects(
                     f"geq='p({cx},{cy}):cb({cx},{cy}):cr({cx},{cy})',"
                     f"scale=iw:ih,format=yuv420p"
                 )
-                ok, err = _ff_vf(current, vf_str, out)
+                ok, err = _ff_vf(current, vf_str, out, timeout=step_timeout)
                 if not ok:
                     return False, f"wave2 failed: {err}"
                 current = out
@@ -3278,7 +3280,7 @@ def _apply_pipe_effects(
                     f":x=(w-text_w)/1.1"
                     f":y=(h-text_h)/1.12"
                 )
-                ok, err = _ff_vf(current, vf_str, out)
+                ok, err = _ff_vf(current, vf_str, out, timeout=step_timeout)
                 if not ok:
                     return False, f"timecode failed: {err}"
                 current = out
@@ -3306,7 +3308,7 @@ def _apply_pipe_effects(
                                 "-map", "[vout]", "-map", "0:a?",
                                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                                 "-pix_fmt", "yuv420p", "-c:a", "copy", out],
-                    timeout=300,
+                    timeout=step_timeout,
                 )
                 if not ok:
                     return False, f"radar failed: {err}"
@@ -3361,7 +3363,7 @@ def _apply_pipe_effects(
             # Named video filters — rendered immediately
             vf = _build_ffmpeg_pipe_vf(name, params)
             if vf:
-                ok, err = _ff_vf(current, vf, out)
+                ok, err = _ff_vf(current, vf, out, timeout=step_timeout)
                 if not ok:
                     return False, f"Filter '{name}' failed: {err}"
                 current = out
@@ -4334,10 +4336,12 @@ def _run_ihtx_tagscript_workflow(
 
         no_trim_enabled = no_trim.lower() in {"true", "yes"}
         total_exports = abs(exports)
+        # Per-rep timeout scaling: base 180s + 6s per rep (so 1000 reps gets ~6180s)
+        _per_rep_timeout = 180 + (total_exports * 6)
         previous = base
         for i in range(1, total_exports + 2):
             current = os.path.join(tmpdir, f"{i}.{export_format}")
-            ok, err = _apply_pipe_effects(previous, current, effects)
+            ok, err = _apply_pipe_effects(previous, current, effects, step_timeout=_per_rep_timeout)
             if not ok:
                 return False, f"Export {i} failed: {err}"
             # Validate output is non-empty and has video frames before next iteration
