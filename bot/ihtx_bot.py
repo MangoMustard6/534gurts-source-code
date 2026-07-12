@@ -8,6 +8,8 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-12: Added th/join, th/pipetest, th/freakzingatesteffect (th/fzte), and th/youtubedownload (th/ytdl) to `th/ihtxhelp` / `th/bothelp` browse entries so the new commands appear in the Python bot's embed help.
+- 2026-07-12: Disabled the default discord.py `th/help` command so the Python bot no longer sends a non-embed text help; the TypeScript bot's live embed `th/help` is now the only `th/help` response.
 - 2026-07-12: Updated th/gradientmap and gradientmap/gmap pipe effect to build the gradient map from a grayscale source: both branches now use `format=gray` so the FFmpeg curves correctly map input luminance to the target RGBA gradient stops.
 - 2026-07-11: Updated th/fzte / th/freakzingatesteffect pipeline to: invlum,huehsv=0.62,ccshue=110,channelblend=b|g|r,invlum,rotate=-0.78539815,tvsim=0.9;4,wave=0|15.000|0.8000|0.3466666667|0|0|0|0|0,rotate=0.78539815,mirror=90|0.840,mirror=right,mirror=bottom,ffmpeg(scale/drawtext/negate),mp3. Fixed th/join — the video join FFmpeg command was built but never executed, causing empty output. Also forced video output to .mp4 and fixed the uploaded filename extension. Added th/join — join 2 videos side-by-side (default) or stacked (use `-vertical`). Also added to `th/ihtxhelp` / `th/help` embeds. Added th/ytdl (alias th/youtubedownload) — yt-dlp download command; sends file directly if ≤8 MB, uploads to Catbox otherwise. Added stretch pipe effect (geq centre-zoom, params: zoom|offset). Added th/pipetest (alias th/pt) — one-shot pipe effect runner.
 - 2026-07-11: Added replied-to plain HTTP(S) URL support for media commands that previously only accepted attachments.
@@ -589,7 +591,7 @@ if not isinstance(_BOT_PREFIX, str) or not _BOT_PREFIX:
 # Intents and bot
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix=_BOT_PREFIX, intents=intents)
+bot = commands.Bot(command_prefix=_BOT_PREFIX, intents=intents, help_command=None)
 
 # Maps user message id → list of bot reply message ids.
 # Used to delete old responses when the user edits their command.
@@ -10021,6 +10023,16 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "heavy",
+        "name": "th/pipetest <effect1;effect2;...>  (aliases: pt)",
+        "value": "One-shot pipe effect runner. Try `th/pipetest stretch=1.5;negate`.",
+    },
+    {
+        "cat": "heavy",
+        "name": "th/freakzingatesteffect  (aliases: fzte, freaktest)",
+        "value": "Full preset: invlum → huehsv → ccshue → channelblend → rotate → tvsim → wave → mirror → drawtext/negate → mp3.",
+    },
+    {
+        "cat": "heavy",
         "name": "th/lexg  (aliases: lastexportgrab)",
         "value": "Re-apply the last `th/ihtx` export to a new attachment using the same effect chain.",
     },
@@ -10063,6 +10075,11 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "fun",
+        "name": "th/join [media1] [media2] [-vertical]",
+        "value": "Join 2 videos side-by-side (default) or stacked (use `-vertical`).",
+    },
+    {
+        "cat": "fun",
         "name": "th/invite",
         "value": "Get the link to invite IHTX to your server.",
     },
@@ -10070,6 +10087,11 @@ _HELP_ENTRIES: list[dict] = [
         "cat": "fun",
         "name": "th/catbox  (aliases: cb, upload)",
         "value": "Upload any file (up to 200 MB) to catbox.moe and get a permanent direct link.",
+    },
+    {
+        "cat": "fun",
+        "name": "th/youtubedownload <URL or search>  (aliases: ytdl, ydl)",
+        "value": "Download a video from YouTube/URL or search query. Sends directly if ≤8 MB, otherwise Catbox.",
     },
     {
         "cat": "fun",
