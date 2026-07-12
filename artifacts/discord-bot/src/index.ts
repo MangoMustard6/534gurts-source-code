@@ -31,6 +31,8 @@ import { handleRealGMajor4 } from './commands/realgmajor4.js';
 import { handleMultipitch2 } from './commands/multipitch2.js';
 import { handleIhtxSap, handleIhtxSapInteraction, IHTXSAP_STYLE_CHOICES } from './commands/ihtxsap.js';
 import { handleStretchToLength } from './commands/stretchtolength.js';
+import { handleBlockuserCommand, handleUnblockuserCommand, isBlocked as isUserBlocked } from './commands/blockuser.js';
+import { handleBlockchannelCommand, handleUnblockchannelCommand, isBlockedInChannel } from './commands/blockchannel.js';
 
 if (!BOT_TOKEN) {
   console.error('ERROR: DISCORD_TOKEN environment variable is not set.');
@@ -138,6 +140,24 @@ client.once('clientReady', async (c) => {
 client.on('messageCreate', async (message: Message) => {
   if (message.author.bot) return;
   if (!message.content.startsWith(PREFIX)) return;
+
+  if (isUserBlocked(message.author.id)) {
+    const info = await import('./commands/blockuser.js').then((m) => m.getBlockInfo(message.author.id));
+    if (info) {
+      const until = Math.floor(info.until / 1000);
+      await message.reply(`🚫 You are blocked from using the bot globally until <t:${until}:F>.`).catch(() => null);
+    }
+    return;
+  }
+
+  if (message.guildId && isBlockedInChannel(message.author.id, message.channelId)) {
+    const info = await import('./commands/blockchannel.js').then((m) => m.getChannelBlockInfo(message.author.id, message.channelId));
+    if (info) {
+      const until = Math.floor(info.until / 1000);
+      await message.reply(`🚫 You are blocked from using bot commands in this channel until <t:${until}:F>.`).catch(() => null);
+    }
+    return;
+  }
 
   const body = message.content.slice(PREFIX.length).trimStart();
   const spaceIdx = body.search(/\s/);

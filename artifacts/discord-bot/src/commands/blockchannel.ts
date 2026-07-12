@@ -4,44 +4,52 @@ import { Message } from "discord.js";
 import { BOT_OWNER_ID } from "../config.js";
 
 const DATA_DIR = "/home/runner/workspace/data";
-const BLOCKS_FILE = join(DATA_DIR, "blocks.json");
+const CHANNEL_BLOCKS_FILE = join(DATA_DIR, "channel_blocks.json");
 
 interface BlockEntry {
   until: number;
   username: string;
 }
 
-type BlockStore = Record<string, BlockEntry>;
+type ChannelBlockStore = Record<string, Record<string, BlockEntry>>;
 
-function load(): BlockStore {
-  if (!existsSync(BLOCKS_FILE)) return {};
+function load(): ChannelBlockStore {
+  if (!existsSync(CHANNEL_BLOCKS_FILE)) return {};
   try {
-    return JSON.parse(readFileSync(BLOCKS_FILE, "utf-8")) as BlockStore;
+    return JSON.parse(readFileSync(CHANNEL_BLOCKS_FILE, "utf-8")) as ChannelBlockStore;
   } catch {
     return {};
   }
 }
 
-function save(store: BlockStore): void {
+function save(store: ChannelBlockStore): void {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(BLOCKS_FILE, JSON.stringify(store, null, 2), "utf-8");
+  writeFileSync(CHANNEL_BLOCKS_FILE, JSON.stringify(store, null, 2), "utf-8");
 }
 
-export function isBlocked(userId: string): boolean {
+export function isBlockedInChannel(userId: string, channelId: string): boolean {
   const store = load();
-  const entry = store[userId];
+  const channel = store[channelId];
+  if (!channel) return false;
+  const entry = channel[userId];
   if (!entry) return false;
   if (Date.now() >= entry.until) {
-    delete store[userId];
+    delete channel[userId];
+    if (Object.keys(channel).length === 0) delete store[channelId];
     save(store);
     return false;
   }
   return true;
 }
 
-export function getBlockInfo(userId: string): BlockEntry | null {
+export function getChannelBlockInfo(
+  userId: string,
+  channelId: string,
+): BlockEntry | null {
   const store = load();
-  const entry = store[userId];
+  const channel = store[channelId];
+  if (!channel) return null;
+  const entry = channel[userId];
   if (!entry) return null;
   if (Date.now() >= entry.until) return null;
   return entry;
@@ -78,10 +86,11 @@ async function resolveTarget(
   return null;
 }
 
-export async function handleBlockuserCommand(message: Message): Promise<void> {
-  if (!requireOwner(message)) return;
+export async function handleBlockchannelCommand(message: Message): Promise<void> {
+  if (!(await requireOwner(message))) return;
 
-  const rest = message.content.slice("th/blockuser".length).trim();
+  const channelId = message.channelId;
+  const rest = message.content.slice("th/blockchannel".length).trim();
   const parts = rest.split(/\s+/);
 
   const targetRaw = parts[0] ?? "";
@@ -89,7 +98,7 @@ export async function handleBlockuserCommand(message: Message): Promise<void> {
   const hours = parseFloat(hoursRaw);
 
   if (!targetRaw || isNaN(hours) || hours <= 0) {
-    await message.reply("❌ Usage: `th/blockuser <@mention|userId> <hours>`");
+    await message.reply("❌ Usage: `th/blockchannel <@mention|userId> <hours>`");
     return;
   }
 
@@ -103,23 +112,25 @@ export async function handleBlockuserCommand(message: Message): Promise<void> {
 
   const until = Date.now() + Math.round(hours * 3_600_000);
   const store = load();
-  store[target.id] = { until, username: target.username };
+  if (!store[channelId]) store[channelId] = {};
+  store[channelId]![target.id] = { until, username: target.username };
   save(store);
 
   const unixSec = Math.floor(until / 1000);
   await message.reply(
-    `✅ **${target.username}** is globally blocked from using the bot for **${hours}h** (until <t:${unixSec}:F>).`,
+    `✅ **${target.username}** is blocked from using the bot in this channel for **${hours}h** (until <t:${unixSec}:F>).`,
   );
 }
 
-export async function handleUnblockuserCommand(message: Message): Promise<void> {
-  if (!requireOwner(message)) return;
+export async function handleUnblockchannelCommand(message: Message): Promise<void> {
+  if (!(await requireOwner(message))) return;
 
-  const rest = message.content.slice("th/unblockuser".length).trim();
+  const channelId = message.channelId;
+  const rest = message.content.slice("th/unblockchannel".length).trim();
   const targetRaw = rest.trim();
 
   if (!targetRaw) {
-    await message.reply("❌ Usage: `th/unblockuser <@mention|userId>`");
+    await message.reply("❌ Usage: `th/unblockchannel <@mention|userId>`");
     return;
   }
 
@@ -127,12 +138,14 @@ export async function handleUnblockuserCommand(message: Message): Promise<void> 
   if (!target) return;
 
   const store = load();
-  if (!store[target.id]) {
-    await message.reply("ℹ️ That user is not currently globally blocked.");
+  const channel = store[channelId];
+  if (!channel || !channel[target.id]) {
+    await message.reply("ℹ️ That user is not currently blocked in this channel.");
     return;
   }
-  const name = store[target.id]!.username;
-  delete store[target.id];
+  const name = channel[target.id]!.username;
+  delete channel[target.id];
+  if (Object.keys(channel).length === 0) delete store[channelId];
   save(store);
-  await message.reply(`✅ **${name}** has been globally unblocked.`);
+  await message.reply(`✅ **${name}** has been unblocked in this channel.`);
 }
