@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-12: Switched bot presence to `Playing "Making Effects in {N} servers!"` — updates live on guild join/leave via `on_guild_join`/`on_guild_remove` handlers. Only applies when no saved `activity.json` overrides it.
 - 2026-07-12: Replaced `zoom` pipe effect with geq pixel-remap (ports TS logic): `zoom=2` zooms in, `zoom=0.5` zooms out with black bars, default `1.5`. Fixed crash when s < 1.
 - 2026-07-12: Added per-voice volume boost to multipitch pipe effect (bungee + normal): volume = number of voices during remux (2 voices → volume=2, 3 voices → volume=3).
 - 2026-07-12: Scaled th/ihtx tagscript timeout per-rep: base 180s + 6s per export so high-rep runs (up to 1000) don't get killed mid-process. Full codebase scan confirmed no remaining `source is not defined` bugs outside the five commands already fixed.
@@ -5780,10 +5781,8 @@ async def on_ready():
         await bot.add_cog(TagCog(bot))
         print("TagCog loaded")
     _activity_file = Path("bot/activity.json")
-    _default_activity = discord.Activity(
-        type=discord.ActivityType.watching,
-        name="Meet the Sparkles! ✨👗 | Sparkles Magical Market Full Episode | Cartoons for Kids"
-    )
+    _guild_count = len(bot.guilds)
+    _default_activity = discord.Game(name=f"Making Effects in {_guild_count} servers!")
     try:
         if _activity_file.exists():
             with _activity_file.open() as _af:
@@ -5851,6 +5850,16 @@ async def on_ready():
     print("Bot ready. Run th/syncslash to register slash (/) commands.")
 
 
+@bot.event
+async def on_guild_join(guild):
+    _gc = len(bot.guilds)
+    await bot.change_presence(activity=discord.Game(name=f"Making Effects in {_gc} servers!"))
+
+
+@bot.event
+async def on_guild_remove(guild):
+    _gc = len(bot.guilds)
+    await bot.change_presence(activity=discord.Game(name=f"Making Effects in {_gc} servers!"))
 
 
 def _run_ihtxcustom_workflow(
