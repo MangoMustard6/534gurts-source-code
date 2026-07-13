@@ -269,7 +269,7 @@ def _expr_param(param: str | None, default: float) -> str:
 
 
 # Heavy command rate limiting
-HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "preview1280", "p1280", "oppositep1280", "op1280", "preview1280with640x360resize", "p1280ff!3", "p1280w16:9r", "multipitch", "mp", "multi", "lexg", "chat", "ask", "ai", "ihtxsap", "sap", "concatenate", "concat", "join", "multipitch_bungee", "mpb"}
+HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "preview1280", "p1280", "oppositep1280", "op1280", "preview1280with640x360resize", "p1280ff!3", "p1280w16:9r", "multipitch", "mp", "multi", "lexg", "chat", "ask", "ai", "ihtxsap", "sap", "concatenate", "concat", "join", "multipitch_bungee", "mpb", "bmp", "multipitchbungee", "bungeemultipitch"}
 HEAVY_LIMIT_DEFAULT = 20
 HEAVY_LIMIT_OWNER = 5340
 LIMITS_FILE = Path("bot/limits.json")
@@ -3009,10 +3009,19 @@ def _apply_pipe_effects(
                 continue
 
             # Rubber Band R3 multipitch (add `bungee` or `--bungee` flag for bungee mode)
+            # Append `:true` to params to add alimiter=0.99 after processing.
+            # e.g. mp=-6|9:true  →  pitch shift then hard limit
             if name in ("multipitch", "mp", "multi"):
-                ok, err = _run_multipitch_rb3(current, out, params)
+                _mp_use_lim = params and params[-1].strip().lower() == "true"
+                _mp_params = params[:-1] if _mp_use_lim else params
+                ok, err = _run_multipitch_rb3(current, out, _mp_params)
                 if not ok:
                     return False, err
+                if _mp_use_lim:
+                    _lim_out = out + "_lim.mp4"
+                    _lim_ok, _lim_err = _ff_af(out, "alimiter=limit=0.99:level=false:latency=1", _lim_out)
+                    if _lim_ok:
+                        os.replace(_lim_out, out)
                 current = out
                 continue
 
@@ -4692,14 +4701,12 @@ def _run_multipitch_bungee(
             stderr_note = res.stderr.decode(errors="replace")[-300:] if res.stderr else ""
             return False, f"bungee: multipitch binary failed: {stderr_note}"
 
-        # 5. Remux with per-voice volume boost (louder with more voices)
-        _bungee_vol = float(len(semitones))
+        # 5. Remux pitched audio with original video (or audio-only)
         if has_video:
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y", "-i", temp_video, "-i", out_wav,
                 "-map", "0:v", "-map", "1:a",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                "-af", f"volume={_bungee_vol:.6f}",
                 "-c:a", "aac", "-b:a", "192k",
                 "-pix_fmt", "yuv420p",
                 output_path,
@@ -4708,7 +4715,6 @@ def _run_multipitch_bungee(
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y",
                 "-i", out_wav,
-                "-af", f"volume={_bungee_vol:.6f}",
                 "-c:a", "aac", "-b:a", "192k",
                 output_path,
             ], timeout=180)
@@ -4819,7 +4825,6 @@ def _run_multipitch_rb3(
         # ── 7. Remux pitched audio with original video (or audio-only) ───────
         # Use -c:v copy to preserve original timestamps exactly — re-encoding
         # would reset the timebase and cause the video to play back faster.
-        _mp_vol = float(len(semitones))
         if has_video:
             dur_flag = str(round(actual_dur, 6)) if actual_dur > 0 else cap
             ok, err = _run_ffmpeg_raw([
@@ -4829,7 +4834,6 @@ def _run_multipitch_rb3(
                 "-map", "0:v",
                 "-map", "1:a",
                 "-c:v", "copy",
-                "-af", f"volume={_mp_vol:.6f}",
                 "-c:a", "aac", "-b:a", "192k",
                 "-t", dur_flag,
                 output_path,
@@ -4838,7 +4842,6 @@ def _run_multipitch_rb3(
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y",
                 "-i", out_wav,
-                "-af", f"volume={_mp_vol:.6f}",
                 "-c:a", "aac", "-b:a", "192k",
                 output_path,
             ], timeout=180)
@@ -7018,10 +7021,7 @@ def _ihtxsap_amix(layer_paths: list[str], output: str) -> tuple[bool, str]:
     cmd = ["ffmpeg", "-y"]
     for lp in layer_paths:
         cmd += ["-i", lp]
-    fc = (
-        f"amix=inputs={len(layer_paths)}:duration=longest:normalize=0"
-        f",alimiter=limit=0.99:level=false"
-    )
+    fc = f"amix=inputs={len(layer_paths)}:duration=longest:normalize=0"
     cmd += [
         "-filter_complex", fc,
         "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
@@ -7430,7 +7430,7 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
 
 _MPB_USAGE = (
     "**th/mpb** — Bungee pitch-shifter pipeline with video passthrough\n\n"
-    "**Usage:** `th/mpb [pitches]`  (alias: `th/multipitch_bungee`)\n\n"
+    "**Usage:** `th/mpb [pitches]`  (aliases: `th/bmp` `th/multipitchbungee` `th/bungeemultipitch`)\n\n"
     "  `pitches` — pipe/semicolon/comma-separated semitone values (default: `1.5`)\n\n"
     "**Examples:**\n"
     "  `th/mpb -7|7` — two-voice bungee at −7 and +7 semitones\n"
@@ -7439,7 +7439,7 @@ _MPB_USAGE = (
 )
 
 
-@bot.command(name="multipitch_bungee", aliases=["mpb"])
+@bot.command(name="multipitch_bungee", aliases=["mpb", "bmp", "multipitchbungee", "bungeemultipitch"])
 async def mpb_command(ctx: commands.Context, *, args: str = "") -> None:
     """Standalone bungee pitch-shifter. Usage: th/mpb [pitches]"""
     pitch_str = args.strip() or "1.5"
