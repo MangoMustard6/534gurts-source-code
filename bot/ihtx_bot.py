@@ -4754,18 +4754,15 @@ def _run_multipitch_rb3(
     output_path: str,
     pitch_values: list[str],
 ) -> tuple[bool, str]:
-    """Multi-voice pitch shift — single FFmpeg pass with amix=inputs=N:normalize=0.
+    """Multi-voice pitch shift using rubberband R3 CLI per voice + amix.
 
-    Primary pipeline (Tier 1): one FFmpeg invocation using filter_complex:
-      [0:a]asplit=N[s0][s1]...[sN-1];
-      [s0]rubberband=pitch=R0[v0];
-      [s1]rubberband=pitch=R1[v1];
-      ...
-      [v0][v1]...amix=inputs=N:normalize=0[outa]
-    Video stream is copied untouched with -c:v copy.
+    Primary pipeline (Tier 1): rubberband -3 -p <st> once per voice, then
+      FFmpeg amix=inputs=N:normalize=0 → FLAC/MKV output.
 
-    Fallback (Tier 2): extract PCM WAV → rubberband R3 CLI (-3 -p <st>)
-      per voice → amix → remux to MKV.
+    Fallback (Tier 2): single FFmpeg filter_complex pass:
+      [0:a]asplit=N[s0]..[sN-1];
+      [s0]rubberband=pitch=R0[v0]; ...
+      [v0]..[vN-1]amix=inputs=N:normalize=0[outa]
 
     Accepts ; | , or whitespace as pitch separators.
     Add the `bungee` or `--bungee` flag anywhere in the params to switch to
@@ -4821,9 +4818,82 @@ def _run_multipitch_rb3(
     cap = str(int(min(actual_dur, MAX_DURATION)) + 1) if actual_dur > 0 else str(MAX_DURATION)
     dur_flag = str(round(actual_dur, 6)) if actual_dur > 0 else cap
 
-    # ── 4. Tier 1: single FFmpeg pass — asplit → rubberband:pitch → amix ─────
-    #   Build: [0:a]asplit=N[s0]..[sN-1]; [s0]rubberband=pitch=R0[v0]; ...;
-    #          [v0]..[vN-1]amix=inputs=N:normalize=0[outa]
+    # ── 4. Tier 1: rubberband R3 CLI per voice → amix → MKV/FLAC ─────────────
+    rb_bin = shutil.which("rubberband")
+    if rb_bin:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Extract stereo PCM WAV for rubberband
+            base_wav = os.path.join(tmpdir, "base.wav")
+            ok, err = _run_ffmpeg_raw([
+                "ffmpeg", "-y",
+                "-t", cap, "-i", input_path,
+                "-vn", "-ar", "44100", "-ac", "2",
+                "-c:a", "pcm_s16le", "-t", cap,
+                base_wav,
+            ], timeout=120)
+            if not ok:
+                print(f"[multipitch] WAV extraction failed: {err[-200:]} — trying filter_complex fallback")
+            else:
+                # rubberband -3 -p <st> -t1 per voice
+                voice_wavs: list[str] = []
+                rb_ok = True
+                for idx, st in enumerate(semitones):
+                    v_wav = os.path.join(tmpdir, f"rb3_v{idx}.wav")
+                    rb_res = subprocess.run(
+                        [rb_bin, "-3", f"-p{st:+.4f}", "-t1", base_wav, v_wav],
+                        capture_output=True, text=True, timeout=300,
+                    )
+                    if rb_res.returncode != 0:
+                        print(
+                            f"[multipitch] rubberband R3 failed (voice {idx}, {st:+.2f}st): "
+                            f"{rb_res.stderr[-200:]} — trying filter_complex fallback"
+                        )
+                        rb_ok = False
+                        break
+                    voice_wavs.append(v_wav)
+
+                if rb_ok and voice_wavs:
+                    # Amix voices → WAV
+                    out_wav = os.path.join(tmpdir, "pitched.wav")
+                    mix_cmd = ["ffmpeg", "-y"]
+                    for vw in voice_wavs:
+                        mix_cmd += ["-i", vw]
+                    mix_cmd += [
+                        "-filter_complex", f"amix=inputs={len(voice_wavs)}:normalize=0",
+                        "-c:a", "pcm_s16le",
+                        out_wav,
+                    ]
+                    ok, err = _run_ffmpeg_raw(mix_cmd, timeout=300)
+                    if not ok:
+                        print(f"[multipitch] amix failed: {err[-200:]} — trying filter_complex fallback")
+                    else:
+                        # Remux to MKV/FLAC
+                        mkv_out = os.path.join(tmpdir, "mp_t1.mkv")
+                        if has_video:
+                            ok, err = _run_ffmpeg_raw([
+                                "ffmpeg", "-y",
+                                "-t", cap, "-i", input_path,
+                                "-i", out_wav,
+                                "-map", "0:v", "-map", "1:a",
+                                "-c:v", "copy", "-c:a", "flac",
+                                "-t", dur_flag, mkv_out,
+                            ], timeout=300)
+                        else:
+                            ok, err = _run_ffmpeg_raw([
+                                "ffmpeg", "-y",
+                                "-i", out_wav,
+                                "-c:a", "flac",
+                                mkv_out,
+                            ], timeout=180)
+                        if ok:
+                            os.replace(mkv_out, output_path)
+                            return True, ""
+                        print(f"[multipitch] remux failed: {err[-200:]} — trying filter_complex fallback")
+    else:
+        print("[multipitch] rubberband CLI not found — trying filter_complex fallback")
+
+    # ── 5. Tier 2: single FFmpeg filter_complex pass ──────────────────────────
+    #   asplit=N → rubberband:pitch per voice → amix=inputs=N:normalize=0
     if n == 1:
         pitch_ratio = 2.0 ** (semitones[0] / 12.0)
         fc = (
@@ -4843,19 +4913,16 @@ def _run_multipitch_rb3(
         mix_part   = f"{mix_inputs}amix=inputs={n}:normalize=0[outa]"
         fc = ";".join([split_part] + voice_parts + [mix_part])
 
-    # Always write to MKV — FLAC is fully supported in Matroska; MP4 muxer
-    # can silently produce an unplayable audio track with FLAC on some clients.
-    # We write to a temp .mkv then replace the caller's output_path in-place.
-    with tempfile.TemporaryDirectory() as _tier1_tmp:
-        mkv_out = os.path.join(_tier1_tmp, "mp_t1.mkv")
+    with tempfile.TemporaryDirectory() as _t2_tmp:
+        mkv_out2 = os.path.join(_t2_tmp, "mp_t2.mkv")
         if has_video:
             cmd = (
                 _FF_BASE
                 + ["-t", cap, "-i", input_path]
                 + ["-filter_complex", fc]
                 + ["-map", "0:v", "-map", "[outa]"]
-                + ["-c:v", "copy", "-c:a", "flac", "-qp", "1"]
-                + ["-t", dur_flag, mkv_out]
+                + ["-c:v", "copy", "-c:a", "flac"]
+                + ["-t", dur_flag, mkv_out2]
             )
         else:
             cmd = (
@@ -4863,88 +4930,14 @@ def _run_multipitch_rb3(
                 + ["-i", input_path]
                 + ["-filter_complex", fc]
                 + ["-map", "[outa]"]
-                + ["-c:a", "flac", "-qp", "1", mkv_out]
+                + ["-c:a", "flac", mkv_out2]
             )
-
         ok, err = _run_ffmpeg_raw(cmd, timeout=300)
         if ok:
-            os.replace(mkv_out, output_path)
+            os.replace(mkv_out2, output_path)
             return True, ""
 
-    print(f"[multipitch] filter_complex tier failed: {err[-300:]} — trying rubberband R3 fallback")
-
-    # ── 5. Tier 2: WAV extraction → rubberband R3 per voice → amix → remux ───
-    rb_bin = shutil.which("rubberband")
-    if not rb_bin:
-        return False, "❌ rubberband CLI not found — cannot run R3 fallback."
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Extract mono/stereo PCM WAV at 44100 Hz for rubberband
-        base_wav = os.path.join(tmpdir, "base.wav")
-        ok, err = _run_ffmpeg_raw([
-            "ffmpeg", "-y",
-            "-t", cap, "-i", input_path,
-            "-vn", "-ar", "44100", "-ac", "2",
-            "-c:a", "pcm_s16le", "-t", cap,
-            base_wav,
-        ], timeout=120)
-        if not ok:
-            return False, f"Audio extraction failed: {err}"
-
-        # Run rubberband R3 (-3) once per voice
-        voice_wavs: list[str] = []
-        for idx, st in enumerate(semitones):
-            v_wav = os.path.join(tmpdir, f"rb3_v{idx}.wav")
-            rb_res = subprocess.run(
-                [rb_bin, "-3", f"-p{st:+.4f}", "-t1", base_wav, v_wav],
-                capture_output=True, text=True, timeout=300,
-            )
-            if rb_res.returncode != 0:
-                return False, (
-                    f"❌ rubberband R3 failed (voice {idx}, {st:+.2f}st): "
-                    f"{rb_res.stderr[-300:]}"
-                )
-            voice_wavs.append(v_wav)
-
-        # Amix all voices
-        out_wav = os.path.join(tmpdir, "pitched.wav")
-        mix_cmd = ["ffmpeg", "-y"]
-        for vw in voice_wavs:
-            mix_cmd += ["-i", vw]
-        mix_cmd += [
-            "-filter_complex", f"amix=inputs={len(voice_wavs)}:normalize=0",
-            "-c:a", "pcm_s16le",
-            out_wav,
-        ]
-        ok, err = _run_ffmpeg_raw(mix_cmd, timeout=300)
-        if not ok:
-            return False, f"amix failed: {err}"
-
-        # Remux to MKV with FLAC audio
-        mkv_out2 = os.path.join(tmpdir, "mp_t2.mkv")
-        if has_video:
-            ok, err = _run_ffmpeg_raw([
-                "ffmpeg", "-y",
-                "-t", cap, "-i", input_path,
-                "-i", out_wav,
-                "-map", "0:v", "-map", "1:a",
-                "-c:v", "copy", "-c:a", "flac",
-                "-t", dur_flag, mkv_out2,
-            ], timeout=300)
-        else:
-            ok, err = _run_ffmpeg_raw([
-                "ffmpeg", "-y",
-                "-i", out_wav,
-                "-c:a", "flac",
-                mkv_out2,
-            ], timeout=180)
-
-        if not ok:
-            return False, f"Remux failed: {err}"
-
-        os.replace(mkv_out2, output_path)
-
-    return True, ""
+    return False, f"❌ Multipitch failed (all tiers exhausted): {err[-300:]}"
 
 
 # Keep the old name as an alias so legacy pipe-effect calls still resolve
