@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-13: Fixed th/unblockuser — owners are now exempt from the user-blocklist check in _global_checks, so a blocked owner can still run unblockuser (and can never be silently blocked from owner commands). Added BOT_OWNER_ID env var support to set the primary owner without editing code.
+- 2026-07-13: Added `th/effectlist` alias to `th/listeffects`. Fixed th/unblockuser — owners are now exempt from the user-blocklist check in _global_checks, so a blocked owner can still run unblockuser (and can never be silently blocked from owner commands). Added BOT_OWNER_ID env var support to set the primary owner without editing code.
 - 2026-07-13: Added th/submiteffect (aliases: se, addeffect), th/listeffects (le), th/deleteeffect — user-submitted named pipe effects stored in bot/user_effects.json and auto-expanded in _parse_pipe_effects. Removed effect label from th/ihtx queue header, live ticker, and result embed Effect: fields.
 - 2026-07-12: Switched bot presence to `Playing "Making Effects in {N} servers!"` — updates live on guild join/leave via `on_guild_join`/`on_guild_remove` handlers. Only applies when no saved `activity.json` overrides it.
 - 2026-07-12: Replaced `zoom` pipe effect with geq pixel-remap (ports TS logic): `zoom=2` zooms in, `zoom=0.5` zooms out with black bars, default `1.5`. Fixed crash when s < 1.
@@ -6283,7 +6283,7 @@ async def submiteffect_command(ctx: commands.Context, name: str = "", *, effects
     await ctx.reply(embed=embed)
 
 
-@bot.command(name="listeffects", aliases=["usereffects", "le"])
+@bot.command(name="listeffects", aliases=["usereffects", "le", "effectlist"])
 async def listeffects_command(ctx: commands.Context, *, search: str = ""):
     """List all user-submitted named pipe effects.
 
