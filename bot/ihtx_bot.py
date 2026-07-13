@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-13: Fixed th/unblockuser — owners are now exempt from the user-blocklist check in _global_checks, so a blocked owner can still run unblockuser (and can never be silently blocked from owner commands). Added BOT_OWNER_ID env var support to set the primary owner without editing code.
 - 2026-07-13: Added th/submiteffect (aliases: se, addeffect), th/listeffects (le), th/deleteeffect — user-submitted named pipe effects stored in bot/user_effects.json and auto-expanded in _parse_pipe_effects. Removed effect label from th/ihtx queue header, live ticker, and result embed Effect: fields.
 - 2026-07-12: Switched bot presence to `Playing "Making Effects in {N} servers!"` — updates live on guild join/leave via `on_guild_join`/`on_guild_remove` handlers. Only applies when no saved `activity.json` overrides it.
 - 2026-07-12: Replaced `zoom` pipe effect with geq pixel-remap (ports TS logic): `zoom=2` zooms in, `zoom=0.5` zooms out with black bars, default `1.5`. Fixed crash when s < 1.
@@ -107,8 +108,8 @@ except Exception as _groq_init_err:
 TOKEN = os.environ.get("DISCORD_TOKEN")
 CATBOX_USERHASH = os.environ.get("CATBOX_USERHASH", "")
 
-# Default owner (can be extended via owner file)
-OWNER_ID = 1355759019330895973
+# Default owner (can be extended via owner file or BOT_OWNER_ID env var)
+OWNER_ID = int(os.environ.get("BOT_OWNER_ID", "1355759019330895973"))
 
 OWNER_IDS_FILE = Path("bot/owner_ids.json")
 owner_ids: set[int] = {OWNER_ID}
@@ -729,8 +730,8 @@ async def _global_checks(ctx: commands.Context) -> bool:
     # Channel blocked
     if ctx.channel.id in channel_blocks:
         return False
-    # User blocked
-    if ctx.author.id in blocklist:
+    # User blocked — owners are always exempt so they can unblock themselves
+    if ctx.author.id in blocklist and ctx.author.id not in owner_ids:
         return False
     # Heavy command rate limiting
     if ctx.command and ctx.command.name in HEAVY_COMMANDS:
