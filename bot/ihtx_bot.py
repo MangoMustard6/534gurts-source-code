@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-13: Added `th/effectlist` alias to `th/listeffects`. Fixed th/unblockuser — owners are now exempt from the user-blocklist check in _global_checks, so a blocked owner can still run unblockuser (and can never be silently blocked from owner commands). Added BOT_OWNER_ID env var support to set the primary owner without editing code.
+- 2026-07-13: User-submitted effects (`th/submiteffect`) are now global across all guilds and record the guild name/id. Added `th/randomlist` embed showing every random-pool entry and who/guild added it. Random pool entries now store author/guild metadata. Blocked users and blocked channels are now also enforced for slash (/) commands via `bot.tree.interaction_check`. Added `th/effectlist` alias to `th/listeffects`. Fixed th/unblockuser — owners are now exempt from the user-blocklist check in _global_checks, so a blocked owner can still run unblockuser (and can never be silently blocked from owner commands). Added BOT_OWNER_ID env var support to set the primary owner without editing code.
 - 2026-07-13: Added th/submiteffect (aliases: se, addeffect), th/listeffects (le), th/deleteeffect — user-submitted named pipe effects stored in bot/user_effects.json and auto-expanded in _parse_pipe_effects. Removed effect label from th/ihtx queue header, live ticker, and result embed Effect: fields.
 - 2026-07-12: Switched bot presence to `Playing "Making Effects in {N} servers!"` — updates live on guild join/leave via `on_guild_join`/`on_guild_remove` handlers. Only applies when no saved `activity.json` overrides it.
 - 2026-07-12: Replaced `zoom` pipe effect with geq pixel-remap (ports TS logic): `zoom=2` zooms in, `zoom=0.5` zooms out with black bars, default `1.5`. Fixed crash when s < 1.
@@ -601,6 +601,23 @@ if not isinstance(_BOT_PREFIX, str) or not _BOT_PREFIX:
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix=_BOT_PREFIX, intents=intents, help_command=None)
+
+
+@bot.tree.interaction_check
+async def _slash_global_check(interaction: discord.Interaction) -> bool:
+    """Mirror the prefix command global checks for slash (/) commands."""
+    # Blocked users — owners are exempt so they can always unblock themselves
+    if interaction.user.id in blocklist and interaction.user.id not in owner_ids:
+        try:
+            await interaction.response.send_message("❌ You are blocked from using this bot.", ephemeral=True)
+        except Exception:
+            pass
+        return False
+    # Blocked channels
+    if interaction.channel and interaction.channel.id in channel_blocks:
+        return False
+    return True
+
 
 # Maps user message id → list of bot reply message ids.
 # Used to delete old responses when the user edits their command.
@@ -2357,6 +2374,13 @@ def _save_user_effects() -> None:
             json.dump(_USER_EFFECTS, f, indent=2)
     except Exception as e:
         print(f"[user_effects] Failed to save: {e}")
+
+
+def _effect_guild_name(ctx: commands.Context) -> str:
+    """Return the guild name to store for a user effect or random-media entry."""
+    if ctx.guild:
+        return ctx.guild.name or f"Guild {ctx.guild.id}"
+    return "Direct Messages"
 
 
 _load_user_effects()
@@ -4730,14 +4754,18 @@ def _run_multipitch_rb3(
     output_path: str,
     pitch_values: list[str],
 ) -> tuple[bool, str]:
-    """Multi-voice pitch shift using the Signalsmith fileaa binary + FFmpeg.
+    """Multi-voice pitch shift — single FFmpeg pass with amix=inputs=N:normalize=0.
 
-    Pipeline:
-      1. Validate & deduplicate semitone values.
-      2. Extract 16-bit PCM WAV audio from the input.
-      3. Run fileaa with all pitches as a comma-separated list (single call).
-      4. Remux the output WAV back over the original video stream, or emit
-         audio-only when the input has no video.
+    Primary pipeline (Tier 1): one FFmpeg invocation using filter_complex:
+      [0:a]asplit=N[s0][s1]...[sN-1];
+      [s0]rubberband=pitch=R0[v0];
+      [s1]rubberband=pitch=R1[v1];
+      ...
+      [v0][v1]...amix=inputs=N:normalize=0[outa]
+    Video stream is copied untouched with -c:v copy.
+
+    Fallback (Tier 2): extract PCM WAV → fileaa binary → rubberband CLI →
+      FFmpeg rubberband filter (via _run_fileaa_with_fallback).
 
     Accepts ; | , or whitespace as pitch separators.
     Add the `bungee` or `--bungee` flag anywhere in the params to switch to
@@ -4779,11 +4807,9 @@ def _run_multipitch_rb3(
             seen.add(val)
             semitones.append(val)
 
-    # ── 3. Ensure binary is available ────────────────────────────────────────
-    if not _ensure_multipitch_bin():
-        return False, "❌ Multipitch binary unavailable — download failed."
+    n = len(semitones)
 
-    # ── 4. Probe input ───────────────────────────────────────────────────────
+    # ── 3. Probe input ───────────────────────────────────────────────────────
     has_video = bool(_ffprobe(
         input_path,
         "-select_streams", "v:0",
@@ -4793,51 +4819,87 @@ def _run_multipitch_rb3(
 
     actual_dur = _ffprobe_duration(input_path)
     cap = str(int(min(actual_dur, MAX_DURATION)) + 1) if actual_dur > 0 else str(MAX_DURATION)
+    dur_flag = str(round(actual_dur, 6)) if actual_dur > 0 else cap
 
+    # ── 4. Tier 1: single FFmpeg pass — asplit → rubberband:pitch → amix ─────
+    #   Build: [0:a]asplit=N[s0]..[sN-1]; [s0]rubberband=pitch=R0[v0]; ...;
+    #          [v0]..[vN-1]amix=inputs=N:normalize=0[outa]
+    if n == 1:
+        pitch_ratio = 2.0 ** (semitones[0] / 12.0)
+        fc = (
+            f"[0:a]rubberband=pitch={pitch_ratio:.6f},"
+            f"asetpts=PTS-STARTPTS[outa]"
+        )
+    else:
+        split_labels = "".join(f"[mp_s{j}]" for j in range(n))
+        split_part   = f"[0:a]asplit={n}{split_labels}"
+        voice_parts  = []
+        for j, st in enumerate(semitones):
+            pr = 2.0 ** (st / 12.0)
+            voice_parts.append(
+                f"[mp_s{j}]rubberband=pitch={pr:.6f},asetpts=PTS-STARTPTS[mp_v{j}]"
+            )
+        mix_inputs = "".join(f"[mp_v{j}]" for j in range(n))
+        mix_part   = f"{mix_inputs}amix=inputs={n}:normalize=0[outa]"
+        fc = ";".join([split_part] + voice_parts + [mix_part])
+
+    if has_video:
+        cmd = (
+            _FF_BASE
+            + ["-t", cap, "-i", input_path]
+            + ["-filter_complex", fc]
+            + ["-map", "0:v", "-map", "[outa]"]
+            + ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k"]
+            + ["-t", dur_flag, output_path]
+        )
+    else:
+        cmd = (
+            _FF_BASE
+            + ["-i", input_path]
+            + ["-filter_complex", fc]
+            + ["-map", "[outa]"]
+            + ["-c:a", "aac", "-b:a", "192k", output_path]
+        )
+
+    ok, err = _run_ffmpeg_raw(cmd, timeout=300)
+    if ok:
+        return True, ""
+
+    print(f"[multipitch] filter_complex tier failed: {err[-300:]} — trying fileaa fallback")
+
+    # ── 5. Tier 2: WAV extraction → fileaa → rubberband CLI → FFmpeg filter ──
     with tempfile.TemporaryDirectory() as tmpdir:
-        # ── 5. Extract 16-bit PCM WAV (required by fileaa) ───────────────────
         base_wav = os.path.join(tmpdir, "base.wav")
         ok, err = _run_ffmpeg_raw([
             "ffmpeg", "-y",
-            "-t", cap,
-            "-i", input_path,
+            "-t", cap, "-i", input_path,
             "-vn", "-ar", "44100", "-ac", "2",
-            "-c:a", "pcm_s16le",
-            "-t", cap,
+            "-c:a", "pcm_s16le", "-t", cap,
             base_wav,
         ], timeout=120)
         if not ok:
             return False, f"Audio extraction failed: {err}"
 
-        # ── 6. Run pitch shifting (all pitches via unified fallback) ───────
         pitch_arg = ",".join(
             str(int(s)) if s == int(s) else str(s)
             for s in semitones
         )
         out_wav = os.path.join(tmpdir, "pitched.wav")
 
-        # Use the unified fallback chain: fileaa → rubberband CLI → FFmpeg rubberband filter
         ok_pitch, err_pitch = _run_fileaa_with_fallback(
-            base_wav, out_wav, pitch_arg, tmpdir, prefix="mp3_rb", timeout=300,
+            base_wav, out_wav, pitch_arg, tmpdir, prefix="mp_rb", timeout=300,
         )
         if not ok_pitch:
             return False, f"❌ Multipitch processing failed: {err_pitch}"
 
-        # ── 7. Remux pitched audio with original video (or audio-only) ───────
-        # Use -c:v copy to preserve original timestamps exactly — re-encoding
-        # would reset the timebase and cause the video to play back faster.
         if has_video:
-            dur_flag = str(round(actual_dur, 6)) if actual_dur > 0 else cap
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y",
                 "-t", cap, "-i", input_path,
                 "-i", out_wav,
-                "-map", "0:v",
-                "-map", "1:a",
-                "-c:v", "copy",
-                "-c:a", "aac", "-b:a", "192k",
-                "-t", dur_flag,
-                output_path,
+                "-map", "0:v", "-map", "1:a",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-t", dur_flag, output_path,
             ], timeout=300)
         else:
             ok, err = _run_ffmpeg_raw([
@@ -6268,6 +6330,9 @@ async def submiteffect_command(ctx: commands.Context, name: str = "", *, effects
         "effects": effects,
         "author_id": str(ctx.author.id),
         "author_name": str(ctx.author),
+        "guild_id": str(ctx.guild.id) if ctx.guild else "DM",
+        "guild_name": _effect_guild_name(ctx),
+        "submitted_at": discord.utils.utcnow().isoformat(),
     }
     _save_user_effects()
 
@@ -6278,8 +6343,10 @@ async def submiteffect_command(ctx: commands.Context, name: str = "", *, effects
     )
     embed.add_field(name="Name", value=f"`{name}`", inline=True)
     embed.add_field(name="By", value=str(ctx.author), inline=True)
+    if ctx.guild:
+        embed.add_field(name="Guild", value=f"{ctx.guild.name} (`{ctx.guild.id}`)", inline=True)
     embed.add_field(name="Pipeline", value=f"```{effects[:900]}```", inline=False)
-    embed.set_footer(text=f"Use it: th/ihtx 1 5 - mp4 {name}")
+    embed.set_footer(text=f"Global effect — use it anywhere: th/ihtx 1 5 - mp4 {name}")
     await ctx.reply(embed=embed)
 
 
@@ -6305,16 +6372,18 @@ async def listeffects_command(ctx: commands.Context, *, search: str = ""):
         return
 
     embed = discord.Embed(
-        title=f"🎛️ User Effects ({len(entries)})",
+        title=f"🎛️ Global User Effects ({len(entries)})",
+        description="Submissions are shared across all servers the bot is in.",
         color=0x5865F2,
         timestamp=discord.utils.utcnow(),
     )
     for name, data in entries[:20]:
         pipeline = data.get("effects", "")
         author = data.get("author_name", "unknown")
+        guild_name = data.get("guild_name", "unknown")
         short = pipeline[:80] + ("…" if len(pipeline) > 80 else "")
         embed.add_field(
-            name=f"`{name}`  — by {author}",
+            name=f"`{name}`  — by {author}  ·  from {guild_name}",
             value=f"```{short}```",
             inline=False,
         )
@@ -10553,6 +10622,26 @@ _HELP_ENTRIES: list[dict] = [
         "name": "th/presets",
         "value": "List all available IHTX presets.",
     },
+    {
+        "cat": "fun",
+        "name": "th/submiteffect <name> <effects>  (aliases: se, addeffect)",
+        "value": "Submit a named pipe-effect combo to the global pool. Works in any server the bot is in.",
+    },
+    {
+        "cat": "fun",
+        "name": "th/listeffects  (aliases: le, effectlist)",
+        "value": "List all user-submitted global effects and the guild they came from.",
+    },
+    {
+        "cat": "fun",
+        "name": "th/deleteeffect <name>",
+        "value": "Delete a user-submitted effect you created (or any effect, if owner).",
+    },
+    {
+        "cat": "fun",
+        "name": "th/randomlist  (aliases: rlist, randlist)",
+        "value": "Show an embed of every random-pool item and who/guild added it.",
+    },
     # ── Owner ──
     {
         "cat": "owner",
@@ -13026,7 +13115,32 @@ async def trivia(ctx: commands.Context):
 # ---------- Random media pool ----------
 
 RANDOM_POOL_FILE = Path("bot/random_pool.json")
-_random_pool: list[str] = []
+_random_pool: list[dict] = []
+
+
+def _normalize_random_entry(raw) -> dict | None:
+    """Convert a legacy string entry or malformed dict into a standard entry."""
+    if isinstance(raw, str) and str(raw).strip():
+        return {
+            "url": str(raw).strip(),
+            "author_id": "0",
+            "author_name": "legacy",
+            "guild_id": "0",
+            "guild_name": "legacy",
+            "added_at": "",
+        }
+    if isinstance(raw, dict):
+        url = str(raw.get("url", "")).strip()
+        if url:
+            return {
+                "url": url,
+                "author_id": str(raw.get("author_id", "0")),
+                "author_name": str(raw.get("author_name", "unknown")),
+                "guild_id": str(raw.get("guild_id", "0")),
+                "guild_name": str(raw.get("guild_name", "unknown")),
+                "added_at": str(raw.get("added_at", "")),
+            }
+    return None
 
 
 def _load_random_pool() -> None:
@@ -13034,7 +13148,11 @@ def _load_random_pool() -> None:
     try:
         if RANDOM_POOL_FILE.exists():
             with RANDOM_POOL_FILE.open() as f:
-                _random_pool = [str(u) for u in json.load(f) if str(u).strip()]
+                raw_data = json.load(f)
+            _random_pool = [
+                entry for entry in (_normalize_random_entry(u) for u in raw_data)
+                if entry is not None
+            ]
         else:
             _random_pool = []
     except Exception:
@@ -13047,12 +13165,31 @@ def _save_random_pool() -> None:
         json.dump(_random_pool, f, indent=2)
 
 
+def _pool_url_exists(url: str) -> bool:
+    return any(entry.get("url") == url for entry in _random_pool)
+
+
+def _make_pool_entry(url: str, ctx: commands.Context) -> dict:
+    return {
+        "url": url,
+        "author_id": str(ctx.author.id),
+        "author_name": str(ctx.author),
+        "guild_id": str(ctx.guild.id) if ctx.guild else "DM",
+        "guild_name": _effect_guild_name(ctx),
+        "added_at": discord.utils.utcnow().isoformat(),
+    }
+
+
+def _url_from_entry(entry: dict) -> str:
+    return entry.get("url", "")
+
+
 _load_random_pool()
 
 
 @bot.command(name="random", aliases=["rand"])
 async def random_command(ctx: commands.Context, subcommand: str = "", *, args: str = ""):
-    """Persistent random media pool.
+    """Persistent random media pool (global across all guilds).
 
     Usage:
       th/random                    — post a random item from the pool
@@ -13061,6 +13198,7 @@ async def random_command(ctx: commands.Context, subcommand: str = "", *, args: s
       th/random remove <url>       — owner: remove a URL from the pool
       th/random list               — owner: list all items in the pool
       th/random clear              — owner: wipe the entire pool
+      th/randomlist                — anyone: embed list of items + who added them
     """
     sub = subcommand.strip().lower()
 
@@ -13076,7 +13214,8 @@ async def random_command(ctx: commands.Context, subcommand: str = "", *, args: s
             lines.extend(levelup_msgs)
             await ctx.reply("\n".join(lines))
             return
-        chosen = random.choice(_random_pool)
+        chosen_entry = random.choice(_random_pool)
+        chosen = _url_from_entry(chosen_entry)
         # Parse t[title](url) → "title\nurl" so the video actually embeds
         _tm = re.match(r'^t\[([^\]]*)\]\((https?://[^)]+)\)$', chosen.strip())
         # Parse [text](url) → bare url
@@ -13114,8 +13253,8 @@ async def random_command(ctx: commands.Context, subcommand: str = "", *, args: s
 
         added = []
         for url in urls_to_add:
-            if url not in _random_pool:
-                _random_pool.append(url)
+            if not _pool_url_exists(url):
+                _random_pool.append(_make_pool_entry(url, ctx))
                 added.append(url)
 
         if added:
@@ -13132,12 +13271,13 @@ async def random_command(ctx: commands.Context, subcommand: str = "", *, args: s
         if not url_arg:
             await ctx.reply("❌ Provide a URL to remove: `th/random remove <url>`")
             return
-        if url_arg in _random_pool:
-            _random_pool.remove(url_arg)
-            _save_random_pool()
-            await ctx.reply(f"✅ Removed from pool ({len(_random_pool)} remaining).")
-        else:
-            await ctx.reply("❌ That URL isn't in the pool.")
+        for idx, entry in enumerate(_random_pool):
+            if entry.get("url") == url_arg:
+                _random_pool.pop(idx)
+                _save_random_pool()
+                await ctx.reply(f"✅ Removed from pool ({len(_random_pool)} remaining).")
+                return
+        await ctx.reply("❌ That URL isn't in the pool.")
         return
 
     # ── List ────────────────────────────────────────────────────────────────
@@ -13145,7 +13285,7 @@ async def random_command(ctx: commands.Context, subcommand: str = "", *, args: s
         if not _random_pool:
             await ctx.reply("The random pool is empty.")
             return
-        lines = "\n".join(f"{i+1}. {u}" for i, u in enumerate(_random_pool))
+        lines = "\n".join(f"{i+1}. {_url_from_entry(u)}" for i, u in enumerate(_random_pool))
         # Split into chunks to avoid the 2000-char Discord limit
         chunk, chunks = "", []
         for line in lines.splitlines():
@@ -13175,8 +13315,41 @@ async def random_command(ctx: commands.Context, subcommand: str = "", *, args: s
         "`th/random add <url>` — add item (owner)\n"
         "`th/random remove <url>` — remove item (owner)\n"
         "`th/random list` — list all items (owner)\n"
-        "`th/random clear` — wipe pool (owner)"
+        "`th/random clear` — wipe pool (owner)\n"
+        "`th/randomlist` — embed list of items + who added them"
     )
+
+
+@bot.command(name="randomlist", aliases=["rlist", "randlist"])
+async def randomlist_command(ctx: commands.Context):
+    """Show an embed listing every random-pool item and who added it.
+
+    Usage:
+      th/randomlist
+    """
+    if not _random_pool:
+        await ctx.reply("❌ The random pool is empty.")
+        return
+
+    embed = discord.Embed(
+        title=f"🎲 Random Pool Entries ({len(_random_pool)})",
+        description="Global pool — shared across all servers. Use `th/random` to roll one.",
+        color=0xFEE75C,
+        timestamp=discord.utils.utcnow(),
+    )
+    for i, entry in enumerate(_random_pool[:25]):
+        author = entry.get("author_name", "unknown")
+        guild = entry.get("guild_name", "unknown")
+        url = _url_from_entry(entry)
+        short = url[:80] + ("…" if len(url) > 80 else "")
+        embed.add_field(
+            name=f"{i+1}. by {author}  ·  from {guild}",
+            value=f"```{short}```",
+            inline=False,
+        )
+    if len(_random_pool) > 25:
+        embed.set_footer(text=f"Showing first 25 of {len(_random_pool)} entries.")
+    await ctx.reply(embed=embed)
 
 
 # ---------- Message filtering ----------
