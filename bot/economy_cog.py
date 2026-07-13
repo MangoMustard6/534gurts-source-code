@@ -609,10 +609,9 @@ class EconomyCog(commands.Cog, name="Economy"):
             _pe_label = _pipe_effects_label(pipe_effects)
             _dur_str = duration if duration != "vidlen" else "full video"
             _header = (
-                f"**Pipe effects:** `{_pe_label}`"
-                + (f" ×{repetitions}" if repetitions != 1 else "")
-                + f"\n**Duration:** `{_dur_str}` · **Format:** `{export_fmt}`"
+                f"**Duration:** `{_dur_str}` · **Format:** `{export_fmt}`"
                 + (f" · **No trim:** yes" if no_trim else "")
+                + (f" · **Reps:** ×{repetitions}" if repetitions != 1 else "")
                 + f"\n**File:** `{media_filename}`"
             )
         else:
@@ -674,7 +673,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                 while not _done_evt.is_set():
                     elapsed = int(time.monotonic() - _start_time)
                     if use_pipe:
-                        _phase = f"🔧 Running pipe effects: `{_pe_label}`…\n⏱️ **{elapsed}s elapsed**"
+                        _phase = f"🔧 Running pipe effects…\n⏱️ **{elapsed}s elapsed**"
                     else:
                         _phase = f"🔧 Running FFmpeg `{effect}` preset…\n⏱️ **{elapsed}s elapsed**"
                     await _update(_phase)
@@ -749,7 +748,6 @@ class EconomyCog(commands.Cog, name="Economy"):
                 res_str = ar_str = fps_str = "N/A"
 
             size_mb = out_size / (1024 * 1024)
-            _applied = f"`{_pe_label}`" if use_pipe else f"`{effect}`"
 
             if out_size > CATBOX_THRESHOLD:
                 await _update("⬆️ Output exceeds 8 MB — uploading to Catbox…")
@@ -758,7 +756,6 @@ class EconomyCog(commands.Cog, name="Economy"):
                     _elapsed = time.monotonic() - _start_time
                     _size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{out_size / 1024:.2f} KB"
                     result_embed = _make_base_embed()
-                    result_embed.add_field(name="Effect:", value=_applied, inline=True)
                     result_embed.add_field(name="Resolution:", value=f"{res_str} ({ar_str}) · {fps_str}", inline=True)
                     if use_pipe:
                         _dur_label = duration if duration != "vidlen" else "full video"
@@ -787,7 +784,6 @@ class EconomyCog(commands.Cog, name="Economy"):
             _elapsed = time.monotonic() - _start_time
             _size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{out_size / 1024:.2f} KB"
             result_embed = _make_base_embed()
-            result_embed.add_field(name="Effect:", value=_applied, inline=True)
             result_embed.add_field(name="Resolution:", value=f"{res_str} ({ar_str}) · {fps_str}", inline=True)
             if use_pipe:
                 _dur_label = duration if duration != "vidlen" else "full video"
