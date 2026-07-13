@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-12: Fixed `zoom` pipe effect crash when s < 1 (zoom-out): old logic used `crop` which tried to extract more pixels than existed. Now s >= 1 uses crop (zoom-in), s < 1 uses pad with black bars (zoom-out).
+- 2026-07-12: Replaced `zoom` pipe effect with geq pixel-remap (ports TS logic): `zoom=2` zooms in, `zoom=0.5` zooms out with black bars, default `1.5`. Fixed crash when s < 1.
 - 2026-07-12: Added per-voice volume boost to multipitch pipe effect (bungee + normal): volume = number of voices during remux (2 voices → volume=2, 3 voices → volume=3).
 - 2026-07-12: Scaled th/ihtx tagscript timeout per-rep: base 180s + 6s per export so high-rep runs (up to 1000) don't get killed mid-process. Full codebase scan confirmed no remaining `source is not defined` bugs outside the five commands already fixed.
 - 2026-07-12: Raised MAX_REPETITIONS from 100 → 1000 for th/ihtx.
@@ -9997,7 +9997,7 @@ _HELP_ENTRIES: list[dict] = [
             "**Video:** `hflip` `vflip` `negate` `grayscale` `sepia` `rotate=<deg>` "
             "`huehsv=hue|sat|lightness|colorspace|betterfully` `ccshue=hue|sat|gamma|gain|offset` `brightness=<val>` `contrast=<val>` "
             "`saturation=<val>` `swapuv` `invlum` `invertrgb=r;g;b` `gm91deform` `randomjitter=<strength>`\n"
-            "**Distortion:** `mirror=<deg|preset>` `zoom=<amt>` `ripple=spd|freq|amp|phase` `pan=px|py` `tile=tx|ty` `pinch&punch=str;r;cx;cy` `shake=<h>|<v>` `wave=hSpd|hFreq|hAmp|hPhase|vSpd|vFreq|vAmp|vPhase[|sep][|noclip]`\n"
+            "**Distortion:** `mirror=<deg|preset>` `zoom=<amt>` (≥ 1 = zoom in, < 1 = zoom out) `ripple=spd|freq|amp|phase` `pan=px|py` `tile=tx|ty` `pinch&punch=str;r;cx;cy` `shake=<h>|<v>` `wave=hSpd|hFreq|hAmp|hPhase|vSpd|vFreq|vAmp|vPhase[|sep][|noclip]`\n"
             "**Scroll:** `scroll=hpos=V` · `scroll=hpos=V;ypos=V` · `scroll=h;v` (continuous) · `scroll=x1:y1:x2:y2[:dur]` (animated pan)\n"
             "**Split:** `leftsplit(<inner_effects>)` · `rightsplit(<inner_effects>)` — apply inner effects to one half, mirror/combine\n"
             "**Reverse:** `vreverse` (video frames) · `areverse` (audio)\n"
