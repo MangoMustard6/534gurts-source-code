@@ -4849,7 +4849,7 @@ def _run_multipitch_rb3(
             + ["-t", cap, "-i", input_path]
             + ["-filter_complex", fc]
             + ["-map", "0:v", "-map", "[outa]"]
-            + ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k"]
+            + ["-c:v", "copy", "-c:a", "flac", "-qp", "1"]
             + ["-t", dur_flag, output_path]
         )
     else:
@@ -4858,7 +4858,7 @@ def _run_multipitch_rb3(
             + ["-i", input_path]
             + ["-filter_complex", fc]
             + ["-map", "[outa]"]
-            + ["-c:a", "aac", "-b:a", "192k", output_path]
+            + ["-c:a", "flac", "-qp", "1", output_path]
         )
 
     ok, err = _run_ffmpeg_raw(cmd, timeout=300)
@@ -4898,14 +4898,14 @@ def _run_multipitch_rb3(
                 "-t", cap, "-i", input_path,
                 "-i", out_wav,
                 "-map", "0:v", "-map", "1:a",
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-c:v", "copy", "-c:a", "flac", "-qp", "1",
                 "-t", dur_flag, output_path,
             ], timeout=300)
         else:
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y",
                 "-i", out_wav,
-                "-c:a", "aac", "-b:a", "192k",
+                "-c:a", "flac", "-qp", "1",
                 output_path,
             ], timeout=180)
 

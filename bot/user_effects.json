@@ -8,5 +8,13 @@
     "effects": "huehsv=0.2|0.5|1.8,mp=-3.568|1.432",
     "author_id": "1355759019330895973",
     "author_name": "thatoneguynobodyinvited"
+  },
+  "idkeffect": {
+    "effects": "hflip,lut=https://file.garden/akpXUy7cShbwSW4u/s.cube,mp=-8.5|0",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
+    "submitted_at": "2026-07-13T09:45:27.338465+00:00"
   }
 }
