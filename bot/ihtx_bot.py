@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-13: Added th/submiteffect (aliases: se, addeffect), th/listeffects (le), th/deleteeffect — user-submitted named pipe effects stored in bot/user_effects.json and auto-expanded in _parse_pipe_effects. Removed effect label from th/ihtx queue header, live ticker, and result embed Effect: fields.
 - 2026-07-12: Switched bot presence to `Playing "Making Effects in {N} servers!"` — updates live on guild join/leave via `on_guild_join`/`on_guild_remove` handlers. Only applies when no saved `activity.json` overrides it.
 - 2026-07-12: Replaced `zoom` pipe effect with geq pixel-remap (ports TS logic): `zoom=2` zooms in, `zoom=0.5` zooms out with black bars, default `1.5`. Fixed crash when s < 1.
 - 2026-07-12: Added per-voice volume boost to multipitch pipe effect (bungee + normal): volume = number of voices during remux (2 voices → volume=2, 3 voices → volume=3).
@@ -2331,6 +2332,35 @@ PIPE_EFFECT_NAMES = {
     "stretch",
 }
 
+# ---------- User-submitted named pipe effects ----------
+
+_USER_EFFECTS_FILE = Path("bot/user_effects.json")
+_USER_EFFECTS: dict[str, dict] = {}
+
+
+def _load_user_effects() -> None:
+    global _USER_EFFECTS
+    try:
+        if _USER_EFFECTS_FILE.exists():
+            with _USER_EFFECTS_FILE.open() as f:
+                _USER_EFFECTS = json.load(f)
+    except Exception as e:
+        print(f"[user_effects] Failed to load: {e}")
+        _USER_EFFECTS = {}
+
+
+def _save_user_effects() -> None:
+    try:
+        _USER_EFFECTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with _USER_EFFECTS_FILE.open("w") as f:
+            json.dump(_USER_EFFECTS, f, indent=2)
+    except Exception as e:
+        print(f"[user_effects] Failed to save: {e}")
+
+
+_load_user_effects()
+
+
 def _split_effect_params(value: str) -> list[str]:
     """Split effect parameters using the separators users commonly type.
 
@@ -2391,6 +2421,26 @@ def _split_pipe_segments(pipe_str: str) -> list[str]:
     return segments
 
 
+def _expand_user_effects(pipe_str: str) -> str:
+    """Expand user-submitted named effects within a pipe string.
+
+    Each top-level comma-delimited segment is checked: if its base name
+    (the part before ``=`` or whitespace) matches a key in ``_USER_EFFECTS``,
+    the segment is replaced with the stored expansion inline.
+    """
+    if not _USER_EFFECTS:
+        return pipe_str
+    segments = _split_pipe_segments(pipe_str)
+    expanded = []
+    for seg in segments:
+        base = re.split(r"[=\s]", seg.strip(), 1)[0].lower()
+        if base in _USER_EFFECTS:
+            expanded.append(_USER_EFFECTS[base]["effects"])
+        else:
+            expanded.append(seg)
+    return ",".join(expanded)
+
+
 def _parse_pipe_effects(pipe_str: str) -> list[tuple[str, list[str]]]:
     """Parse pipe effects from IHTX custom syntax.
 
@@ -2402,6 +2452,7 @@ def _parse_pipe_effects(pipe_str: str) -> list[tuple[str, list[str]]]:
     ``ffmpeg(...)`` is a special effect whose content is passed verbatim as raw
     FFmpeg args; semicolons inside the parens do *not* act as delimiters.
     """
+    pipe_str = _expand_user_effects(pipe_str)
     # VIDEO: <vf_filter> AUDIO: <af_filter> raw format — pass directly to FFmpeg
     if re.search(r'\b(VIDEO|AUDIO):', pipe_str, re.IGNORECASE):
         effects: list[tuple[str, list[str]]] = []
@@ -6153,6 +6204,151 @@ async def pipetest_command(ctx: commands.Context, *, effects: str = ""):
             await status_msg.delete()
         except discord.HTTPException as e:
             await status_msg.edit(content=f"❌ Failed to upload: {e}")
+
+
+# ---------- th/submiteffect — user-submitted named pipe effects ----------
+
+_EFFECT_NAME_RE = re.compile(r"^[a-z0-9_]{1,40}$")
+
+
+@bot.command(name="submiteffect", aliases=["se", "addeffect"])
+async def submiteffect_command(ctx: commands.Context, name: str = "", *, effects: str = ""):
+    """Submit a named pipe effect combo so it can be used in th/ihtx.
+
+    Usage:
+      th/submiteffect <name> <pipe_effects>
+      th/submiteffect gmajor225 huehsv=0.5,channelblend=b;g;r,mp=-4;5
+
+    The name must be lowercase alphanumeric + underscores, max 40 chars,
+    and cannot clash with a built-in effect name.
+    Use th/listeffects to see all submitted effects.
+    """
+    name = name.strip().lower()
+    # Allow "name = effects" syntax (name with trailing = sign)
+    if name.endswith("="):
+        name = name[:-1].strip()
+
+    if not name:
+        await ctx.reply(
+            "❌ No name given.\n"
+            "**Usage:** `th/submiteffect <name> <pipe_effects>`\n"
+            "**Example:** `th/submiteffect gmajor225 huehsv=0.5,channelblend=b;g;r,mp=-4;5`"
+        )
+        return
+
+    if not _EFFECT_NAME_RE.match(name):
+        await ctx.reply("❌ Effect name must be lowercase letters, digits, or underscores only (max 40 chars).")
+        return
+
+    if name in PIPE_EFFECT_NAMES:
+        await ctx.reply(f"❌ `{name}` is a built-in effect name and cannot be overridden.")
+        return
+
+    # Strip a leading "=" from the effects string (supports "name = effects" split across args)
+    effects = effects.strip().lstrip("=").strip()
+    if not effects:
+        await ctx.reply(
+            "❌ No effects given.\n"
+            "**Usage:** `th/submiteffect <name> <pipe_effects>`\n"
+            "**Example:** `th/submiteffect gmajor225 huehsv=0.5,channelblend=b;g;r,mp=-4;5`"
+        )
+        return
+
+    # Validate the effects parse to something real
+    parsed = _parse_pipe_effects(effects)
+    if not parsed:
+        await ctx.reply("❌ Could not parse any effects from that string. Check the syntax and try again.")
+        return
+
+    _USER_EFFECTS[name] = {
+        "effects": effects,
+        "author_id": str(ctx.author.id),
+        "author_name": str(ctx.author),
+    }
+    _save_user_effects()
+
+    embed = discord.Embed(
+        title="✅ Effect Submitted",
+        color=0x57F287,
+        timestamp=discord.utils.utcnow(),
+    )
+    embed.add_field(name="Name", value=f"`{name}`", inline=True)
+    embed.add_field(name="By", value=str(ctx.author), inline=True)
+    embed.add_field(name="Pipeline", value=f"```{effects[:900]}```", inline=False)
+    embed.set_footer(text=f"Use it: th/ihtx 1 5 - mp4 {name}")
+    await ctx.reply(embed=embed)
+
+
+@bot.command(name="listeffects", aliases=["usereffects", "le"])
+async def listeffects_command(ctx: commands.Context, *, search: str = ""):
+    """List all user-submitted named pipe effects.
+
+    Usage:
+      th/listeffects
+      th/listeffects gmajor  (search by name)
+    """
+    if not _USER_EFFECTS:
+        await ctx.reply("No user effects submitted yet. Use `th/submiteffect <name> <effects>` to add one.")
+        return
+
+    search = search.strip().lower()
+    entries = [
+        (name, data) for name, data in sorted(_USER_EFFECTS.items())
+        if not search or search in name
+    ]
+    if not entries:
+        await ctx.reply(f"No effects found matching `{search}`.")
+        return
+
+    embed = discord.Embed(
+        title=f"🎛️ User Effects ({len(entries)})",
+        color=0x5865F2,
+        timestamp=discord.utils.utcnow(),
+    )
+    for name, data in entries[:20]:
+        pipeline = data.get("effects", "")
+        author = data.get("author_name", "unknown")
+        short = pipeline[:80] + ("…" if len(pipeline) > 80 else "")
+        embed.add_field(
+            name=f"`{name}`  — by {author}",
+            value=f"```{short}```",
+            inline=False,
+        )
+    if len(entries) > 20:
+        embed.set_footer(text=f"Showing first 20 of {len(entries)}. Search by name to narrow results.")
+    await ctx.reply(embed=embed)
+
+
+@bot.command(name="deleteeffect", aliases=["removeeffect", "deleffect"])
+async def deleteeffect_command(ctx: commands.Context, name: str = ""):
+    """Delete a user-submitted named pipe effect.
+
+    Owners can delete any effect; other users can only delete their own.
+
+    Usage:
+      th/deleteeffect <name>
+    """
+    name = name.strip().lower()
+    if not name:
+        await ctx.reply("❌ Provide the effect name to delete. Usage: `th/deleteeffect <name>`")
+        return
+
+    if name not in _USER_EFFECTS:
+        await ctx.reply(f"❌ No effect named `{name}` found.")
+        return
+
+    entry = _USER_EFFECTS[name]
+    is_owner = await bot.is_owner(ctx.author)
+    is_author = str(ctx.author.id) == entry.get("author_id", "")
+
+    if not is_owner and not is_author:
+        await ctx.reply("❌ You can only delete effects you submitted yourself.")
+        return
+
+    del _USER_EFFECTS[name]
+    _save_user_effects()
+    await ctx.message.add_reaction("🗑️")
+    await ctx.reply(f"✅ Effect `{name}` deleted.")
 
 
 @bot.command(name="preview1280", aliases=["p1280", "preview", "pv1280"])
