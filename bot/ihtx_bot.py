@@ -4843,27 +4843,33 @@ def _run_multipitch_rb3(
         mix_part   = f"{mix_inputs}amix=inputs={n}:normalize=0[outa]"
         fc = ";".join([split_part] + voice_parts + [mix_part])
 
-    if has_video:
-        cmd = (
-            _FF_BASE
-            + ["-t", cap, "-i", input_path]
-            + ["-filter_complex", fc]
-            + ["-map", "0:v", "-map", "[outa]"]
-            + ["-c:v", "copy", "-c:a", "flac", "-qp", "1"]
-            + ["-t", dur_flag, output_path]
-        )
-    else:
-        cmd = (
-            _FF_BASE
-            + ["-i", input_path]
-            + ["-filter_complex", fc]
-            + ["-map", "[outa]"]
-            + ["-c:a", "flac", "-qp", "1", output_path]
-        )
+    # Always write to MKV — FLAC is fully supported in Matroska; MP4 muxer
+    # can silently produce an unplayable audio track with FLAC on some clients.
+    # We write to a temp .mkv then replace the caller's output_path in-place.
+    with tempfile.TemporaryDirectory() as _tier1_tmp:
+        mkv_out = os.path.join(_tier1_tmp, "mp_t1.mkv")
+        if has_video:
+            cmd = (
+                _FF_BASE
+                + ["-t", cap, "-i", input_path]
+                + ["-filter_complex", fc]
+                + ["-map", "0:v", "-map", "[outa]"]
+                + ["-c:v", "copy", "-c:a", "flac", "-qp", "1"]
+                + ["-t", dur_flag, mkv_out]
+            )
+        else:
+            cmd = (
+                _FF_BASE
+                + ["-i", input_path]
+                + ["-filter_complex", fc]
+                + ["-map", "[outa]"]
+                + ["-c:a", "flac", "-qp", "1", mkv_out]
+            )
 
-    ok, err = _run_ffmpeg_raw(cmd, timeout=300)
-    if ok:
-        return True, ""
+        ok, err = _run_ffmpeg_raw(cmd, timeout=300)
+        if ok:
+            os.replace(mkv_out, output_path)
+            return True, ""
 
     print(f"[multipitch] filter_complex tier failed: {err[-300:]} — trying fileaa fallback")
 
@@ -4892,6 +4898,7 @@ def _run_multipitch_rb3(
         if not ok_pitch:
             return False, f"❌ Multipitch processing failed: {err_pitch}"
 
+        mkv_out2 = os.path.join(tmpdir, "mp_t2.mkv")
         if has_video:
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y",
@@ -4899,18 +4906,20 @@ def _run_multipitch_rb3(
                 "-i", out_wav,
                 "-map", "0:v", "-map", "1:a",
                 "-c:v", "copy", "-c:a", "flac", "-qp", "1",
-                "-t", dur_flag, output_path,
+                "-t", dur_flag, mkv_out2,
             ], timeout=300)
         else:
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y",
                 "-i", out_wav,
                 "-c:a", "flac", "-qp", "1",
-                output_path,
+                mkv_out2,
             ], timeout=180)
 
         if not ok:
             return False, f"Remux failed: {err}"
+
+        os.replace(mkv_out2, output_path)
 
     return True, ""
 
