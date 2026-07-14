@@ -9,6 +9,7 @@
 
 import { spawnAsync } from './utils/spawn.js';
 import { PROCESS_TIMEOUTS } from './config.js';
+import { parseGradientParams, applyGradientmap as applyGradientmapCore } from './commands/gradientmap.js';
 
 // ── Processor context ────────────────────────────────────────────────
 
@@ -629,4 +630,50 @@ export async function applyNepeta(
 
   // Cleanup temp image
   try { fs.unlinkSync(imgPath); } catch {}
+}
+
+// ── Gradient map ────────────────────────────────────────────────────────
+// Pipe-effect wrapper around the gradientmap command. Parses the same
+// color-stop syntax (R,G,B[,A,pos] ...) and runs FFmpeg via the filter
+// built by commands/gradientmap.ts.
+
+export async function applyGradientmap(
+  ctx: ProcessorContext,
+  params: string,
+): Promise<void> {
+  const tokens: string[] = [];
+  let cur = '';
+  let depth = 0;
+  for (const ch of params.trim()) {
+    if (ch === '[') { depth++; cur += ch; }
+    else if (ch === ']') { depth--; cur += ch; }
+    else if ((ch === ' ' || ch === '\t') && depth === 0) {
+      if (cur) { tokens.push(cur); cur = ''; }
+    } else if ((ch === ';' || ch === '|') && depth === 0) {
+      if (cur) { tokens.push(cur); cur = ''; }
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur) tokens.push(cur);
+
+  const cleaned = tokens.map((t) => t.trim()).filter(Boolean);
+  if (!cleaned.length) {
+    throw new Error('gradientmap: no color stops provided');
+  }
+
+  const parsed = parseGradientParams(cleaned);
+  if (!parsed.ok) {
+    throw new Error(parsed.error);
+  }
+
+  const result = await applyGradientmapCore(
+    ctx.inputFile,
+    ctx.outputFile,
+    parsed.stops,
+    ctx.timeout,
+  );
+  if (!result.ok) {
+    throw new Error(result.error || 'gradientmap: ffmpeg failed');
+  }
 }
