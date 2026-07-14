@@ -7186,7 +7186,30 @@ def _run_ihtxsap(
 
             # ── Rubberband R2 ──────────────────────────────────────────────────
             if style == "rubberband_r2":
-                # Tier 1: fileaa --rubberband-args "-2"
+                # Tier 1: rubberband -2 -p<st> -t1 per voice → amix
+                if rb_bin:
+                    layer_paths = []
+                    rb2_ok = True
+                    for i, st in enumerate(pitches):
+                        lp = os.path.join(tmpdir, f"voice_{rep}_{i}.wav")
+                        res = subprocess.run(
+                            [rb_bin, "-2", f"-p{st:+.4f}", "-t1", src, lp],
+                            capture_output=True, text=True, timeout=300,
+                        )
+                        if res.returncode != 0:
+                            print(
+                                f"[ihtxsap] rubberband R2 pitch {st:+}st failed: "
+                                f"{res.stderr[-200:]} — trying fileaa fallback"
+                            )
+                            rb2_ok = False
+                            break
+                        layer_paths.append(lp)
+                    if rb2_ok and layer_paths:
+                        return _ihtxsap_amix(layer_paths, dst)
+                else:
+                    print("[ihtxsap] rubberband CLI not found — trying fileaa R2 fallback")
+
+                # Tier 2: fileaa --rubberband-args "-2"
                 if _ensure_multipitch_bin():
                     res = subprocess.run(
                         [_MULTIPITCH_BIN, src, dst, pitch_arg,
@@ -7198,23 +7221,7 @@ def _run_ihtxsap(
                     stderr_note = res.stderr.decode(errors="replace")[-400:]
                     print(f"[ihtxsap] fileaa R2 failed (exit {res.returncode}): {stderr_note}")
 
-                # Tier 2: rubberband -2 per pitch + amix
-                if not rb_bin:
-                    return False, "rubberband binary not found (needed for R2 fallback)"
-                layer_paths: list[str] = []
-                for i, st in enumerate(pitches):
-                    lp = os.path.join(tmpdir, f"voice_{rep}_{i}.wav")
-                    res = subprocess.run(
-                        [rb_bin, "-2", f"-p{st:+.4f}", "-t1", src, lp],
-                        capture_output=True, text=True, timeout=300,
-                    )
-                    if res.returncode != 0:
-                        return False, (
-                            f"rubberband R2 pitch {st:+}st failed:\n"
-                            f"{res.stderr[-400:]}"
-                        )
-                    layer_paths.append(lp)
-                return _ihtxsap_amix(layer_paths, dst)
+                return False, "❌ rubberband R2 failed (all tiers exhausted)"
 
             # ── Rubberband R3 ──────────────────────────────────────────────────
             elif style == "rubberband_r3":
