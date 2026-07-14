@@ -8,7 +8,8 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-14: `gradientmap`/`gmap` now supports unlimited color points via external sources: a `url:https://...` point list (works in both standalone `th/gradientmap` and the `th/ihtx` pipe effect) or a `.txt`/`.csv`/`.json` gradient file attached alongside the media for the standalone command. Inline points and array syntax still work. Updated the `th/gradientmap` help accordingly.
+- 2026-07-14: Hardened `gradientmap`/`gmap` parsing: now accepts double-bracket `[[...]]`, single-bracket `[...]`, colon/space-separated values, bare number groups, and JSON/flat-list gradient files from URLs or attachments. Error messages now report how many points were actually parsed. Updated `th/gradientmap` help with the supported formats.
+- 2026-07-14: `gradientmap`/`gmap` now supports unlimited color points via external sources: a `url:https://...` point list (works in both standalone `th/gradientmap` and the `th/ihtx` pipe effect) or a `.txt`/`.csv`/`.json` gradient file attached alongside the media for the standalone command.
 - 2026-07-14: Added `spherize` pipe effect (aliases `sphere`, `bulge`) — Vegas-style bulge/spherize distortion via FFmpeg geq. Params: `amount|radius|center_x|center_y` (default `0.8|0.5|0.5|0.5`). Added to the pipe effects list in `th/ihtxhelp`. Also added `th/download` (alias `th/dl`) — generic media downloader for any URL including Discord CDN links. Also reordered `th/ihtxsap` pitch styles and added `Rubberband Custom` with `rubberbandcustom=...` arbitrary flag support.
 - 2026-07-13: User-submitted effects (`th/submiteffect`) are now global across all guilds and record the guild name/id. Added `th/randomlist` embed showing every random-pool entry and who/guild added it. Random pool entries now store author/guild metadata. Blocked users and blocked channels are now also enforced for slash (/) commands via `bot.tree.interaction_check`. Added `th/effectlist` alias to `th/listeffects`. Fixed th/unblockuser — owners are now exempt from the user-blocklist check in _global_checks, so a blocked owner can still run unblockuser (and can never be silently blocked from owner commands). Added BOT_OWNER_ID env var support to set the primary owner without editing code.
 - 2026-07-13: Added th/submiteffect (aliases: se, addeffect), th/listeffects (le), th/deleteeffect — user-submitted named pipe effects stored in bot/user_effects.json and auto-expanded in _parse_pipe_effects. Removed effect label from th/ihtx queue header, live ticker, and result embed Effect: fields.
@@ -927,17 +928,48 @@ def _run_ffmpeg_raw(cmd: list[str], timeout: int = 180) -> tuple[bool, str]:
 def _parse_gradient_points_text(text: str) -> list[str]:
     """Split a text file/URL body into a list of gradient point strings.
 
-    Supports one point per line, semicolon-separated points on the same line,
-    and comments starting with #.
+    Supported formats:
+      - One point per line
+      - Semicolon-separated points on the same line
+      - JSON-style arrays: [[r,g,b,a,pos], ...] or [r,g,b,a,pos, ...]
+      - Comma-separated flat lists (with 5 values per point)
+      - Comments starting with #
     """
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return []
+
+    # Try to parse as a JSON array first
+    try:
+        data = json.loads(text)
+        if isinstance(data, list) and len(data) >= 2:
+            points: list[str] = []
+            for item in data:
+                if isinstance(item, list):
+                    points.append(",".join(str(v) for v in item))
+                elif isinstance(item, str):
+                    points.append(item)
+            if points:
+                return points
+    except Exception:
+        pass
+
+    # Try to parse as a flat comma-separated list of numbers (5 values per point)
+    flat = [x.strip() for x in text.replace(";", ",").split(",") if x.strip()]
+    if len(flat) >= 10 and len(flat) % 5 == 0:
+        return [",".join(flat[i:i + 5]) for i in range(0, len(flat), 5)]
+
+    # Line/semicolon based parsing
     points: list[str] = []
     for line in text.split("\n"):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
+        # Remove inline comments
+        if "#" in line:
+            line = line.split("#", 1)[0].strip()
         for segment in line.split(";"):
-            segment = segment.strip()
+            segment = segment.strip(" \t[]")
             if segment and not segment.startswith("#"):
                 points.append(segment)
     return points
@@ -968,48 +1000,72 @@ def _build_gradientmap_filter(params: list[str]) -> tuple[bool, str, str]:
 
     Each param is a color point string: "R,G,B"  "R,G,B,A"  or "R,G,B,A,pos"
     where R/G/B/A are 0-255 integers and pos is 0.0-1.0 (default: evenly spaced).
-    Colons and underscores are also accepted as separators for pipe syntax.
-    A single param may be an array literal: [[r,g,b,a,pos],[r,g,b,a,pos],...].
-    A single param may also be a URL (or url: prefix) pointing to a gradient file.
+    Commas, colons, underscores, and spaces are accepted as value separators.
+    A single param may be a double-bracket array: [[r,g,b,a,pos],[...]].
+    A single param may be a single-bracket array: [r,g,b,a,pos],[...].
+    A single param may be a URL (or url: prefix) pointing to a gradient file.
     At least 2 points are required.
     """
 
-    # Flatten JS-style array literal or URL into a list of point strings
     raw_points: list[str] = []
-    if len(params) == 1 and params[0].strip().startswith("[[") and params[0].strip().endswith("]]"):
-        inner = params[0].strip()[2:-2].strip()
-        # Split on '],[' allowing whitespace around the comma
-        raw_points = [
-            p.strip().lstrip("[").rstrip("]")
-            for p in re.split(r"\]\s*,\s*\[", inner)
-        ]
-    elif params and (params[0].strip().startswith(("http://", "https://", "url:"))):
-        ok, loaded, err = _load_gradient_points(params[0].strip())
+    first = params[0].strip() if params else ""
+
+    if first.startswith(("http://", "https://", "url:")):
+        ok, loaded, err = _load_gradient_points(first)
         if not ok:
             return False, err, ""
         raw_points = loaded
+    elif len(params) == 1 and first.startswith("[[") and first.endswith("]]"):
+        # Double-bracket array: [[a],[b],[c]]
+        inner = first[2:-2].strip()
+        raw_points = [
+            p.strip().strip("[]")
+            for p in re.split(r"\]\s*,\s*\[", inner)
+        ]
+    elif len(params) == 1 and first.startswith("[") and first.endswith("]"):
+        # Single-bracket array: [a],[b],[c] (or [a,b,c,d,e])
+        # First try comma-delimited bracket groups
+        bracketed = re.findall(r"\[([^\]]+)\]", first)
+        if len(bracketed) >= 2:
+            raw_points = [p.strip() for p in bracketed]
+        else:
+            # Single flat array: [a,b,c,d,e,f,g,h,i,j] -> 2 points of 5 values
+            inner = first[1:-1].strip()
+            raw_points = _parse_gradient_points_text(inner)
     else:
-        raw_points = params
+        raw_points = [p.strip() for p in params]
+
+    # Final cleanup: strip any lingering brackets and whitespace from each point
+    raw_points = [p.strip("[] \t") for p in raw_points if p.strip("[] \t")]
+
+    # If every raw point is a bare number, they were split by spaces/commas at the
+    # pipe level. Reassemble them into 5-value groups (R,G,B,A,pos) or 3-value groups.
+    if raw_points and all(re.fullmatch(r"-?\d+(\.\d+)?", p) for p in raw_points):
+        if len(raw_points) % 5 == 0:
+            raw_points = [",".join(raw_points[i:i + 5]) for i in range(0, len(raw_points), 5)]
+        elif len(raw_points) % 3 == 0:
+            raw_points = [",".join(raw_points[i:i + 3]) for i in range(0, len(raw_points), 3)]
 
     if len(raw_points) < 2:
-        return False, "gradientmap requires at least 2 color points (e.g. 0,0,0 255,255,255)", ""
+        preview = ", ".join(repr(p) for p in raw_points[:5]) if raw_points else "(none)"
+        return False, f"gradientmap needs ≥2 points; got {len(raw_points)}: {preview}", ""
 
     points: list[tuple[int, int, int, int, float | None]] = []
     for p in raw_points:
-        # Support comma (standalone) or colon/underscore (pipe) separators
-        parts = [x.strip() for x in re.split(r"[,:_]", p.strip())]
+        # Split on commas, colons, semicolons, underscores, or whitespace (5 numbers per point)
+        parts = [x.strip() for x in re.split(r"[,;:_\s]+", p.strip()) if x.strip()]
         if len(parts) < 3:
-            return False, f"gradientmap: invalid color point '{p}' — use R,G,B or R,G,B,A or R,G,B,A,pos", ""
+            return False, f"gradientmap: invalid color point '{p}' — need at least R,G,B", ""
         try:
             r = int(parts[0]); g = int(parts[1]); b = int(parts[2])
             a   = int(parts[3])   if len(parts) > 3 else 255
             pos = float(parts[4]) if len(parts) > 4 else None
         except (ValueError, IndexError):
-            return False, f"gradientmap: invalid color point '{p}' — use R,G,B or R,G,B,A or R,G,B,A,pos", ""
+            return False, f"gradientmap: invalid color point '{p}' — need R,G,B [A] [pos] numbers", ""
         if not (0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255 and 0 <= a <= 255):
-            return False, f"gradientmap: color values in '{p}' must be between 0 and 255", ""
+            return False, f"gradientmap: color values in '{p}' must be 0-255", ""
         if pos is not None and not (0.0 <= pos <= 1.0):
-            return False, f"gradientmap: position in '{p}' must be between 0.0 and 1.0", ""
+            return False, f"gradientmap: position in '{p}' must be 0.0-1.0", ""
         points.append((r, g, b, a, pos))
 
     n = len(points)
@@ -10026,9 +10082,10 @@ async def gradientmap_command(ctx: commands.Context, *, args: str = ""):
             "**Examples:**\n"
             "`th/gradientmap 0,0,0 255,255,255`\n"
             "`th/gradientmap 0,0,0,255,0.0 255,0,0,255,0.5 255,255,255,128,1.0`\n"
-            "**As pipe effect:** `th/ihtx 1 5 - mp4 gradientmap=0:0:0:255:0;255:0:0:255:0.5`\n"
-            "**Array syntax:** `th/ihtx 1 5 - mp4 gradientmap=[[0,0,0,0,0.25],[151,59,0,255,0.45]]`\n"
+            "**As pipe effect (array):** `th/ihtx 1 5 - mp4 gradientmap=[[0,0,0,0,0.25],[151,59,0,255,0.45]]`\n"
+            "**As pipe effect (colon/space):** `th/ihtx 1 5 - mp4 gradientmap=0:0:0:255:0;255:0:0:255:0.5`\n"
             "**From URL:** `th/gradientmap url:https://example.com/gradient.txt`\n"
+            "**From URL in pipe:** `th/ihtx 1 5 - mp4 gradientmap=url:https://example.com/gradient.txt`\n"
             "**From file attachment:** attach a `.txt`/`.csv`/`.json` gradient file alongside the media.\n"
             "Alias: `th/gm`"
         )
