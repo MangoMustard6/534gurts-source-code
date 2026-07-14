@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-14: Reordered `th/ihtxsap` pitch styles so `Rubberband R2` and `Rubberband R3` both use the rubberband CLI (`-2`/` -3` with `-p<st> -t1`) as the primary tier and fileaa binary as the fallback. Added `Rubberband Custom` style that accepts arbitrary rubberband CLI flags via `rubberbandcustom=...` (e.g. `-2 -window=long`). Made `th/ihtxsap` argument parsing support both positional and keyword styles in any order (`reps=`, `repetitions=`, `duration=`, `dur=`, `pitches=`, `pitchstyle=`, `style=`, `volume=`, `vol=`, `rubberbandcustom=`). Added `th/ihtxsap` to the `th/ihtxhelp` heavy-commands embed with the Rubberband Custom flag reference.
+- 2026-07-14: Added `th/download` (alias `th/dl`) — generic media downloader that works on any URL, including Discord app/attachment CDN links. Uses direct HTTP download for Discord/direct-file URLs, falls back to yt-dlp for streaming sites, and yt-dlp falls back to direct download if yt-dlp fails. Files ≤8 MB are sent directly; larger files are uploaded to Catbox. Added `th/download` to the `th/ihtxhelp` heavy-commands embed. Also reordered `th/ihtxsap` pitch styles so `Rubberband R2` and `Rubberband R3` both use the rubberband CLI as the primary tier and fileaa binary as the fallback, and added `Rubberband Custom` style with `rubberbandcustom=...` arbitrary flag support; `th/ihtxsap` now accepts both positional and keyword arguments in any order.
 - 2026-07-13: User-submitted effects (`th/submiteffect`) are now global across all guilds and record the guild name/id. Added `th/randomlist` embed showing every random-pool entry and who/guild added it. Random pool entries now store author/guild metadata. Blocked users and blocked channels are now also enforced for slash (/) commands via `bot.tree.interaction_check`. Added `th/effectlist` alias to `th/listeffects`. Fixed th/unblockuser — owners are now exempt from the user-blocklist check in _global_checks, so a blocked owner can still run unblockuser (and can never be silently blocked from owner commands). Added BOT_OWNER_ID env var support to set the primary owner without editing code.
 - 2026-07-13: Added th/submiteffect (aliases: se, addeffect), th/listeffects (le), th/deleteeffect — user-submitted named pipe effects stored in bot/user_effects.json and auto-expanded in _parse_pipe_effects. Removed effect label from th/ihtx queue header, live ticker, and result embed Effect: fields.
 - 2026-07-12: Switched bot presence to `Playing "Making Effects in {N} servers!"` — updates live on guild join/leave via `on_guild_join`/`on_guild_remove` handlers. Only applies when no saved `activity.json` overrides it.
@@ -10766,6 +10766,16 @@ _HELP_ENTRIES: list[dict] = [
         "name": "th/lexg  (aliases: lastexportgrab)",
         "value": "Re-apply the last `th/ihtx` export to a new attachment using the same effect chain.",
     },
+    {
+        "cat": "heavy",
+        "name": "th/download <URL>  (aliases: dl)",
+        "value": (
+            "Download media from any URL including Discord app/attachment links.\n"
+            "Supports direct CDN links, Discord media URLs, and any site yt-dlp handles.\n"
+            "Files ≤8 MB are sent directly; larger files are uploaded to Catbox.\n"
+            "Example: `th/download https://cdn.discordapp.com/attachments/.../video.mp4`"
+        ),
+    },
     # ── Fun ──
     {
         "cat": "fun",
@@ -13891,6 +13901,227 @@ async def ytdl_command(ctx: commands.Context, *, query: str = ""):
                 pass
             if cb_url:
                 await ctx.reply(f"✅ **{title}**\n📦 Too large for Discord → {cb_url}")
+            else:
+                await ctx.reply("❌ Catbox upload failed. File may be too large.")
+
+
+# ---------- Generic media download (any URL, including Discord) ----------
+
+_Download_MEDIA_EXTS = _IHTXSAP_AUDIO_EXTS | {
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".svg",
+    ".ico", ".avif", ".heic", ".pdf", ".zip", ".rar", ".7z", ".tar", ".gz",
+}
+
+
+def _filename_from_response(url: str, resp: aiohttp.ClientResponse) -> str:
+    """Pick a sensible filename from Content-Disposition or URL path."""
+    cd = resp.headers.get("Content-Disposition", "")
+    if cd:
+        for pattern in (r'filename="([^"]+)"', r"filename='([^']+)'", r"filename\*=UTF-8''([^;]+)", r"filename=([^;]+)"):
+            m = re.search(pattern, cd)
+            if m:
+                name = urllib.parse.unquote(m.group(1).strip())
+                if name and not name.endswith("/"):
+                    return name
+
+    parsed = urllib.parse.urlparse(url)
+    if parsed.path:
+        name = os.path.basename(parsed.path)
+        if name and "." in name:
+            return urllib.parse.unquote(name)
+
+    ct = resp.headers.get("Content-Type", "").split(";")[0].strip().lower()
+    ext_map = {
+        "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov",
+        "video/x-matroska": ".mkv", "video/avi": ".avi", "video/x-msvideo": ".avi",
+        "audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav",
+        "audio/ogg": ".ogg", "audio/flac": ".flac", "audio/aac": ".aac",
+        "audio/m4a": ".m4a", "audio/opus": ".opus", "audio/webm": ".webm",
+        "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif",
+        "image/webp": ".webp", "image/bmp": ".bmp",
+    }
+    return f"download{ext_map.get(ct, '.bin')}"
+
+
+async def _download_direct_url(url: str, out_dir: str) -> str:
+    """Download a direct URL to a file in out_dir. Returns the file path."""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "*/*",
+    }
+    timeout = aiohttp.ClientTimeout(total=300, connect=15)
+    async with aiohttp.ClientSession(headers=headers, timeout=timeout) as session:
+        async with session.get(url, allow_redirects=True) as resp:
+            if resp.status != 200:
+                raise ValueError(f"HTTP {resp.status}")
+            filename = _filename_from_response(url, resp)
+            dest = os.path.join(out_dir, filename)
+            tmp = dest + ".part"
+            with open(tmp, "wb") as f:
+                async for chunk in resp.content.iter_chunked(1024 * 256):
+                    f.write(chunk)
+            os.replace(tmp, dest)
+            return dest
+
+
+def _run_ytdlp_url(url: str, out_dir: str) -> tuple[str | None, str]:
+    """Download a URL with yt-dlp. Returns (file_path, error)."""
+    import subprocess as _sp
+    out_template = os.path.join(out_dir, "%(title).80s.%(ext)s")
+    args = [
+        "yt-dlp", url,
+        "-f", "bestvideo[ext=mp4][filesize<?200M]+bestaudio[ext=m4a]"
+              "/bestvideo[filesize<?200M]+bestaudio"
+              "/best[filesize<?200M]/best",
+        "--merge-output-format", "mp4",
+        "--no-playlist",
+        "--max-filesize", "200m",
+        "--output", out_template,
+        "--no-warnings",
+        "--socket-timeout", "30",
+    ]
+    result = _sp.run(args, capture_output=True, text=True, timeout=300)
+    if result.returncode != 0:
+        return None, (result.stderr or result.stdout)[-800:]
+    files = [f for f in os.listdir(out_dir) if not f.startswith(".")]
+    if not files:
+        return None, "yt-dlp produced no output file."
+    return os.path.join(out_dir, files[0]), ""
+
+
+def _looks_like_direct_url(url: str) -> bool:
+    lower = url.lower()
+    if any(host in lower for host in ("cdn.discordapp.com", "media.discordapp.net", "attachments.discordapp.com")):
+        return True
+    parsed = urllib.parse.urlparse(url)
+    if parsed.path:
+        return any(parsed.path.lower().endswith(ext) for ext in _Download_MEDIA_EXTS)
+    return False
+
+
+@bot.command(name="download", aliases=["dl"])
+async def download_command(ctx: commands.Context, *, query: str = ""):
+    """Download media from any URL, including Discord app/attachment URLs.
+
+    Usage:
+      th/download <URL>
+      th/dl <URL>
+
+    Works on direct links, Discord CDN links, and any site yt-dlp supports.
+    Files ≤8 MB are sent directly; larger files are uploaded to Catbox.
+    Maximum download size: 200 MB.
+    """
+    # ── Resolve URL from args, reply, or attachment ──────────────────────────
+    url = query.strip()
+    if not url and ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            for tok in ref.content.split():
+                if tok.lower().startswith(("http://", "https://")):
+                    url = tok
+                    break
+            if not url and ref.attachments:
+                url = ref.attachments[0].proxy_url or ref.attachments[0].url
+        except Exception:
+            pass
+    if not url and ctx.message.attachments:
+        url = ctx.message.attachments[0].proxy_url or ctx.message.attachments[0].url
+
+    if not url:
+        await ctx.reply(
+            "❌ **Usage:** `th/download <URL>`\n"
+            "Attach a file, reply to a URL/file, or provide a link."
+        )
+        return
+
+    if not url.lower().startswith(("http://", "https://")):
+        await ctx.reply("❌ Invalid URL. Must start with `http://` or `https://`.")
+        return
+
+    status_msg = await ctx.reply(f"⏳ Downloading: `{url[:100]}`…")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        loop = asyncio.get_event_loop()
+        file_path: str | None = None
+        last_err = ""
+
+        direct_first = _looks_like_direct_url(url)
+        if direct_first:
+            try:
+                file_path = await _download_direct_url(url, tmpdir)
+            except Exception as exc:
+                last_err = str(exc)
+                print(f"[download] direct failed: {exc}")
+            if not file_path:
+                file_path, last_err = await loop.run_in_executor(
+                    None, lambda: _run_ytdlp_url(url, tmpdir)
+                )
+        else:
+            file_path, last_err = await loop.run_in_executor(
+                None, lambda: _run_ytdlp_url(url, tmpdir)
+            )
+            if not file_path:
+                try:
+                    file_path = await _download_direct_url(url, tmpdir)
+                    last_err = ""
+                except Exception as exc:
+                    last_err = f"{last_err}\nDirect fallback: {exc}"
+
+        if not file_path or not os.path.exists(file_path):
+            await status_msg.edit(
+                content=f"❌ Download failed:\n```\n{last_err[-800:]}\n```"
+            )
+            return
+
+        file_size = os.path.getsize(file_path)
+        MAX_DL_BYTES = 200 * 1024 * 1024
+        if file_size > MAX_DL_BYTES:
+            await status_msg.edit(
+                content=f"❌ File too large ({file_size / 1024 / 1024:.1f} MB). Max is 200 MB."
+            )
+            return
+
+        filename = os.path.basename(file_path)
+        ext = Path(filename).suffix
+        if not ext or ext == "." or not filename:
+            filename = f"download{ext or '.bin'}"
+
+        size_str = (
+            f"{file_size / 1024 / 1024:.2f} MB"
+            if file_size >= 1024 * 1024
+            else f"{file_size / 1024:.2f} KB"
+        )
+
+        if file_size <= CATBOX_THRESHOLD:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+            try:
+                await ctx.reply(
+                    content=f"✅ Downloaded `{filename}` ({size_str})",
+                    file=discord.File(file_path, filename=filename),
+                )
+            except discord.HTTPException as exc:
+                await ctx.reply(f"❌ Failed to send file: {exc}")
+        else:
+            await status_msg.edit(
+                content=f"📦 File too large for Discord ({size_str}) — uploading to Catbox…"
+            )
+            cb_url = await _upload_to_catbox(file_path)
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+            if cb_url:
+                await ctx.reply(
+                    f"✅ Downloaded `{filename}` ({size_str})\n"
+                    f"📦 Too large for Discord → {cb_url}"
+                )
             else:
                 await ctx.reply("❌ Catbox upload failed. File may be too large.")
 
