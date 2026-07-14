@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-14: Reordered `th/ihtxsap` pitch styles so `Rubberband R2` and `Rubberband R3` both use the rubberband CLI (`-2`/` -3` with `-p<st> -t1`) as the primary tier and fileaa binary as the fallback. Added `Rubberband Custom` style that accepts arbitrary rubberband CLI flags via `rubberbandcustom=...` (e.g. `-2 -window=long`). Made `th/ihtxsap` argument parsing support both positional and keyword styles in any order (`reps=`, `repetitions=`, `duration=`, `dur=`, `pitches=`, `pitchstyle=`, `style=`, `volume=`, `vol=`, `rubberbandcustom=`). Added `th/ihtxsap` to the `th/ihtxhelp` heavy-commands embed with the Rubberband Custom flag reference.
 - 2026-07-13: User-submitted effects (`th/submiteffect`) are now global across all guilds and record the guild name/id. Added `th/randomlist` embed showing every random-pool entry and who/guild added it. Random pool entries now store author/guild metadata. Blocked users and blocked channels are now also enforced for slash (/) commands via `bot.tree.interaction_check`. Added `th/effectlist` alias to `th/listeffects`. Fixed th/unblockuser — owners are now exempt from the user-blocklist check in _global_checks, so a blocked owner can still run unblockuser (and can never be silently blocked from owner commands). Added BOT_OWNER_ID env var support to set the primary owner without editing code.
 - 2026-07-13: Added th/submiteffect (aliases: se, addeffect), th/listeffects (le), th/deleteeffect — user-submitted named pipe effects stored in bot/user_effects.json and auto-expanded in _parse_pipe_effects. Removed effect label from th/ihtx queue header, live ticker, and result embed Effect: fields.
 - 2026-07-12: Switched bot presence to `Playing "Making Effects in {N} servers!"` — updates live on guild join/leave via `on_guild_join`/`on_guild_remove` handlers. Only applies when no saved `activity.json` overrides it.
@@ -10712,6 +10713,22 @@ _HELP_ENTRIES: list[dict] = [
             "Multi-voice pitch shift via Rubber Band R3.\n"
             "Pipe-separated semitones: `th/multipitch 25|5|8.5`\n"
             "Or inline: `th/ihtx 1 10 false mp4 multipitch=25|5|8.5`"
+        ),
+    },
+    {
+        "cat": "heavy",
+        "name": "th/ihtxsap  (aliases: sap)",
+        "value": (
+            "Audio-only iterative IHTX. Repetitions, duration, pitch set, style, volume.\n"
+            "Positional: `th/ihtxsap 5 0.7 -7;5;6 \"Rubberband R3\" volume=4`\n"
+            "Keyword: `th/ihtxsap pitchstyle=\"Rubberband Custom\" pitches=-7;8;-4 repetitions=20 duration=0.4 volume=1.3 rubberbandcustom=\"-3 --centre-focus\"`\n"
+            "**Styles:** `Rubberband R2`, `Rubberband R3`, `Soundtouch`, `Bungee`, `Rubberband Custom`\n"
+            "**Rubberband Custom flags** (inserted before `-p<st>`):\n"
+            "`-2` / `--fast` — R2 engine · `-3` / `--fine` — R3 engine\n"
+            "`-F` / `--formant` — preserve formants\n"
+            "`--centre-focus` — preserve stereo centre focus\n"
+            "`-c <N>` / `--crisp <N>` — crispness 0–6 (R2 only)\n"
+            "Example: `rubberbandcustom=\"-3 -F\"`"
         ),
     },
     {
