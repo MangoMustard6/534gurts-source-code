@@ -8,8 +8,8 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-14: Removed Python `th/gradientmap` / `th/gm` command and `gradientmap`/`gmap` pipe effect; the feature now lives only in the TypeScript bot.
 - 2026-07-14: Refactored TypeScript `gradientmap`/`gmap` core filter builder to use a `ColorStop` tuple type and shared normalization/curve-generation logic, matching the standalone reference implementation.
-- 2026-07-14: `gradientmap`/`gmap` parser now accepts scientific-notation numbers in bare-number groups (e.g. `2.5e-3`) and rejects out-of-range color/position values with clear messages.
 - 2026-07-14: Hardened `gradientmap`/`gmap` parsing: now accepts double-bracket `[[...]]`, single-bracket `[...]`, colon/space-separated values, bare number groups, and JSON/flat-list gradient files from URLs or attachments. Error messages now report how many points were actually parsed.
 - 2026-07-14: `gradientmap`/`gmap` now supports unlimited color points via external sources: a `url:https://...` point list (works in both standalone `th/gradientmap` and the `th/ihtx` pipe effect) or a `.txt`/`.csv`/`.json` gradient file attached alongside the media for the standalone command.
 - 2026-07-14: Added `spherize` pipe effect (aliases `sphere`, `bulge`) — Vegas-style bulge/spherize distortion via FFmpeg geq. Params: `amount|radius|center_x|center_y` (default `0.8|0.5|0.5|0.5`). Added to the pipe effects list in `th/ihtxhelp`. Also added `th/download` (alias `th/dl`) — generic media downloader for any URL including Discord CDN links. Also reordered `th/ihtxsap` pitch styles and added `Rubberband Custom` with `rubberbandcustom=...` arbitrary flag support.
@@ -930,193 +930,6 @@ def _run_ffmpeg_raw(cmd: list[str], timeout: int = 180) -> tuple[bool, str]:
         return False, f"FFmpeg timed out (>{timeout}s)"
     except Exception as e:
         return False, str(e)
-
-
-def _parse_gradient_points_text(text: str) -> list[str]:
-    """Split a text file/URL body into a list of gradient point strings.
-
-    Supported formats:
-      - One point per line
-      - Semicolon-separated points on the same line
-      - JSON-style arrays: [[r,g,b,a,pos], ...] or [r,g,b,a,pos, ...]
-      - Comma-separated flat lists (with 5 values per point)
-      - Comments starting with #
-    """
-    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
-    if not text:
-        return []
-
-    # Try to parse as a JSON array first
-    try:
-        data = json.loads(text)
-        if isinstance(data, list) and len(data) >= 2:
-            points: list[str] = []
-            for item in data:
-                if isinstance(item, list):
-                    points.append(",".join(str(v) for v in item))
-                elif isinstance(item, str):
-                    points.append(item)
-            if points:
-                return points
-    except Exception:
-        pass
-
-    # Try to parse as a flat comma-separated list of numbers (5 values per point)
-    flat = [x.strip() for x in text.replace(";", ",").split(",") if x.strip()]
-    if len(flat) >= 10 and len(flat) % 5 == 0:
-        return [",".join(flat[i:i + 5]) for i in range(0, len(flat), 5)]
-
-    # Line/semicolon based parsing
-    points: list[str] = []
-    for line in text.split("\n"):
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        # Remove inline comments
-        if "#" in line:
-            line = line.split("#", 1)[0].strip()
-        for segment in line.split(";"):
-            segment = segment.strip(" \t[]")
-            if segment and not segment.startswith("#"):
-                points.append(segment)
-    return points
-
-
-def _load_gradient_points(source: str) -> tuple[bool, list[str], str]:
-    """Load gradient points from a URL, or return the source as an inline point."""
-    source = source.strip()
-    if source.startswith("url:"):
-        source = source[4:].strip()
-    if source.startswith(("http://", "https://")):
-        try:
-            ctx = ssl.create_default_context()
-            req = urllib.request.Request(
-                source,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"},
-            )
-            with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
-                text = r.read().decode("utf-8", errors="replace")
-        except Exception as e:
-            return False, [], f"gradientmap: failed to download points from URL: {e}"
-        return True, _parse_gradient_points_text(text), ""
-    return True, [source], ""
-
-
-def _build_gradientmap_filter(params: list[str]) -> tuple[bool, str, str]:
-    """Parse color-point params and return (ok, error, vf_filter_string).
-
-    Each param is a color point string: "R,G,B"  "R,G,B,A"  or "R,G,B,A,pos"
-    where R/G/B/A are 0-255 integers and pos is 0.0-1.0 (default: evenly spaced).
-    Commas, colons, underscores, and spaces are accepted as value separators.
-    A single param may be a double-bracket array: [[r,g,b,a,pos],[...]].
-    A single param may be a single-bracket array: [r,g,b,a,pos],[...].
-    A single param may be a URL (or url: prefix) pointing to a gradient file.
-    At least 2 points are required.
-    """
-
-    raw_points: list[str] = []
-    first = params[0].strip() if params else ""
-
-    if first.startswith(("http://", "https://", "url:")):
-        ok, loaded, err = _load_gradient_points(first)
-        if not ok:
-            return False, err, ""
-        raw_points = loaded
-    elif len(params) == 1 and first.startswith("[[") and first.endswith("]]"):
-        # Double-bracket array: [[a],[b],[c]]
-        inner = first[2:-2].strip()
-        raw_points = [
-            p.strip().strip("[]")
-            for p in re.split(r"\]\s*,\s*\[", inner)
-        ]
-    elif len(params) == 1 and first.startswith("[") and first.endswith("]"):
-        # Single-bracket array: [a],[b],[c] (or [a,b,c,d,e])
-        # First try comma-delimited bracket groups
-        bracketed = re.findall(r"\[([^\]]+)\]", first)
-        if len(bracketed) >= 2:
-            raw_points = [p.strip() for p in bracketed]
-        else:
-            # Single flat array: [a,b,c,d,e,f,g,h,i,j] -> 2 points of 5 values
-            inner = first[1:-1].strip()
-            raw_points = _parse_gradient_points_text(inner)
-    else:
-        raw_points = [p.strip() for p in params]
-
-    # Final cleanup: strip any lingering brackets and whitespace from each point
-    raw_points = [p.strip("[] \t") for p in raw_points if p.strip("[] \t")]
-
-    # If every raw point is a bare number, they were split by spaces/commas at the
-    # pipe level. Reassemble them into 5-value groups (R,G,B,A,pos) or 3-value groups.
-    if raw_points and all(re.fullmatch(r"-?\d+(\.\d+)?([eE][+-]?\d+)?", p) for p in raw_points):
-        if len(raw_points) % 5 == 0:
-            raw_points = [",".join(raw_points[i:i + 5]) for i in range(0, len(raw_points), 5)]
-        elif len(raw_points) % 3 == 0:
-            raw_points = [",".join(raw_points[i:i + 3]) for i in range(0, len(raw_points), 3)]
-
-    if len(raw_points) < 2:
-        preview = ", ".join(repr(p) for p in raw_points[:5]) if raw_points else "(none)"
-        return False, f"gradientmap needs ≥2 points; got {len(raw_points)}: {preview}", ""
-
-    points: list[tuple[int, int, int, int, float | None]] = []
-    for p in raw_points:
-        # Split on commas, colons, semicolons, underscores, or whitespace (5 numbers per point)
-        parts = [x.strip() for x in re.split(r"[,;:_\s]+", p.strip()) if x.strip()]
-        if len(parts) < 3:
-            return False, f"gradientmap: invalid color point '{p}' — need at least R,G,B", ""
-        try:
-            r = int(parts[0]); g = int(parts[1]); b = int(parts[2])
-            a   = int(parts[3])   if len(parts) > 3 else 255
-            pos = float(parts[4]) if len(parts) > 4 else None
-        except (ValueError, IndexError):
-            return False, f"gradientmap: invalid color point '{p}' — need R,G,B [A] [pos] numbers", ""
-        if not (0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255 and 0 <= a <= 255):
-            return False, f"gradientmap: color values in '{p}' must be 0-255", ""
-        if pos is not None and not (0.0 <= pos <= 1.0):
-            return False, f"gradientmap: position in '{p}' must be 0.0-1.0", ""
-        points.append((r, g, b, a, pos))
-
-    n = len(points)
-
-    def _pos(pt: tuple, idx: int) -> float:
-        return pt[4] if pt[4] is not None else idx / (n - 1)
-
-    def _curve(channel: int) -> str:
-        return " ".join(
-            f"{_pos(pt, i):.4f}/{pt[channel] / 255:.4f}"
-            for i, pt in enumerate(points)
-        )
-
-    r_c = _curve(0); g_c = _curve(1); b_c = _curve(2); a_c = _curve(3)
-
-    vf = (
-        f"split=3[_gm_a][_gm_b][_gm_t];"
-        f"[_gm_a]format=gray,curves=r='{r_c}':g='{g_c}':b='{b_c}'[_gm_aa];"
-        f"[_gm_b]format=gray,curves=all='{a_c}'[_gm_bb];"
-        f"[_gm_aa][_gm_bb]alphamerge[_gm_c];"
-        f"[_gm_t][_gm_c]overlay"
-    )
-    return True, "", vf
-
-
-def _run_gradientmap(
-    input_path: str,
-    output_path: str,
-    params: list[str],
-) -> tuple[bool, str]:
-    """Apply gradientmap effect standalone. Returns (ok, error)."""
-    ok, err, vf = _build_gradientmap_filter(params)
-    if not ok:
-        return False, err
-    cmd = [
-        "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-        "-i", input_path,
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "copy",
-        output_path,
-    ]
-    return _run_ffmpeg_raw(cmd, timeout=180)
 
 
 def _frei0r_mirr0r_available() -> bool:
@@ -2451,7 +2264,6 @@ PIPE_EFFECT_NAMES = {
     "avflip",
     "nepeta",
     "nparisonffmpeg", "nineparisonffmpeg",
-    "gradientmap", "gmap",
     "wave2",
     "wmm3dripple", "wmm",
     "timecode",
@@ -2640,11 +2452,7 @@ def _parse_pipe_effects(pipe_str: str) -> list[tuple[str, list[str]]]:
             name, value = part.split("=", 1)
             current_name = name.strip().lower()
             vstrip = value.strip()
-            if current_name in ("gradientmap", "gmap") and vstrip.startswith("[[") and vstrip.endswith("]]"):
-                # Array literal: keep the whole [[...]] block as one raw param so
-                # spaces inside tuples do not get tokenized away.
-                current_params = [vstrip]
-            elif "::" in value:
+            if "::" in value:
                 # :: is an explicit param separator — each segment is kept verbatim
                 # as one param (no further splitting on | or spaces).
                 # Allows: mp2=-4.5|5::G-Major_17  →  params=["-4.5|5", "G-Major_17"]
@@ -3583,14 +3391,6 @@ def _apply_pipe_effects(
                 ok, err = _ff_vf(current, _m_vf, out)
                 if not ok:
                     return False, f"mirror (split-inner) failed: {err}"
-                current = out
-                continue
-
-            # gradientmap / gmap — gradient map via curves + alphamerge overlay
-            if name in ("gradientmap", "gmap"):
-                ok, err = _run_gradientmap(current, out, params)
-                if not ok:
-                    return False, f"gradientmap failed: {err}"
                 current = out
                 continue
 
@@ -10063,132 +9863,6 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Failed to upload result: {e}")
 
 
-@bot.command(name="gradientmap", aliases=["gm"])
-async def gradientmap_command(ctx: commands.Context, *, args: str = ""):
-    """Apply a gradient map to an attached video or image.
-
-    Usage:
-      th/gradientmap <point1> [point2] ...
-
-    Each point is a color stop: R,G,B or R,G,B,A or R,G,B,A,pos
-      R,G,B     — 0-255 color values (required)
-      A         — alpha 0-255 (default 255)
-      pos       — position on the gradient 0.0-1.0 (default evenly spaced)
-
-    Examples:
-      th/gradientmap 0,0,0 255,255,255
-      th/gradientmap 0,0,0,255,0.0 255,0,0,255,0.5 255,255,255,128,1.0
-      th/gradientmap 0:0:0:255:0;255:0:0:255:0.5;255:255:255:128:1
-    """
-    tokens = [p.strip() for p in re.split(r"[;|\s]+", args.strip()) if p.strip()] if args.strip() else []
-    if not tokens:
-        await ctx.reply(
-            "**th/gradientmap** — apply a color gradient map via FFmpeg curves\n"
-            "Attach a video or image and provide color stops.\n\n"
-            "**Usage:** `th/gradientmap R,G,B [A] [pos] ...`\n"
-            "**Examples:**\n"
-            "`th/gradientmap 0,0,0 255,255,255`\n"
-            "`th/gradientmap 0,0,0,255,0.0 255,0,0,255,0.5 255,255,255,128,1.0`\n"
-            "**As pipe effect (array):** `th/ihtx 1 5 - mp4 gradientmap=[[0,0,0,0,0.25],[151,59,0,255,0.45]]`\n"
-            "**As pipe effect (colon/space):** `th/ihtx 1 5 - mp4 gradientmap=0:0:0:255:0;255:0:0:255:0.5`\n"
-            "**From URL:** `th/gradientmap url:https://example.com/gradient.txt`\n"
-            "**From URL in pipe:** `th/ihtx 1 5 - mp4 gradientmap=url:https://example.com/gradient.txt`\n"
-            "**From file attachment:** attach a `.txt`/`.csv`/`.json` gradient file alongside the media.\n"
-            "Alias: `th/gm`"
-        )
-        return
-
-    attachment = None
-    source = await _resolve_media_source(ctx)
-
-    if source is None:
-        await ctx.reply(
-            "❌ Attach a video or image to use `th/gradientmap`.\n"
-            "**Usage:** `th/gradientmap R,G,B [A] [pos] ...`"
-        )
-        return
-
-    if isinstance(source, discord.Attachment):
-        if source.size > MAX_FILE_SIZE:
-            await ctx.reply("❌ File too large (max 25 MB).")
-            return
-    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
-    is_video = suffix in VIDEO_EXTENSIONS
-    is_image = suffix in IMAGE_EXTENSIONS
-    if not is_video and not is_image:
-        await ctx.reply(f"❌ Unsupported file type `{suffix}`. Attach a video or image.")
-        return
-
-    out_suffix = suffix if is_image else ".mp4"
-    with tempfile.TemporaryDirectory() as tmpdir:
-        input_path = os.path.join(tmpdir, f"input{suffix}")
-        output_path = os.path.join(tmpdir, f"gradientmap{out_suffix}")
-
-        # Load gradient points from a text-file attachment if no inline points given
-        if not tokens and ctx.message and ctx.message.attachments:
-            for att in ctx.message.attachments[1:]:
-                if att.filename.lower().endswith((".txt", ".csv", ".json", ".gradient")):
-                    try:
-                        grad_path = os.path.join(tmpdir, "gradient_points.txt")
-                        await download_attachment(att, grad_path)
-                        with open(grad_path, "r", encoding="utf-8", errors="replace") as f:
-                            tokens = _parse_gradient_points_text(f.read())
-                    except Exception as e:
-                        await ctx.reply(f"❌ Failed to read gradient file attachment: {e}")
-                        return
-                    break
-
-        if not tokens:
-            await ctx.reply(
-                "❌ No color points provided. Attach a `.txt`/`.csv`/`.json` gradient file, or type stops inline."
-            )
-            return
-
-        if tokens[0].startswith(("http://", "https://", "url:")):
-            status_msg = await ctx.reply("⏳ Applying gradient map (loading from URL)…")
-        else:
-            status_msg = await ctx.reply(f"⏳ Applying gradient map ({len(tokens)} color stops)…")
-
-        try:
-            await download_attachment(source, input_path)
-        except Exception as e:
-            await status_msg.edit(content=f"❌ Failed to download: {e}")
-            return
-
-        loop = asyncio.get_event_loop()
-        ok, err = await loop.run_in_executor(
-            None, _run_gradientmap, input_path, output_path, tokens,
-        )
-
-        if not ok:
-            await status_msg.edit(content=f"❌ Gradient map failed:\n```\n{err[-1500:]}\n```")
-            return
-
-        out_size = os.path.getsize(output_path)
-        if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output too large — uploading to Catbox…")
-            cb_url = await _upload_to_catbox(output_path)
-            if cb_url:
-                await ctx.reply(f"✅ **Gradient map** done! [Download]({cb_url})\n{cb_url}")
-                await status_msg.delete()
-            else:
-                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
-            return
-
-        out_filename = f"gradientmap_{Path(source.filename).stem}{out_suffix}"
-        try:
-            embed = discord.Embed(
-                title="IHTX Bot — th/gradientmap",
-                description=f"color stops: {len(tokens)}",
-                color=4886754,
-            )
-            embed.set_thumbnail(url="https://files.catbox.moe/xli8jw.png")
-            embed.add_field(name="File Size", value=f"{out_size/(1024*1024):.2f} MB", inline=True)
-            await ctx.reply(embed=embed, file=discord.File(output_path, filename=out_filename))
-            await status_msg.delete()
-        except discord.HTTPException as e:
-            await status_msg.edit(content=f"❌ Failed to upload result: {e}")
-
 
 @bot.command(name="freakzingatesteffect", aliases=["fzte", "freaktest"])
 async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = ""):
@@ -12396,11 +12070,10 @@ You are the AI assistant of the IHTX Discord bot (I Hate The X). You help users 
 CORE COMMANDS REFERENCE — keep this knowledge accurate and ready to answer questions:
 
 Heavy/effects commands:
-• th/ihtx <effects> — chain video effects. Effects: hflip, vflip, invert, negate, grayscale, sepia, rotate=angle, ccshue=val, brightness=val, contrast=val, saturation=val, swapuv, mirror=right/bottom, zoom=amt, pinch&punch, gm91deform, invertrgb, invlum, volume=val, vibrato, areverse, vreverse, channelblend=b|g|r, huehsv=val, multipitch=semis, mp=semis, lut=url, syncaudio, speed=factor, wave, tvsim, tv, swirl, sierpinskiransomware, preview1280, scale1280, oppositep1280, op1280, earthquake, ssmp, folkvalley, fv, vocoder, alimiter, freakzinga, fzgm156, multipitch2/mp2, multipitch3/mp3, jitter, randomjitter, trim=start|end, leftsplit, rightsplit, ripple, scroll, pan, tile, watermark, orb, chromashift, gradientmap/gmap, wave2, wmm3dripple, timecode, radar, fzte/freakzingatesteffect, invlum/il
+• th/ihtx <effects> — chain video effects. Effects: hflip, vflip, invert, negate, grayscale, sepia, rotate=angle, ccshue=val, brightness=val, contrast=val, saturation=val, swapuv, mirror=right/bottom, zoom=amt, pinch&punch, gm91deform, invertrgb, invlum, volume=val, vibrato, areverse, vreverse, channelblend=b|g|r, huehsv=val, multipitch=semis, mp=semis, lut=url, syncaudio, speed=factor, wave, tvsim, tv, swirl, sierpinskiransomware, preview1280, scale1280, oppositep1280, op1280, earthquake, ssmp, folkvalley, fv, vocoder, alimiter, freakzinga, fzgm156, multipitch2/mp2, multipitch3/mp3, jitter, randomjitter, trim=start|end, leftsplit, rightsplit, ripple, scroll, pan, tile, watermark, orb, chromashift, wave2, wmm3dripple, timecode, radar, fzte/freakzingatesteffect, invlum/il
 • th/fzte — full preset effect (invert chain + TV sim + wave + mirror + drawtext + mp3)
 • th/tvsim <line_sync> — CRT simulator
 • th/invlum <powers> [duration] — luma inversion stacker
-• th/gradientmap / th/gm — color map
 • th/preview1280 / th/p1280 — TV simulator montage
 • th/crop <w> <h> — center-crop video
 • th/resize <w> <h> — resize video
