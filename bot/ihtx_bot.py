@@ -3276,13 +3276,10 @@ def _apply_pipe_effects(
                     vid_w, vid_h = 0, 0
                 if vid_w <= 0 or vid_h <= 0:
                     return False, "spherize: could not probe video dimensions."
-                d = f"hypot(X-W*{cx},Y-H*{cy})"
-                r = f"min(W,H)*{radius}"
-                factor = f"max(1-{amount}*(1-{d}/{r}),0)"
                 geq_expr = (
-                    f"if(lte({d},{r}),"
-                    f"p(W*{cx}+(X-W*{cx})*{factor},"
-                    f"H*{cy}+(Y-H*{cy})*{factor}),"
+                    f"if(lte(hypot(X-W*{cx},Y-H*{cy}),min(W,H)*{radius}),"
+                    f"p(W*{cx}+(X-W*{cx})*max(1-({amount})*(1-pow(hypot(X-W*{cx},Y-H*{cy})/(min(W,H)*{radius}),1)),0),"
+                    f"H*{cy}+(Y-H*{cy})*max(1-({amount})*(1-pow(hypot(X-W*{cx},Y-H*{cy})/(min(W,H)*{radius}),1)),0)),"
                     f"p(X,Y))"
                 )
                 spherize_vf = (
