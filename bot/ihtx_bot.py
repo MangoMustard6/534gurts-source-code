@@ -2271,6 +2271,8 @@ PIPE_EFFECT_NAMES = {
     "radar",
     "freakzingatesteffect", "fzte", "freaktest",
     "stretch",
+    "gradientmap", "gmap",
+    "spherize", "sphere", "bulge",
 }
 
 # ---------- User-submitted named pipe effects ----------
