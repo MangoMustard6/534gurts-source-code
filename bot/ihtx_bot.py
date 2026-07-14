@@ -6999,21 +6999,26 @@ _IHTXSAP_AUDIO_EXTS = {
 
 _IHTXSAP_USAGE = (
     "**th/ihtxsap** — audio-only version of th/ihtx\n\n"
-    "**Usage:** `th/ihtxsap <reps> <duration> <pitches> [style] [volume=N]`\n\n"
-    "  `reps`      — integer 1–100: how many times pitch is applied iteratively\n"
-    "  `duration`  — seconds of audio to snip from the start (e.g. `0.7`)\n"
-    "  `pitches`   — semicolon-separated semitone shifts: `-7;5;6`\n"
-    "  `style`     — optional (default `Rubberband R2`): `Rubberband R2`, `Rubberband R3`, `Soundtouch`, `Bungee`\n"
-    "  `volume=N`  — optional float volume multiplier (e.g. `volume=8`)\n\n"
-    "**Example:** `th/ihtxsap 5 0.7 -7;5;6 \"Rubberband R3\" volume=4`\n"
+    "**Usage (positional):** `th/ihtxsap <reps> <duration> <pitches> [style] [volume=N]`\n"
+    "**Usage (keyword):** `th/ihtxsap <reps> <duration> <pitches>` or any order of:\n"
+    "  `reps=...` / `repetitions=...` — integer 1–100\n"
+    "  `duration=...` / `dur=...`       — seconds of audio to snip\n"
+    "  `pitches=...`                    — semicolon-separated semitone shifts: `-7;5;6`\n"
+    "  `pitchstyle=...`                 — `Rubberband R2`, `Rubberband R3`, `Soundtouch`, `Bungee`, `Rubberband Custom`\n"
+    "  `volume=...` / `vol=...`         — float volume multiplier (e.g. `volume=8`)\n"
+    "  `rubberbandcustom=...`           — extra flags for `Rubberband Custom` (e.g. `-2 -window=long`)\n\n"
+    "**Examples:**\n"
+    "`th/ihtxsap 5 0.7 -7;5;6 \"Rubberband R3\" volume=4`\n"
+    "`th/ihtxsap pitchstyle=\"Rubberband Custom\" pitches=-7;8;-4 repetitions=20 duration=0.4 volume=1.3 rubberbandcustom=\"-2 -window=long\"`\n"
     "Attach a video/audio file, reply to one, or have one in recent channel history."
 )
 
 _IHTXSAP_STYLE_NAMES = {
-    "rubberband_r2": "Rubberband R2",
-    "rubberband_r3": "Rubberband R3",
-    "soundtouch":    "Soundtouch",
-    "bungee":        "Bungee",
+    "rubberband_r2":    "Rubberband R2",
+    "rubberband_r3":    "Rubberband R3",
+    "soundtouch":       "Soundtouch",
+    "bungee":           "Bungee",
+    "rubberband_custom": "Rubberband Custom",
 }
 
 _IHTX_SAP_COLOR       = 0x001080
@@ -7021,7 +7026,12 @@ _IHTX_SAP_FOOTER_ICON = "https://files.catbox.moe/4snvbu.gif"
 
 
 def _ihtxsap_parse_args(raw: str):
-    """Parse prefix args for th/ihtxsap. Returns (opts_dict, error_str)."""
+    """Parse prefix args for th/ihtxsap. Returns (opts_dict, error_str).
+
+    Supports both positional and keyword styles, in any order.
+    Positional: reps duration pitches [style] [volume=N]
+    Keywords:  reps=... duration=... pitches=... pitchstyle=... volume=... rubberbandcustom=...
+    """
     tokens: list[str] = []
     cur = ""
     in_quote = False
@@ -7046,65 +7056,159 @@ def _ihtxsap_parse_args(raw: str):
     if cur:
         tokens.append(cur)
 
-    if len(tokens) < 3:
-        return None, f"❌ Not enough arguments.\n\n{_IHTXSAP_USAGE}"
+    if not tokens:
+        return None, f"❌ No arguments.\n\n{_IHTXSAP_USAGE}"
 
-    try:
-        reps = int(tokens[0])
-        if not (1 <= reps <= _IHTXSAP_MAX_REPS):
-            raise ValueError
-    except ValueError:
-        return None, f"❌ `reps` must be an integer 1–{_IHTXSAP_MAX_REPS} (got `{tokens[0]}`)."
+    def _split_key_val(tok: str) -> tuple[str, str | None]:
+        """Return (key, value) if token is key=value, else (token, None)."""
+        if "=" in tok and not tok.startswith("="):
+            key, value = tok.split("=", 1)
+            return key.lower(), value
+        return tok, None
 
-    try:
-        duration = float(tokens[1])
-        if not (0.01 <= duration <= _IHTXSAP_MAX_DUR):
-            raise ValueError
-    except ValueError:
-        return None, f"❌ `duration` must be a positive number of seconds (got `{tokens[1]}`)."
-
-    raw_pitches = tokens[2].split(";")
-    pitches: list[float] = []
-    for p in raw_pitches:
-        p = p.strip()
-        if not p:
-            continue
-        try:
-            val = float(p)
-            if not math.isfinite(val) or abs(val) > 120:
-                raise ValueError
-        except ValueError:
-            return None, f"❌ Invalid pitch value `{p}` — must be a finite number within ±120 semitones."
-        pitches.append(val)
-    if not pitches:
-        return None, "❌ `pitches` must be semicolon-separated numbers, e.g. `-7;5;6`."
-    if len(pitches) > _IHTXSAP_MAX_PITCHES:
-        return None, f"❌ Too many pitch values (max {_IHTXSAP_MAX_PITCHES})."
-
-    style = "rubberband_r2"
-    volume = 1.0
-    for tok in tokens[3:]:
-        lower = tok.lower()
-        if lower.startswith("volume="):
+    def _parse_pitches(val: str) -> list[float] | None:
+        pitches: list[float] = []
+        for p in val.split(";"):
+            p = p.strip()
+            if not p:
+                continue
             try:
-                volume = float(tok[7:])
-                if not (0 < volume <= 100):
+                val = float(p)
+                if not math.isfinite(val) or abs(val) > 120:
                     raise ValueError
             except ValueError:
-                return None, f"❌ `volume` must be a positive float ≤ 100 (got `{tok[7:]}`)."
-        else:
-            if "r3" in lower:
-                style = "rubberband_r3"
-            elif "soundtouch" in lower:
-                style = "soundtouch"
-            elif "bungee" in lower:
-                style = "bungee"
-            elif "r2" in lower:
-                style = "rubberband_r2"
-            else:
-                return None, f"❌ Unknown style `{tok}`. Options: `Rubberband R2`, `Rubberband R3`, `Soundtouch`, `Bungee`."
+                return None
+            pitches.append(val)
+        return pitches
 
-    return {"reps": reps, "duration": duration, "pitches": pitches, "style": style, "volume": volume}, None
+    def _match_style(s: str) -> str | None:
+        s = s.lower().replace(" ", "_").replace("-", "_")
+        if "rubberband" in s and "custom" in s:
+            return "rubberband_custom"
+        if "r3" in s and "rubberband" in s:
+            return "rubberband_r3"
+        if "r2" in s and "rubberband" in s:
+            return "rubberband_r2"
+        if "rubberband" in s:
+            # just "rubberband" -> default to R2
+            return "rubberband_r2"
+        if "soundtouch" in s:
+            return "soundtouch"
+        if "bungee" in s:
+            return "bungee"
+        return None
+
+    # Defaults
+    reps: int | None = None
+    duration: float | None = None
+    pitches: list[float] | None = None
+    style = "rubberband_r2"
+    volume = 1.0
+    rb_custom = ""
+
+    keyword_only = False
+    positional_idx = 0
+
+    for tok in tokens:
+        key, value = _split_key_val(tok)
+
+        if value is not None:
+            keyword_only = True
+            if key in ("reps", "repetitions"):
+                try:
+                    reps = int(value)
+                    if not (1 <= reps <= _IHTXSAP_MAX_REPS):
+                        raise ValueError
+                except ValueError:
+                    return None, f"❌ `reps` must be an integer 1–{_IHTXSAP_MAX_REPS} (got `{value}`)."
+            elif key in ("duration", "dur"):
+                try:
+                    duration = float(value)
+                    if not (0.01 <= duration <= _IHTXSAP_MAX_DUR):
+                        raise ValueError
+                except ValueError:
+                    return None, f"❌ `duration` must be a positive number of seconds (got `{value}`)."
+            elif key == "pitches":
+                pitches = _parse_pitches(value)
+                if pitches is None or not pitches:
+                    return None, f"❌ Invalid pitches `{value}` — must be semicolon-separated numbers within ±120 semitones."
+                if len(pitches) > _IHTXSAP_MAX_PITCHES:
+                    return None, f"❌ Too many pitch values (max {_IHTXSAP_MAX_PITCHES})."
+            elif key in ("pitchstyle", "style"):
+                matched = _match_style(value)
+                if matched is None:
+                    return None, f"❌ Unknown pitchstyle `{value}`. Options: `Rubberband R2`, `Rubberband R3`, `Soundtouch`, `Bungee`, `Rubberband Custom`."
+                style = matched
+            elif key in ("volume", "vol"):
+                try:
+                    volume = float(value)
+                    if not (0 < volume <= 100):
+                        raise ValueError
+                except ValueError:
+                    return None, f"❌ `volume` must be a positive float ≤ 100 (got `{value}`)."
+            elif key in ("rubberbandcustom", "rbcustom"):
+                rb_custom = value.strip()
+            else:
+                return None, f"❌ Unknown argument `{tok}`.\n\n{_IHTXSAP_USAGE}"
+        else:
+            # Positional parsing
+            if positional_idx == 0:
+                try:
+                    reps = int(tok)
+                    if not (1 <= reps <= _IHTXSAP_MAX_REPS):
+                        raise ValueError
+                except ValueError:
+                    return None, f"❌ `reps` must be an integer 1–{_IHTXSAP_MAX_REPS} (got `{tok}`)."
+                positional_idx += 1
+            elif positional_idx == 1:
+                try:
+                    duration = float(tok)
+                    if not (0.01 <= duration <= _IHTXSAP_MAX_DUR):
+                        raise ValueError
+                except ValueError:
+                    return None, f"❌ `duration` must be a positive number of seconds (got `{tok}`)."
+                positional_idx += 1
+            elif positional_idx == 2:
+                pitches = _parse_pitches(tok)
+                if pitches is None or not pitches:
+                    return None, f"❌ Invalid pitches `{tok}` — must be semicolon-separated numbers within ±120 semitones."
+                if len(pitches) > _IHTXSAP_MAX_PITCHES:
+                    return None, f"❌ Too many pitch values (max {_IHTXSAP_MAX_PITCHES})."
+                positional_idx += 1
+            elif positional_idx == 3:
+                matched = _match_style(tok)
+                if matched is None:
+                    return None, f"❌ Unknown style `{tok}`. Options: `Rubberband R2`, `Rubberband R3`, `Soundtouch`, `Bungee`, `Rubberband Custom`."
+                style = matched
+                positional_idx += 1
+            elif tok.lower().startswith("volume="):
+                try:
+                    volume = float(tok[7:])
+                    if not (0 < volume <= 100):
+                        raise ValueError
+                except ValueError:
+                    return None, f"❌ `volume` must be a positive float ≤ 100 (got `{tok[7:]}`)."
+            else:
+                return None, f"❌ Unexpected argument `{tok}`.\n\n{_IHTXSAP_USAGE}"
+
+    if reps is None:
+        return None, f"❌ Missing `reps`.\n\n{_IHTXSAP_USAGE}"
+    if duration is None:
+        return None, f"❌ Missing `duration`.\n\n{_IHTXSAP_USAGE}"
+    if pitches is None:
+        return None, f"❌ Missing `pitches`.\n\n{_IHTXSAP_USAGE}"
+
+    if style == "rubberband_custom" and not rb_custom:
+        return None, "❌ `Rubberband Custom` requires `rubberbandcustom=...` flags (e.g. `-2 -window=long`)."
+
+    return {
+        "reps": reps,
+        "duration": duration,
+        "pitches": pitches,
+        "style": style,
+        "volume": volume,
+        "rubberband_custom": rb_custom,
+    }, None
 
 
 def _ihtxsap_amix(layer_paths: list[str], output: str) -> tuple[bool, str]:
@@ -7133,6 +7237,7 @@ def _run_ihtxsap(
     pitches: list[float],
     style: str,
     volume: float,
+    rubberband_custom: str = "",
 ) -> tuple[bool, str]:
     """
     Audio IHTX pipeline — mirrors th/ihtx's iterative repetition model exactly.
@@ -7262,6 +7367,30 @@ def _run_ihtxsap(
 
                 return False, "❌ rubberband R3 failed (all tiers exhausted)"
 
+            # ── Rubberband Custom ──────────────────────────────────────────────
+            elif style == "rubberband_custom":
+                if not rb_bin:
+                    return False, "rubberband binary not found — needed for Rubberband Custom"
+                if not rubberband_custom:
+                    return False, "❌ Rubberband Custom requires `rubberbandcustom=...` flags"
+
+                # Split user-supplied flags; allow quoted input already unwrapped by tokenizer
+                custom_flags = shlex.split(rubberband_custom)
+                layer_paths = []
+                for i, st in enumerate(pitches):
+                    lp = os.path.join(tmpdir, f"voice_{rep}_{i}.wav")
+                    cmd = [rb_bin] + custom_flags + [f"-p{st:+.4f}", "-t1", src, lp]
+                    res = subprocess.run(
+                        cmd, capture_output=True, text=True, timeout=300,
+                    )
+                    if res.returncode != 0:
+                        return False, (
+                            f"rubberband custom pitch {st:+}st failed:\n"
+                            f"{res.stderr[-400:]}"
+                        )
+                    layer_paths.append(lp)
+                return _ihtxsap_amix(layer_paths, dst)
+
             # ── SoundTouch ─────────────────────────────────────────────────────
             elif style == "soundtouch":
                 if not st_bin:
@@ -7373,7 +7502,9 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
     are concatenated. Output is always a pure MP3, no video.
 
     Usage: th/ihtxsap <reps> <duration> <pitches> [style] [volume=N]
+            th/ihtxsap <keyword args...> (e.g. pitchstyle=... pitches=...)
     Example: th/ihtxsap 5 0.7 -7;5;6 "Rubberband R3" volume=4
+             th/ihtxsap pitchstyle="Rubberband Custom" pitches=-7;8;-4 repetitions=20 duration=0.4 volume=1.3 rubberbandcustom="-2 -window=long"
     """
     if not args:
         await ctx.reply(_IHTXSAP_USAGE)
@@ -7430,6 +7561,8 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
 
     # ── Live embed (same pattern as ihtxgen in economy_cog.py) ───────────────
     style_label = _IHTXSAP_STYLE_NAMES[opts["style"]]
+    if opts["style"] == "rubberband_custom":
+        style_label += f" ({opts['rubberband_custom']})"
     pitch_str   = ";".join((f"+{p}" if p >= 0 else str(p)) for p in opts["pitches"])
     vol_part    = f" · vol ×{opts['volume']}" if opts["volume"] != 1.0 else ""
 
@@ -7499,6 +7632,7 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
                 input_path, output_path,
                 opts["reps"], opts["duration"],
                 opts["pitches"], opts["style"], opts["volume"],
+                opts.get("rubberband_custom", ""),
             )
         finally:
             _done_evt.set()
