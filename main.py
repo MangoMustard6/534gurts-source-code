@@ -15,6 +15,11 @@ def main():
         print("Set it via Replit Secrets or your shell before running.", file=sys.stderr)
         sys.exit(1)
 
+    if not os.environ.get("BOT_OWNER_ID"):
+        print("ERROR: BOT_OWNER_ID environment variable not set.", file=sys.stderr)
+        print("Set your Discord user ID via Replit Secrets before running.", file=sys.stderr)
+        sys.exit(1)
+
     # Use uvloop for faster async I/O if available
     try:
         import uvloop

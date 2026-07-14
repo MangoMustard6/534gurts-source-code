@@ -40,6 +40,11 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
+if (!BOT_OWNER_ID) {
+  console.error('ERROR: BOT_OWNER_ID environment variable is not set.');
+  process.exit(1);
+}
+
 // ── Slash command definitions ────────────────────────────────────────────────
 
 const SLASH_COMMANDS = [

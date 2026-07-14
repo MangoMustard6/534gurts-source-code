@@ -112,8 +112,13 @@ except Exception as _groq_init_err:
 TOKEN = os.environ.get("DISCORD_TOKEN")
 CATBOX_USERHASH = os.environ.get("CATBOX_USERHASH", "")
 
-# Default owner (can be extended via owner file or BOT_OWNER_ID env var)
-OWNER_ID = int(os.environ.get("BOT_OWNER_ID", "1355759019330895973"))
+# Owner ID — required, no default (set BOT_OWNER_ID in Replit Secrets)
+_owner_id_raw = os.environ.get("BOT_OWNER_ID")
+if not _owner_id_raw:
+    import sys as _sys
+    print("ERROR: BOT_OWNER_ID environment variable not set.", file=_sys.stderr)
+    _sys.exit(1)
+OWNER_ID = int(_owner_id_raw)
 
 OWNER_IDS_FILE = Path("bot/owner_ids.json")
 owner_ids: set[int] = {OWNER_ID}
