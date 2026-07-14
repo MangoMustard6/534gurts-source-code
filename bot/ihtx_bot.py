@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-14: Added `th/download` (alias `th/dl`) — generic media downloader that works on any URL, including Discord app/attachment CDN links. Uses direct HTTP download for Discord/direct-file URLs, falls back to yt-dlp for streaming sites, and yt-dlp falls back to direct download if yt-dlp fails. Files ≤8 MB are sent directly; larger files are uploaded to Catbox. Added `th/download` to the `th/ihtxhelp` heavy-commands embed. Also reordered `th/ihtxsap` pitch styles so `Rubberband R2` and `Rubberband R3` both use the rubberband CLI as the primary tier and fileaa binary as the fallback, and added `Rubberband Custom` style with `rubberbandcustom=...` arbitrary flag support; `th/ihtxsap` now accepts both positional and keyword arguments in any order.
+- 2026-07-14: Added `spherize` pipe effect (aliases `sphere`, `bulge`) — Vegas-style bulge/spherize distortion via FFmpeg geq. Params: `amount|radius|center_x|center_y` (default `0.8|0.5|0.5|0.5`). Added to the pipe effects list in `th/ihtxhelp`. Also added `th/download` (alias `th/dl`) — generic media downloader for any URL including Discord CDN links. Also reordered `th/ihtxsap` pitch styles and added `Rubberband Custom` with `rubberbandcustom=...` arbitrary flag support.
 - 2026-07-13: User-submitted effects (`th/submiteffect`) are now global across all guilds and record the guild name/id. Added `th/randomlist` embed showing every random-pool entry and who/guild added it. Random pool entries now store author/guild metadata. Blocked users and blocked channels are now also enforced for slash (/) commands via `bot.tree.interaction_check`. Added `th/effectlist` alias to `th/listeffects`. Fixed th/unblockuser — owners are now exempt from the user-blocklist check in _global_checks, so a blocked owner can still run unblockuser (and can never be silently blocked from owner commands). Added BOT_OWNER_ID env var support to set the primary owner without editing code.
 - 2026-07-13: Added th/submiteffect (aliases: se, addeffect), th/listeffects (le), th/deleteeffect — user-submitted named pipe effects stored in bot/user_effects.json and auto-expanded in _parse_pipe_effects. Removed effect label from th/ihtx queue header, live ticker, and result embed Effect: fields.
 - 2026-07-12: Switched bot presence to `Playing "Making Effects in {N} servers!"` — updates live on guild join/leave via `on_guild_join`/`on_guild_remove` handlers. Only applies when no saved `activity.json` overrides it.
@@ -3258,6 +3258,44 @@ def _apply_pipe_effects(
                 ok, err = _ff_vf(current, stretch_vf, out, timeout=step_timeout)
                 if not ok:
                     return False, f"stretch failed: {err}"
+                current = out
+                continue
+
+            # spherize — bulge/spherize distortion via geq (Vegas-style)
+            # params: amount|radius|center_x|center_y  (default 0.8|0.5|0.5|0.5)
+            if name in ("spherize", "sphere", "bulge"):
+                amount = _pfloat(params, 0, 0.8)
+                radius = _pfloat(params, 1, 0.5)
+                cx     = _pfloat(params, 2, 0.5)
+                cy     = _pfloat(params, 3, 0.5)
+                try:
+                    vinfo = _ffprobe_video_info(current)
+                    vid_w = int(vinfo["width"])
+                    vid_h = int(vinfo["height"])
+                except Exception:
+                    vid_w, vid_h = 0, 0
+                if vid_w <= 0 or vid_h <= 0:
+                    return False, "spherize: could not probe video dimensions."
+                d = f"hypot(X-W*{cx},Y-H*{cy})"
+                r = f"min(W,H)*{radius}"
+                factor = f"max(1-{amount}*(1-{d}/{r}),0)"
+                geq_expr = (
+                    f"if(lte({d},{r}),"
+                    f"p(W*{cx}+(X-W*{cx})*{factor},"
+                    f"H*{cy}+(Y-H*{cy})*{factor}),"
+                    f"p(X,Y))"
+                )
+                spherize_vf = (
+                    f"format=yuv444p,"
+                    f"scale={vid_h}:{vid_h},"
+                    f"geq='{geq_expr}',"
+                    f"scale={vid_w}:{vid_h},"
+                    f"setsar=1:1,"
+                    f"format=yuv420p"
+                )
+                ok, err = _ff_vf(current, spherize_vf, out, timeout=step_timeout)
+                if not ok:
+                    return False, f"spherize failed: {err}"
                 current = out
                 continue
 
@@ -10475,7 +10513,7 @@ _HELP_ENTRIES: list[dict] = [
             "**Video:** `hflip` `vflip` `negate` `grayscale` `sepia` `rotate=<deg>` "
             "`huehsv=hue|sat|lightness|colorspace|betterfully` `ccshue=hue|sat|gamma|gain|offset` `brightness=<val>` `contrast=<val>` "
             "`saturation=<val>` `swapuv` `invlum` `invertrgb=r;g;b` `gm91deform` `randomjitter=<strength>`\n"
-            "**Distortion:** `mirror=<deg|preset>` `zoom=<amt>` (≥ 1 = zoom in, < 1 = zoom out) `ripple=spd|freq|amp|phase` `pan=px|py` `tile=tx|ty` `pinch&punch=str;r;cx;cy` `shake=<h>|<v>` `wave=hSpd|hFreq|hAmp|hPhase|vSpd|vFreq|vAmp|vPhase[|sep][|noclip]`\n"
+            "**Distortion:** `mirror=<deg|preset>` `zoom=<amt>` (≥ 1 = zoom in, < 1 = zoom out) `ripple=spd|freq|amp|phase` `pan=px|py` `tile=tx|ty` `pinch&punch=str;r;cx;cy` `shake=<h>|<v>` `wave=hSpd|hFreq|hAmp|hPhase|vSpd|vFreq|vAmp|vPhase[|sep][|noclip]` `spherize=amount|radius|cx|cy`\n"
             "**Scroll:** `scroll=hpos=V` · `scroll=hpos=V;ypos=V` · `scroll=h;v` (continuous) · `scroll=x1:y1:x2:y2[:dur]` (animated pan)\n"
             "**Split:** `leftsplit(<inner_effects>)` · `rightsplit(<inner_effects>)` — apply inner effects to one half, mirror/combine\n"
             "**Reverse:** `vreverse` (video frames) · `areverse` (audio)\n"
