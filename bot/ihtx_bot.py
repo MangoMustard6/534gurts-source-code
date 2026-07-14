@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-14: `gradientmap`/`gmap` now supports unlimited color points via external sources: a `url:https://...` point list (works in both standalone `th/gradientmap` and the `th/ihtx` pipe effect) or a `.txt`/`.csv`/`.json` gradient file attached alongside the media for the standalone command. Inline points and array syntax still work. Updated the `th/gradientmap` help accordingly.
 - 2026-07-14: Added `spherize` pipe effect (aliases `sphere`, `bulge`) — Vegas-style bulge/spherize distortion via FFmpeg geq. Params: `amount|radius|center_x|center_y` (default `0.8|0.5|0.5|0.5`). Added to the pipe effects list in `th/ihtxhelp`. Also added `th/download` (alias `th/dl`) — generic media downloader for any URL including Discord CDN links. Also reordered `th/ihtxsap` pitch styles and added `Rubberband Custom` with `rubberbandcustom=...` arbitrary flag support.
 - 2026-07-13: User-submitted effects (`th/submiteffect`) are now global across all guilds and record the guild name/id. Added `th/randomlist` embed showing every random-pool entry and who/guild added it. Random pool entries now store author/guild metadata. Blocked users and blocked channels are now also enforced for slash (/) commands via `bot.tree.interaction_check`. Added `th/effectlist` alias to `th/listeffects`. Fixed th/unblockuser — owners are now exempt from the user-blocklist check in _global_checks, so a blocked owner can still run unblockuser (and can never be silently blocked from owner commands). Added BOT_OWNER_ID env var support to set the primary owner without editing code.
 - 2026-07-13: Added th/submiteffect (aliases: se, addeffect), th/listeffects (le), th/deleteeffect — user-submitted named pipe effects stored in bot/user_effects.json and auto-expanded in _parse_pipe_effects. Removed effect label from th/ihtx queue header, live ticker, and result embed Effect: fields.
@@ -923,6 +924,45 @@ def _run_ffmpeg_raw(cmd: list[str], timeout: int = 180) -> tuple[bool, str]:
         return False, str(e)
 
 
+def _parse_gradient_points_text(text: str) -> list[str]:
+    """Split a text file/URL body into a list of gradient point strings.
+
+    Supports one point per line, semicolon-separated points on the same line,
+    and comments starting with #.
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    points: list[str] = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        for segment in line.split(";"):
+            segment = segment.strip()
+            if segment and not segment.startswith("#"):
+                points.append(segment)
+    return points
+
+
+def _load_gradient_points(source: str) -> tuple[bool, list[str], str]:
+    """Load gradient points from a URL, or return the source as an inline point."""
+    source = source.strip()
+    if source.startswith("url:"):
+        source = source[4:].strip()
+    if source.startswith(("http://", "https://")):
+        try:
+            ctx = ssl.create_default_context()
+            req = urllib.request.Request(
+                source,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"},
+            )
+            with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
+                text = r.read().decode("utf-8", errors="replace")
+        except Exception as e:
+            return False, [], f"gradientmap: failed to download points from URL: {e}"
+        return True, _parse_gradient_points_text(text), ""
+    return True, [source], ""
+
+
 def _build_gradientmap_filter(params: list[str]) -> tuple[bool, str, str]:
     """Parse color-point params and return (ok, error, vf_filter_string).
 
@@ -930,10 +970,11 @@ def _build_gradientmap_filter(params: list[str]) -> tuple[bool, str, str]:
     where R/G/B/A are 0-255 integers and pos is 0.0-1.0 (default: evenly spaced).
     Colons and underscores are also accepted as separators for pipe syntax.
     A single param may be an array literal: [[r,g,b,a,pos],[r,g,b,a,pos],...].
+    A single param may also be a URL (or url: prefix) pointing to a gradient file.
     At least 2 points are required.
     """
 
-    # Flatten JS-style array literal into a list of point strings
+    # Flatten JS-style array literal or URL into a list of point strings
     raw_points: list[str] = []
     if len(params) == 1 and params[0].strip().startswith("[[") and params[0].strip().endswith("]]"):
         inner = params[0].strip()[2:-2].strip()
@@ -942,6 +983,11 @@ def _build_gradientmap_filter(params: list[str]) -> tuple[bool, str, str]:
             p.strip().lstrip("[").rstrip("]")
             for p in re.split(r"\]\s*,\s*\[", inner)
         ]
+    elif params and (params[0].strip().startswith(("http://", "https://", "url:"))):
+        ok, loaded, err = _load_gradient_points(params[0].strip())
+        if not ok:
+            return False, err, ""
+        raw_points = loaded
     else:
         raw_points = params
 
@@ -9982,6 +10028,8 @@ async def gradientmap_command(ctx: commands.Context, *, args: str = ""):
             "`th/gradientmap 0,0,0,255,0.0 255,0,0,255,0.5 255,255,255,128,1.0`\n"
             "**As pipe effect:** `th/ihtx 1 5 - mp4 gradientmap=0:0:0:255:0;255:0:0:255:0.5`\n"
             "**Array syntax:** `th/ihtx 1 5 - mp4 gradientmap=[[0,0,0,0,0.25],[151,59,0,255,0.45]]`\n"
+            "**From URL:** `th/gradientmap url:https://example.com/gradient.txt`\n"
+            "**From file attachment:** attach a `.txt`/`.csv`/`.json` gradient file alongside the media.\n"
             "Alias: `th/gm`"
         )
         return
@@ -10007,12 +10055,35 @@ async def gradientmap_command(ctx: commands.Context, *, args: str = ""):
         await ctx.reply(f"❌ Unsupported file type `{suffix}`. Attach a video or image.")
         return
 
-    status_msg = await ctx.reply(f"⏳ Applying gradient map ({len(tokens)} color stops)…")
-
     out_suffix = suffix if is_image else ".mp4"
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{suffix}")
         output_path = os.path.join(tmpdir, f"gradientmap{out_suffix}")
+
+        # Load gradient points from a text-file attachment if no inline points given
+        if not tokens and ctx.message and ctx.message.attachments:
+            for att in ctx.message.attachments[1:]:
+                if att.filename.lower().endswith((".txt", ".csv", ".json", ".gradient")):
+                    try:
+                        grad_path = os.path.join(tmpdir, "gradient_points.txt")
+                        await download_attachment(att, grad_path)
+                        with open(grad_path, "r", encoding="utf-8", errors="replace") as f:
+                            tokens = _parse_gradient_points_text(f.read())
+                    except Exception as e:
+                        await ctx.reply(f"❌ Failed to read gradient file attachment: {e}")
+                        return
+                    break
+
+        if not tokens:
+            await ctx.reply(
+                "❌ No color points provided. Attach a `.txt`/`.csv`/`.json` gradient file, or type stops inline."
+            )
+            return
+
+        if tokens[0].startswith(("http://", "https://", "url:")):
+            status_msg = await ctx.reply("⏳ Applying gradient map (loading from URL)…")
+        else:
+            status_msg = await ctx.reply(f"⏳ Applying gradient map ({len(tokens)} color stops)…")
 
         try:
             await download_attachment(source, input_path)
