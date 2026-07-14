@@ -31,6 +31,7 @@ import { handleMultipitch2 } from './commands/multipitch2.js';
 import { handleIhtxSap, handleIhtxSapInteraction, IHTXSAP_STYLE_CHOICES } from './commands/ihtxsap.js';
 import { handleMultipitchBungee, handleMultipitchBungeeInteraction } from './commands/multipitchbungee.js';
 import { handleStretchToLength } from './commands/stretchtolength.js';
+import { handleGradientmap } from './commands/gradientmap.js';
 import { handleBlockuserCommand, handleUnblockuserCommand, isBlocked as isUserBlocked } from './commands/blockuser.js';
 import { handleBlockchannelCommand, handleUnblockchannelCommand, isBlockedInChannel } from './commands/blockchannel.js';
 
@@ -110,7 +111,7 @@ client.once('clientReady', async (c) => {
   console.log(`[IHTX-TS] Logged in as ${c.user.tag}`);
   console.log(`[IHTX-TS] Prefix: ${PREFIX}`);
   console.log(`[IHTX-TS] Owner ID: ${BOT_OWNER_ID || '(not set)'}`);
-  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitch2, ihtxsap, multipitch_bungee, mpb, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, bytebeat, ffmpegprocess, realgmajor4, stretch_to_length`);
+  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitch2, ihtxsap, multipitch_bungee, mpb, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, bytebeat, ffmpegprocess, realgmajor4, stretch_to_length, gradientmap, gmap, gm`);
 
   // Register slash commands.
   // Set BOT_GUILD_ID env var for instant guild-level registration (dev),
@@ -282,6 +283,12 @@ client.on('messageCreate', async (message: Message) => {
       case 'stretch_to_length':
       case 'stl':
         await handleStretchToLength(message, rest);
+        break;
+
+      case 'gradientmap':
+      case 'gmap':
+      case 'gm':
+        await handleGradientmap(message, rest);
         break;
 
       case 'blockuser':

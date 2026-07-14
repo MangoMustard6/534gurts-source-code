@@ -8,7 +8,8 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-14: Hardened `gradientmap`/`gmap` parsing: now accepts double-bracket `[[...]]`, single-bracket `[...]`, colon/space-separated values, bare number groups, and JSON/flat-list gradient files from URLs or attachments. Error messages now report how many points were actually parsed. Updated `th/gradientmap` help with the supported formats.
+- 2026-07-14: `gradientmap`/`gmap` parser now accepts scientific-notation numbers in bare-number groups (e.g. `2.5e-3`) and rejects out-of-range color/position values with clear messages.
+- 2026-07-14: Hardened `gradientmap`/`gmap` parsing: now accepts double-bracket `[[...]]`, single-bracket `[...]`, colon/space-separated values, bare number groups, and JSON/flat-list gradient files from URLs or attachments. Error messages now report how many points were actually parsed.
 - 2026-07-14: `gradientmap`/`gmap` now supports unlimited color points via external sources: a `url:https://...` point list (works in both standalone `th/gradientmap` and the `th/ihtx` pipe effect) or a `.txt`/`.csv`/`.json` gradient file attached alongside the media for the standalone command.
 - 2026-07-14: Added `spherize` pipe effect (aliases `sphere`, `bulge`) — Vegas-style bulge/spherize distortion via FFmpeg geq. Params: `amount|radius|center_x|center_y` (default `0.8|0.5|0.5|0.5`). Added to the pipe effects list in `th/ihtxhelp`. Also added `th/download` (alias `th/dl`) — generic media downloader for any URL including Discord CDN links. Also reordered `th/ihtxsap` pitch styles and added `Rubberband Custom` with `rubberbandcustom=...` arbitrary flag support.
 - 2026-07-13: User-submitted effects (`th/submiteffect`) are now global across all guilds and record the guild name/id. Added `th/randomlist` embed showing every random-pool entry and who/guild added it. Random pool entries now store author/guild metadata. Blocked users and blocked channels are now also enforced for slash (/) commands via `bot.tree.interaction_check`. Added `th/effectlist` alias to `th/listeffects`. Fixed th/unblockuser — owners are now exempt from the user-blocklist check in _global_checks, so a blocked owner can still run unblockuser (and can never be silently blocked from owner commands). Added BOT_OWNER_ID env var support to set the primary owner without editing code.
@@ -1040,7 +1041,7 @@ def _build_gradientmap_filter(params: list[str]) -> tuple[bool, str, str]:
 
     # If every raw point is a bare number, they were split by spaces/commas at the
     # pipe level. Reassemble them into 5-value groups (R,G,B,A,pos) or 3-value groups.
-    if raw_points and all(re.fullmatch(r"-?\d+(\.\d+)?", p) for p in raw_points):
+    if raw_points and all(re.fullmatch(r"-?\d+(\.\d+)?([eE][+-]?\d+)?", p) for p in raw_points):
         if len(raw_points) % 5 == 0:
             raw_points = [",".join(raw_points[i:i + 5]) for i in range(0, len(raw_points), 5)]
         elif len(raw_points) % 3 == 0:

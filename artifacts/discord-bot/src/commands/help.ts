@@ -149,6 +149,14 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
         ].join('\n'),
       },
       {
+        name: '🎨 TypeScript: th/gradientmap',
+        value: [
+          `\`${PREFIX}gradientmap <R,G,B [A] [pos]> ...\` *gm gmap* — apply a color gradient map via FFmpeg curves`,
+          `**Examples:** \`${PREFIX}gradientmap 0,0,0 255,255,255\` · \`${PREFIX}gradientmap 0:0:0:255:0;255:0:0:255:0.5\``,
+          `**Unlimited stops:** \`${PREFIX}gradientmap url:https://example.com/gradient.txt\` or attach a \`.txt\`/\`.csv\`/\`.json\` gradient file alongside the media.`,
+        ].join('\n'),
+      },
+      {
         name: '🎛️ TypeScript: th/multipitch2',
         value: [
           `\`${PREFIX}multipitch2 <pitches> [||<wave-hammer>] [sr=<rate>]\` — attach a video/audio file`,
