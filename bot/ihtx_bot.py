@@ -8,8 +8,8 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-14: Added standalone ESM gradientmap script at `scripts/src/gradient_map.ts` and updated the TypeScript `th/gradientmap` / `th/gm` command to expose the same `ColorStop`/`GradientMapOptions` API and synchronous `applyGradientMap` helper.
 - 2026-07-14: Removed Python `th/gradientmap` / `th/gm` command and `gradientmap`/`gmap` pipe effect; the feature now lives only in the TypeScript bot.
-- 2026-07-14: Refactored TypeScript `gradientmap`/`gmap` core filter builder to use a `ColorStop` tuple type and shared normalization/curve-generation logic, matching the standalone reference implementation.
 - 2026-07-14: Hardened `gradientmap`/`gmap` parsing: now accepts double-bracket `[[...]]`, single-bracket `[...]`, colon/space-separated values, bare number groups, and JSON/flat-list gradient files from URLs or attachments. Error messages now report how many points were actually parsed.
 - 2026-07-14: `gradientmap`/`gmap` now supports unlimited color points via external sources: a `url:https://...` point list (works in both standalone `th/gradientmap` and the `th/ihtx` pipe effect) or a `.txt`/`.csv`/`.json` gradient file attached alongside the media for the standalone command.
 - 2026-07-14: Added `spherize` pipe effect (aliases `sphere`, `bulge`) — Vegas-style bulge/spherize distortion via FFmpeg geq. Params: `amount|radius|center_x|center_y` (default `0.8|0.5|0.5|0.5`). Added to the pipe effects list in `th/ihtxhelp`. Also added `th/download` (alias `th/dl`) — generic media downloader for any URL including Discord CDN links. Also reordered `th/ihtxsap` pitch styles and added `Rubberband Custom` with `rubberbandcustom=...` arbitrary flag support.

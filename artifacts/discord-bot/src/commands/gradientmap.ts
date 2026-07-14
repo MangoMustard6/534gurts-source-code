@@ -1,6 +1,8 @@
+import { execSync } from 'node:child_process';
 import { Message } from 'discord.js';
 import path from 'path';
 import fs from 'fs';
+import { pathToFileURL } from 'node:url';
 import { spawnAsync } from '../utils/spawn.js';
 import { makeTempDir, cleanupDir, downloadUrl } from '../utils/temp.js';
 import { getUploadLimitBytes, formatBytes } from '../utils/limits.js';
@@ -20,13 +22,83 @@ const SUPPORTED_VIDEO_EXTS = new Set(['mp4', 'mov', 'mkv', 'webm', 'avi']);
 const SUPPORTED_IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'avif']);
 const GRADIENT_FILE_EXTS = new Set(['.txt', '.csv', '.json', '.gradient']);
 
-// ── Gradient point parsing ───────────────────────────────────────────────────
+// ── Core gradient filter (standalone reference implementation) ─────────────────
+
+// Define a type for a color stop: [R, G, B, Alpha?, Position?]
+export type ColorStop = [number, number, number, number?, number?];
+
+export interface GradientMapOptions {
+  inputFile: string;
+  outputFile: string;
+  colors: ColorStop[];
+}
+
+function normalizeStops(
+  colors: ColorStop[],
+): { r: number; g: number; b: number; a: number; pos: number }[] {
+  return colors.map((c, i) => {
+    const r = c[0];
+    const g = c[1];
+    const b = c[2];
+    const a = c[3] !== undefined ? c[3] : 255;
+    const pos = c[4] !== undefined ? c[4] : i / Math.max(colors.length - 1, 1);
+    return { r, g, b, a, pos };
+  });
+}
+
+export function buildGradientmapFilter(stops: ColorStop[]): string {
+  const colors = normalizeStops(stops);
+
+  const rCurve = colors.map((c) => `${c.pos}/${c.r / 255}`).join(' ');
+  const gCurve = colors.map((c) => `${c.pos}/${c.g / 255}`).join(' ');
+  const bCurve = colors.map((c) => `${c.pos}/${c.b / 255}`).join(' ');
+  const aCurve = colors.map((c) => `${c.pos}/${c.a / 255}`).join(' ');
+
+  return (
+    `split=3[_gm_a][_gm_b][_gm_t];` +
+    `[_gm_a]format=gray,curves=r=${rCurve}:g=${gCurve}:b=${bCurve}[_gm_aa];` +
+    `[_gm_b]format=gray,curves=all=${aCurve}[_gm_bb];` +
+    `[_gm_aa][_gm_bb]alphamerge[_gm_c];` +
+    `[_gm_t][_gm_c]overlay`
+  );
+}
+
+/**
+ * Synchronous standalone entrypoint — runs FFmpeg directly.
+ * Useful for CLI/scripts; the Discord bot uses applyGradientmap() instead.
+ */
+export function applyGradientMap({ inputFile, outputFile, colors }: GradientMapOptions): void {
+  if (!fs.existsSync(inputFile)) {
+    throw new Error(`Input file not found: ${inputFile}`);
+  }
+  if (colors.length === 0) {
+    throw new Error('You must provide at least one color stop.');
+  }
+
+  const vf = buildGradientmapFilter(colors);
+  const outputDir = path.dirname(path.resolve(outputFile));
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  const ffmpegCmd = `ffmpeg -y -i "${inputFile}" -vf "${vf}" -pix_fmt yuv420p "${outputFile}"`;
+  console.log(`\nExecuting FFmpeg command:\n${ffmpegCmd}\n`);
+
+  try {
+    execSync(ffmpegCmd, { stdio: 'inherit' });
+    console.log(`\nSuccess! Created: ${outputFile}`);
+  } catch (error) {
+    console.error('\nError executing FFmpeg:', error);
+    process.exit(1);
+  }
+}
+
+// ── Gradient point parsing (Discord input formats) ────────────────────────────
 
 function parseGradientPointsText(text: string): string[] {
   text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
   if (!text) return [];
 
-  // Try JSON first
   try {
     const data = JSON.parse(text);
     if (Array.isArray(data) && data.length >= 2) {
@@ -39,7 +111,6 @@ function parseGradientPointsText(text: string): string[] {
     }
   } catch { /* ignore */ }
 
-  // Flat comma-separated list of numbers (5 per point)
   const flat = text.replace(/;/g, ',').split(',').map((s) => s.trim()).filter(Boolean);
   if (flat.length >= 10 && flat.length % 5 === 0) {
     const out: string[] = [];
@@ -47,7 +118,6 @@ function parseGradientPointsText(text: string): string[] {
     return out;
   }
 
-  // Line/semicolon based parsing
   const points: string[] = [];
   for (const rawLine of text.split('\n')) {
     let line = rawLine.trim();
@@ -79,48 +149,6 @@ async function loadGradientPoints(source: string): Promise<{ ok: boolean; points
   return { ok: true, points: [source], error: '' };
 }
 
-// ── Core gradient filter (matches standalone reference implementation) ─────────
-
-export type ColorStop = [number, number, number, number?, number?];
-
-function normalizeStops(
-  colors: ColorStop[],
-): { r: number; g: number; b: number; a: number; pos: number }[] {
-  return colors.map((c, i) => {
-    const r = c[0];
-    const g = c[1];
-    const b = c[2];
-    const a = c[3] !== undefined ? c[3] : 255;
-    const pos = c[4] !== undefined ? c[4] : i / Math.max(colors.length - 1, 1);
-    return { r, g, b, a, pos };
-  });
-}
-
-export function buildGradientmapFilter(stops: ColorStop[]): string {
-  const colors = normalizeStops(stops);
-
-  const rCurve = colors
-    .map((c) => `${c.pos.toFixed(4)}/${(c.r / 255).toFixed(4)}`)
-    .join(' ');
-  const gCurve = colors
-    .map((c) => `${c.pos.toFixed(4)}/${(c.g / 255).toFixed(4)}`)
-    .join(' ');
-  const bCurve = colors
-    .map((c) => `${c.pos.toFixed(4)}/${(c.b / 255).toFixed(4)}`)
-    .join(' ');
-  const aCurve = colors
-    .map((c) => `${c.pos.toFixed(4)}/${(c.a / 255).toFixed(4)}`)
-    .join(' ');
-
-  return (
-    `split=3[_gm_a][_gm_b][_gm_t];` +
-    `[_gm_a]format=gray,curves=r='${rCurve}':g='${gCurve}':b='${bCurve}'[_gm_aa];` +
-    `[_gm_b]format=gray,curves=all='${aCurve}'[_gm_bb];` +
-    `[_gm_aa][_gm_bb]alphamerge[_gm_c];` +
-    `[_gm_t][_gm_c]overlay`
-  );
-}
-
 export function parseGradientParams(
   params: string[],
 ): { ok: true; stops: ColorStop[] } | { ok: false; error: string } {
@@ -128,7 +156,6 @@ export function parseGradientParams(
   const first = (params[0] ?? '').trim();
 
   if (first.startsWith('http://') || first.startsWith('https://') || first.startsWith('url:')) {
-    // URL loading is async; caller must handle it. For inline/pipe use this is treated as one point.
     rawPoints = [first];
   } else if (params.length === 1 && first.startsWith('[[') && first.endsWith(']]')) {
     const inner = first.slice(2, -2).trim();
@@ -149,7 +176,6 @@ export function parseGradientParams(
 
   rawPoints = rawPoints.map((p) => p.replace(/^[\[\]\s\t]+|[\[\]\s\t]+$/g, '')).filter(Boolean);
 
-  // If every token is a bare number, reassemble into 5-value or 3-value groups.
   if (rawPoints.length && rawPoints.every((p) => /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(p))) {
     if (rawPoints.length % 5 === 0) {
       const grouped: string[] = [];
@@ -246,7 +272,6 @@ async function maybeLoadGradientFileAttachment(
 ): Promise<string[] | null> {
   const all = [...message.attachments.values()];
   if (!all.length) return null;
-  // The first attachment is the media; look at the rest for a gradient file.
   for (let i = 1; i < all.length; i++) {
     const att = all[i]!;
     const ext = path.extname(att.name ?? '').toLowerCase();
@@ -266,7 +291,6 @@ async function maybeLoadGradientFileAttachment(
 }
 
 export async function handleGradientmap(message: Message, rest: string): Promise<void> {
-  // Tokenise respecting bracket groups so array syntax survives whitespace splitting.
   const tokens: string[] = [];
   let cur = '';
   let depth = 0;
@@ -378,5 +402,43 @@ export async function handleGradientmap(message: Message, rest: string): Promise
     }
   } finally {
     cleanupDir(tmpDir);
+  }
+}
+
+// --- CLI Entrypoint (run with `tsx artifacts/discord-bot/src/commands/gradientmap.ts`) ---
+if (import.meta.url === pathToFileURL(process.argv[1]!).href) {
+  const inputFile = 'input.mp4';
+  const outputFile = './output/gradient_map.mp4';
+  const rawArgs = process.argv.slice(2);
+
+  if (rawArgs.length === 0) {
+    console.log('=========================================================================');
+    console.log('FFmpeg Unlimited Gradient Map Generator');
+    console.log('=========================================================================');
+    console.log('Usage: tsx gradientmap.ts <Color1> <Color2> ... <ColorN>');
+    console.log('Format: R,G,B[,Alpha,Position]');
+    console.log('\nExamples:');
+    console.log('  tsx gradientmap.ts 0,0,0 255,128,0 255,255,255');
+    console.log('  tsx gradientmap.ts 0,0,0,255,0 0,0,255,128,0.3 255,255,255,255,1');
+    console.log('=========================================================================');
+    process.exit(0);
+  }
+
+  try {
+    const colorArgs: ColorStop[] = rawArgs.map((arg, idx) => {
+      const parts = arg.split(',').map(Number);
+      if (parts.length < 3 || parts.some(isNaN)) {
+        throw new Error(
+          `Invalid color block at index ${idx}: "${arg}". Must be formatted as R,G,B[,A,Pos] using numbers.`,
+        );
+      }
+      return [parts[0], parts[1], parts[2], parts[3], parts[4]] as ColorStop;
+    });
+
+    console.log(`Loaded ${colorArgs.length} color points. Mapping gradient...`);
+    applyGradientMap({ inputFile, outputFile, colors: colorArgs });
+  } catch (err: any) {
+    console.error(`\nError: ${err.message}`);
+    process.exit(1);
   }
 }
