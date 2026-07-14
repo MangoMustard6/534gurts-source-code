@@ -32,6 +32,7 @@ import { handleIhtxSap, handleIhtxSapInteraction, IHTXSAP_STYLE_CHOICES } from '
 import { handleMultipitchBungee, handleMultipitchBungeeInteraction } from './commands/multipitchbungee.js';
 import { handleStretchToLength } from './commands/stretchtolength.js';
 import { handleGradientmap } from './commands/gradientmap.js';
+import { handlePipetest } from './commands/pipetest.js';
 import { handleBlockuserCommand, handleUnblockuserCommand, isBlocked as isUserBlocked } from './commands/blockuser.js';
 import { handleBlockchannelCommand, handleUnblockchannelCommand, isBlockedInChannel } from './commands/blockchannel.js';
 
@@ -294,6 +295,11 @@ client.on('messageCreate', async (message: Message) => {
       case 'gmap':
       case 'gm':
         await handleGradientmap(message, rest);
+        break;
+
+      case 'pipetest':
+      case 'pt':
+        await handlePipetest(message, rest);
         break;
 
       case 'blockuser':

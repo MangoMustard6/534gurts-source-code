@@ -18,9 +18,9 @@ const USAGE =
   '`th/gradientmap url:https://example.com/gradient.txt`\n' +
   'Attach a `.txt`/`.csv`/`.json`/`.gradient` gradient file alongside the media for unlimited stops.';
 
-const SUPPORTED_VIDEO_EXTS = new Set(['mp4', 'mov', 'mkv', 'webm', 'avi']);
-const SUPPORTED_IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'avif']);
-const GRADIENT_FILE_EXTS = new Set(['.txt', '.csv', '.json', '.gradient']);
+export const SUPPORTED_VIDEO_EXTS = new Set(['mp4', 'mov', 'mkv', 'webm', 'avi']);
+export const SUPPORTED_IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'avif']);
+export const GRADIENT_FILE_EXTS = new Set(['.txt', '.csv', '.json', '.gradient']);
 
 // ── Core gradient filter (standalone reference implementation) ─────────────────
 
@@ -95,7 +95,7 @@ export function applyGradientMap({ inputFile, outputFile, colors }: GradientMapO
 
 // ── Gradient point parsing (Discord input formats) ────────────────────────────
 
-function parseGradientPointsText(text: string): string[] {
+export function parseGradientPointsText(text: string): string[] {
   text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
   if (!text) return [];
 
@@ -245,7 +245,7 @@ export async function applyGradientmap(
 
 // ── Command handler ──────────────────────────────────────────────────────────
 
-async function resolveAttachment(
+export async function resolveAttachment(
   message: Message,
 ): Promise<{ url: string; name: string; ext: string } | null> {
   const direct = message.attachments.first();
@@ -266,7 +266,7 @@ async function resolveAttachment(
   return null;
 }
 
-async function maybeLoadGradientFileAttachment(
+export async function maybeLoadGradientFileAttachment(
   message: Message,
   tmpDir: string,
 ): Promise<string[] | null> {
