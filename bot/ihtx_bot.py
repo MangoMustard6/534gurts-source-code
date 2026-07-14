@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-14: Refactored TypeScript `gradientmap`/`gmap` core filter builder to use a `ColorStop` tuple type and shared normalization/curve-generation logic, matching the standalone reference implementation.
 - 2026-07-14: `gradientmap`/`gmap` parser now accepts scientific-notation numbers in bare-number groups (e.g. `2.5e-3`) and rejects out-of-range color/position values with clear messages.
 - 2026-07-14: Hardened `gradientmap`/`gmap` parsing: now accepts double-bracket `[[...]]`, single-bracket `[...]`, colon/space-separated values, bare number groups, and JSON/flat-list gradient files from URLs or attachments. Error messages now report how many points were actually parsed.
 - 2026-07-14: `gradientmap`/`gmap` now supports unlimited color points via external sources: a `url:https://...` point list (works in both standalone `th/gradientmap` and the `th/ihtx` pipe effect) or a `.txt`/`.csv`/`.json` gradient file attached alongside the media for the standalone command.

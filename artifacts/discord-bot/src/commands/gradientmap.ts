@@ -79,7 +79,51 @@ async function loadGradientPoints(source: string): Promise<{ ok: boolean; points
   return { ok: true, points: [source], error: '' };
 }
 
-export function buildGradientmapFilter(params: string[]): { ok: true; vf: string } | { ok: false; error: string } {
+// ── Core gradient filter (matches standalone reference implementation) ─────────
+
+export type ColorStop = [number, number, number, number?, number?];
+
+function normalizeStops(
+  colors: ColorStop[],
+): { r: number; g: number; b: number; a: number; pos: number }[] {
+  return colors.map((c, i) => {
+    const r = c[0];
+    const g = c[1];
+    const b = c[2];
+    const a = c[3] !== undefined ? c[3] : 255;
+    const pos = c[4] !== undefined ? c[4] : i / Math.max(colors.length - 1, 1);
+    return { r, g, b, a, pos };
+  });
+}
+
+export function buildGradientmapFilter(stops: ColorStop[]): string {
+  const colors = normalizeStops(stops);
+
+  const rCurve = colors
+    .map((c) => `${c.pos.toFixed(4)}/${(c.r / 255).toFixed(4)}`)
+    .join(' ');
+  const gCurve = colors
+    .map((c) => `${c.pos.toFixed(4)}/${(c.g / 255).toFixed(4)}`)
+    .join(' ');
+  const bCurve = colors
+    .map((c) => `${c.pos.toFixed(4)}/${(c.b / 255).toFixed(4)}`)
+    .join(' ');
+  const aCurve = colors
+    .map((c) => `${c.pos.toFixed(4)}/${(c.a / 255).toFixed(4)}`)
+    .join(' ');
+
+  return (
+    `split=3[_gm_a][_gm_b][_gm_t];` +
+    `[_gm_a]format=gray,curves=r='${rCurve}':g='${gCurve}':b='${bCurve}'[_gm_aa];` +
+    `[_gm_b]format=gray,curves=all='${aCurve}'[_gm_bb];` +
+    `[_gm_aa][_gm_bb]alphamerge[_gm_c];` +
+    `[_gm_t][_gm_c]overlay`
+  );
+}
+
+export function parseGradientParams(
+  params: string[],
+): { ok: true; stops: ColorStop[] } | { ok: false; error: string } {
   let rawPoints: string[] = [];
   const first = (params[0] ?? '').trim();
 
@@ -88,7 +132,9 @@ export function buildGradientmapFilter(params: string[]): { ok: true; vf: string
     rawPoints = [first];
   } else if (params.length === 1 && first.startsWith('[[') && first.endsWith(']]')) {
     const inner = first.slice(2, -2).trim();
-    rawPoints = inner.split(/\]\s*,\s*\[/).map((p) => p.trim().replace(/^[\[\]\s]+|[\[\]\s]+$/g, ''));
+    rawPoints = inner
+      .split(/\]\s*,\s*\[/)
+      .map((p) => p.trim().replace(/^[\[\]\s]+|[\[\]\s]+$/g, ''));
   } else if (params.length === 1 && first.startsWith('[') && first.endsWith(']')) {
     const bracketed = [...first.matchAll(/\[([^\]]+)\]/g)].map((m) => m[1]!.trim());
     if (bracketed.length >= 2) {
@@ -121,9 +167,7 @@ export function buildGradientmapFilter(params: string[]): { ok: true; vf: string
     return { ok: false, error: `gradientmap needs ≥2 points; got ${rawPoints.length}: ${preview}` };
   }
 
-  type Point = [r: number, g: number, b: number, a: number, pos: number | null];
-  const points: Point[] = [];
-
+  const stops: ColorStop[] = [];
   for (const p of rawPoints) {
     const parts = p.split(/[,;:_\s]+/).map((s) => s.trim()).filter(Boolean);
     if (parts.length < 3) return { ok: false, error: `gradientmap: invalid color point '${p}' — need at least R,G,B` };
@@ -134,64 +178,34 @@ export function buildGradientmapFilter(params: string[]): { ok: true; vf: string
     }
     const [r, g, b] = [Math.round(nums[0]!), Math.round(nums[1]!), Math.round(nums[2]!)];
     const a = nums[3] !== undefined ? Math.round(nums[3]) : 255;
-    const pos = nums[4] !== undefined ? nums[4] : null;
+    const pos = nums[4] !== undefined ? nums[4] : undefined;
 
     if ([r, g, b, a].some((v) => v < 0 || v > 255)) {
       return { ok: false, error: `gradientmap: color values in '${p}' must be 0-255` };
     }
-    if (pos !== null && (pos < 0.0 || pos > 1.0)) {
+    if (pos !== undefined && (pos < 0.0 || pos > 1.0)) {
       return { ok: false, error: `gradientmap: position in '${p}' must be 0.0-1.0` };
     }
-    points.push([r, g, b, a, pos]);
+    stops.push(pos !== undefined ? [r, g, b, a, pos] : [r, g, b, a]);
   }
 
-  const n = points.length;
-  const posFor = (pt: Point, idx: number) => (pt[4] !== null ? pt[4] : idx / (n - 1));
-
-  const curve = (channel: 0 | 1 | 2 | 3) =>
-    points
-      .map((pt, i) => `${posFor(pt, i).toFixed(4)}/${(pt[channel] / 255).toFixed(4)}`)
-      .join(' ');
-
-  const rCurve = curve(0);
-  const gCurve = curve(1);
-  const bCurve = curve(2);
-  const aCurve = curve(3);
-
-  const vf =
-    `split=3[_gm_a][_gm_b][_gm_t];` +
-    `[_gm_a]format=gray,curves=r='${rCurve}':g='${gCurve}':b='${bCurve}'[_gm_aa];` +
-    `[_gm_b]format=gray,curves=all='${aCurve}'[_gm_bb];` +
-    `[_gm_aa][_gm_bb]alphamerge[_gm_c];` +
-    `[_gm_t][_gm_c]overlay`;
-
-  return { ok: true, vf };
+  return { ok: true, stops };
 }
 
 export async function applyGradientmap(
   inputPath: string,
   outputPath: string,
-  params: string[],
+  stops: ColorStop[],
   timeout?: number,
 ): Promise<{ ok: boolean; error: string }> {
-  // If the first token is a URL, load points asynchronously now.
-  let effectiveParams = params;
-  const first = (params[0] ?? '').trim();
-  if (first.startsWith('http://') || first.startsWith('https://') || first.startsWith('url:')) {
-    const loaded = await loadGradientPoints(first);
-    if (!loaded.ok) return { ok: false, error: loaded.error };
-    effectiveParams = loaded.points;
-  }
-
-  const filterResult = buildGradientmapFilter(effectiveParams);
-  if (!filterResult.ok) return { ok: false, error: filterResult.error };
+  const vf = buildGradientmapFilter(stops);
 
   const result = await spawnAsync(
     'ffmpeg',
     [
       '-loglevel', 'error', '-hide_banner', '-y',
       '-i', inputPath,
-      '-vf', filterResult.vf,
+      '-vf', vf,
       '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
       '-pix_fmt', 'yuv420p',
       '-c:a', 'copy',
@@ -305,14 +319,25 @@ export async function handleGradientmap(message: Message, rest: string): Promise
     await downloadUrl(url, inputPath);
 
     let params = cleaned;
-    if (!params.length || params[0].startsWith('url:') || params[0].startsWith('http')) {
-      /* keep as-is */ }
-    else {
+    if (params.length && (params[0].startsWith('url:') || params[0].startsWith('http'))) {
+      const loaded = await loadGradientPoints(params[0]);
+      if (!loaded.ok) {
+        await status.edit(`❌ ${loaded.error}`);
+        return;
+      }
+      params = loaded.points;
+    } else {
       const filePoints = await maybeLoadGradientFileAttachment(message, tmpDir);
       if (filePoints) params = filePoints;
     }
 
-    const result = await applyGradientmap(inputPath, outputPath, params);
+    const stopsResult = parseGradientParams(params);
+    if (!stopsResult.ok) {
+      await status.edit(`❌ ${stopsResult.error}`);
+      return;
+    }
+
+    const result = await applyGradientmap(inputPath, outputPath, stopsResult.stops);
     if (!result.ok) {
       await status.edit(`❌ Gradient map failed:\n\`\`\`\n${result.error.slice(-1500)}\n\`\`\``);
       return;
@@ -340,7 +365,7 @@ export async function handleGradientmap(message: Message, rest: string): Promise
     }
 
     await status.edit({
-      content: `✅ Gradient map — ${params.length} color stops\n-# Took ${elapsed} seconds.`,
+      content: `✅ Gradient map — ${stopsResult.stops.length} color stops\n-# Took ${elapsed} seconds.`,
       files: [{ attachment: outputPath, name: path.basename(outputPath) }],
     });
   } catch (err) {
