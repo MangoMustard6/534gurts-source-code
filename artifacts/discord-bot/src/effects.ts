@@ -677,3 +677,69 @@ export async function applyGradientmap(
     throw new Error(result.error || 'gradientmap: ffmpeg failed');
   }
 }
+
+// ── Wave ───────────────────────────────────────────────────────────────
+
+/**
+ * Apply the **Wave** sinusoidal pixel-displacement distortion.
+ *
+ * Parameters are passed as a pipe-style token array:
+ *   hSpeed|hFreq|hAmp|hPhase|vSpeed|vFreq|vAmp|vPhase|separateWaves|noPixelClipping
+ *
+ * Defaults:
+ *   h/v speed = 0, h/v frequency = 0, h/v amplitude = 0, h/v phase = 0,
+ *   separateWaves = false, noPixelClipping = false.
+ */
+export async function applyWave(
+  ctx: ProcessorContext,
+  params: string[] = [],
+): Promise<void> {
+  const parseBool = (val: string | undefined): boolean => {
+    if (!val) return false;
+    const s = String(val).toLowerCase().trim();
+    return ['1', 'true', 't', 'y', 'yes', '+', 'on', 'sep', 'noclip'].includes(s);
+  };
+  const parseNum = (val: string | undefined, def: number): number => {
+    const n = parseFloat(val || '');
+    return Number.isNaN(n) ? def : n;
+  };
+
+  const hSpeed = parseNum(params[0], 0);
+  const hFreq = parseNum(params[1], 0);
+  const hAmp = parseNum(params[2], 0);
+  const hPhase = parseNum(params[3], 0);
+  const vSpeed = parseNum(params[4], 0);
+  const vFreq = parseNum(params[5], 0);
+  const vAmp = parseNum(params[6], 0);
+  const vPhase = parseNum(params[7], 0);
+  const separateWaves = parseBool(params[8]);
+  const noPixelClipping = parseBool(params[9]);
+
+  const { width, height } = await getVideoDimensions(ctx.inputFile);
+  const processingWidth = 640;
+  const processingHeight = Math.round(((height / width) * processingWidth) / 2) * 2;
+
+  const eqX = `X-((sin((T*5*${vSpeed}+(${vPhase}*15))+(Y/H)*(PI*${vFreq})))*(-15*${vAmp}))`;
+  const eqY = `Y-((sin((T*5*${hSpeed}+(${hPhase}*15))+(X/W)*(PI*${hFreq})))*(-15*${hAmp}))`;
+
+  let filterChain = '';
+  if (noPixelClipping) {
+    filterChain += 'drawbox=t=1,';
+  }
+  filterChain += `format=yuv444p,scale=${processingWidth}:${processingHeight},`;
+
+  if (separateWaves) {
+    filterChain += `geq='p(${eqX},Y)',geq='p(X,${eqY})',`;
+  } else {
+    filterChain += `geq='p(${eqX},${eqY})',`;
+  }
+
+  filterChain += `scale=${width}:${height},setsar=1:1,format=yuv420p`;
+
+  await spawnAsync('ffmpeg', [
+    '-y', '-i', ctx.inputFile,
+    '-vf', filterChain,
+    '-c:a', 'copy',
+    ctx.outputFile,
+  ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
+}
