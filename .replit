@@ -38,7 +38,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "PYTHONUNBUFFERED=1 python3 -u main.py"
+args = "pip install -q -r requirements.txt && PYTHONUNBUFFERED=1 python3 -u main.py"
 
 [[workflows.workflow]]
 name = "IHTX Discord Bot (TypeScript)"
@@ -46,7 +46,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/discord-bot run dev"
+args = "pnpm install --frozen-lockfile && pnpm --filter @workspace/discord-bot run dev"
 
 [workflows.workflow.metadata]
 outputType = "console"

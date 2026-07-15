@@ -715,10 +715,7 @@ export async function applyWave(
   const separateWaves = parseBool(params[8]);
   const noPixelClipping = parseBool(params[9]);
 
-  const { width, height } = await getVideoDimensions(ctx.inputFile);
-  const processingWidth = 640;
-  const processingHeight = Math.round(((height / width) * processingWidth) / 2) * 2;
-
+  // Wave equations use FFmpeg's native W/H — no dimension probe needed.
   const eqX = `X-((sin((T*5*${vSpeed}+(${vPhase}*15))+(Y/H)*(PI*${vFreq})))*(-15*${vAmp}))`;
   const eqY = `Y-((sin((T*5*${hSpeed}+(${hPhase}*15))+(X/W)*(PI*${hFreq})))*(-15*${hAmp}))`;
 
@@ -726,7 +723,7 @@ export async function applyWave(
   if (noPixelClipping) {
     filterChain += 'drawbox=t=1,';
   }
-  filterChain += `format=yuv444p,scale=${processingWidth}:${processingHeight},`;
+  filterChain += 'format=yuv444p,';
 
   if (separateWaves) {
     filterChain += `geq='p(${eqX},Y)',geq='p(X,${eqY})',`;
@@ -734,7 +731,7 @@ export async function applyWave(
     filterChain += `geq='p(${eqX},${eqY})',`;
   }
 
-  filterChain += `scale=${width}:${height},setsar=1:1,format=yuv420p`;
+  filterChain += 'setsar=1:1,format=yuv420p';
 
   await spawnAsync('ffmpeg', [
     '-y', '-i', ctx.inputFile,
