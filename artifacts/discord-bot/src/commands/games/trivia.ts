@@ -82,7 +82,7 @@ export async function handleTrivia(message: Message, ownerId: string): Promise<v
         value: allAnswers.map((a, i) => `**${LABELS[i]}.** ${a}`).join('\n'),
       },
     ],
-    footer: '534gurts Games • Trivia — You have 30 seconds',
+    footer: 'IHTX Games • Trivia — You have 30 seconds',
   });
 
   const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -115,7 +115,7 @@ export async function handleTrivia(message: Message, ownerId: string): Promise<v
         { name: 'Your answer', value: `**${LABELS[chosen]}.** ${allAnswers[chosen]}`, inline: true },
         { name: 'Correct answer', value: `**${LABELS[correctIndex]}.** ${correct}`, inline: true },
       ],
-      footer: '534gurts Games • Trivia',
+      footer: 'IHTX Games • Trivia',
     });
 
     await btn.update({ embeds: [resultEmbed], components: [] });
@@ -130,7 +130,7 @@ export async function handleTrivia(message: Message, ownerId: string): Promise<v
           { name: 'Question', value: question },
           { name: 'Correct answer', value: `**${LABELS[correctIndex]}.** ${correct}` },
         ],
-        footer: '534gurts Games • Trivia',
+        footer: 'IHTX Games • Trivia',
       });
       await fetching.edit({ embeds: [timeoutEmbed], components: [] }).catch(() => {});
     }

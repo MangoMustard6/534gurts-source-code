@@ -43,7 +43,7 @@ export async function handleEightBall(message: Message, args: string[], ownerId:
       { name: 'Question', value: question.length > 256 ? question.slice(0, 253) + '…' : question },
       { name: 'Answer', value: `> ${response.text}` },
     ],
-    footer: '534gurts Games • 8-Ball',
+    footer: 'IHTX Games • 8-Ball',
   });
 
   await message.reply({ embeds: [embed] });

@@ -748,7 +748,7 @@ PRESET_FILTERS: dict[str, dict] = {
 VISUAL_PRESETS = set(PRESET_FILTERS.keys())
 
 HELP_TEXT = """\
-**534gurts Bot**
+**I Hate The X — IHTX Bot**
 One command, pipe-style syntax:
 
 `th/ihtx effect=value,effect=value,...`
@@ -6566,7 +6566,7 @@ async def preview1280_command(ctx: commands.Context, start: float = 1.85, durati
 
     if source is None:
         await ctx.reply(
-            "**534gurts Preview1280**\n"
+            "**IHTX Preview1280**\n"
             "Attach a video and use `th/preview1280 [start] [duration]`.\n\n"
             "Creates a 12-segment TV-simulator montage with hue shifts, "
             "displacement mapping, and pitch variations.\n\n"
@@ -6659,7 +6659,7 @@ async def oppositep1280_command(ctx: commands.Context, start: float = 1.85, dura
 
     if source is None:
         await ctx.reply(
-            "**534gurts OppositeP1280**\n"
+            "**IHTX OppositeP1280**\n"
             "Attach a video and use `th/oppositep1280 [start] [duration]`.\n\n"
             "Creates a 12-segment TV-simulator montage with **inverse** hue shifts "
             "and **negated** pitch variations compared to preview1280.\n\n"
@@ -6756,7 +6756,7 @@ async def preview1280_640x360resize_command(ctx: commands.Context, start: float 
 
     if source is None:
         await ctx.reply(
-            "**534gurts Preview1280 (640×360 output)**\n"
+            "**IHTX Preview1280 (640×360 output)**\n"
             "Attach a video and use `th/preview1280with640x360resize [start] [duration]`.\n\n"
             "Same 12-segment TV-simulator montage pipeline as `th/preview1280`, "
             "but the final output is always rescaled to **640×360** regardless of input resolution.\n\n"
@@ -6861,7 +6861,7 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
     """
     if not args:
         await ctx.reply(
-            "**534gurts Multipitch** — Rubber Band R3\n"
+            "**IHTX Multipitch** — Rubber Band R3\n"
             "Attach a video or audio file and provide semicolon-separated semitone values.\n\n"
             "Each value creates a pitched voice; all voices are mixed together.\n\n"
             f"Example: `th/multipitch -7;12;19`\n"
@@ -6961,7 +6961,7 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
         out_filename = f"multipitch_{safe_pitch_str}_{Path(source.filename).stem}.mp4"
         try:
             await ctx.reply(
-                content=f"✅ **534gurts multipitch** ({pitch_str}) applied!",
+                content=f"✅ **IHTX multipitch** ({pitch_str}) applied!",
                 file=discord.File(output_path, filename=out_filename),
             )
             await status_msg.delete()
@@ -6987,7 +6987,7 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
     """
     if not args:
         await ctx.reply(
-            "**534gurts SoundStretch Multipitch** — SoundTouch algorithm\n"
+            "**IHTX SoundStretch Multipitch** — SoundTouch algorithm\n"
             "Attach a video or audio file and provide semicolon-separated semitone values.\n\n"
             "Each value creates a pitched voice via soundstretch; all voices are mixed together.\n\n"
             "Example: `th/ssmp -7;12;19`\n"
@@ -7684,7 +7684,7 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
     def _make_embed(color: int = _IHTX_SAP_COLOR) -> discord.Embed:
         e = discord.Embed(color=color, timestamp=discord.utils.utcnow())
         e.set_author(name=_user_tag, icon_url=_avatar_url)
-        e.set_footer(text="534gurts-Sap Audio Processor", icon_url=_IHTX_SAP_FOOTER_ICON)
+        e.set_footer(text="IHTX-Sap Audio Processor", icon_url=_IHTX_SAP_FOOTER_ICON)
         return e
 
     loading_embed = _make_embed()
@@ -7722,7 +7722,7 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
             while not _done_evt.is_set():
                 elapsed = int(time.monotonic() - _start_time)
                 await _update(
-                    f"🔧 Running 534gurts-Sap — `{opts['reps']}×` · pitch `{pitch_str}` · {style_label}…\n"
+                    f"🔧 Running IHTX-Sap — `{opts['reps']}×` · pitch `{pitch_str}` · {style_label}…\n"
                     f"⏱️ **{elapsed}s elapsed**"
                 )
                 try:
@@ -7748,7 +7748,7 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
                 pass
 
         if not ok:
-            await _update(f"❌ 534gurts-Sap failed:\n```\n{err[-1200:]}\n```", 0x40E0D0)
+            await _update(f"❌ IHTX-Sap failed:\n```\n{err[-1200:]}\n```", 0x40E0D0)
             return
 
         out_size    = os.path.getsize(output_path)
@@ -9498,7 +9498,7 @@ async def huehsv_command(
 
     if source is None:
         await ctx.reply(
-            "**534gurts HueHSV**\n"
+            "**IHTX HueHSV**\n"
             "Attach a video or image and use `th/huehsv <hue> [sat] [lightness] [colorspace] [betterfully]`.\n\n"
             "Applies hue/sat/lightness shift via ImageMagick haldclut (hald:8).\n"
             "• `betterfully` — set to `1` for richer hue posterisation + 125% sat headroom\n"
@@ -9559,7 +9559,7 @@ async def huehsv_command(
         out_filename = f"huehsv_{hue}_{Path(source.filename).stem}{out_ext}"
         try:
             await ctx.reply(
-                content=f"✅ **534gurts huehsv** (hue={hue} sat={sat} lightness={lightness} cs={colorspace}{bf_label}) applied!",
+                content=f"✅ **IHTX huehsv** (hue={hue} sat={sat} lightness={lightness} cs={colorspace}{bf_label}) applied!",
                 file=discord.File(output_path, filename=out_filename),
             )
             await status_msg.delete()
@@ -9827,7 +9827,7 @@ async def syncaudio_command(ctx: commands.Context, mode: str = ""):
     if source is None:
         mode_desc = "adjusts **video speed** to match audio" if not alt_mode else "adjusts **audio speed** to match video"
         await ctx.reply(
-            "**534gurts Syncaudio**\n"
+            "**IHTX Syncaudio**\n"
             f"Attach a video and use `th/syncaudio [alt]`.\n\n"
             f"Default: {mode_desc}\n"
             "Alt mode (`alt`): adjusts the other stream instead.\n\n"
@@ -9888,7 +9888,7 @@ async def syncaudio_command(ctx: commands.Context, mode: str = ""):
         out_filename = f"syncaudio_{Path(source.filename).stem}.mp4"
         try:
             await ctx.reply(
-                content=f"✅ **534gurts syncaudio** ({mode_label}) applied!\n```\n{info}\n```",
+                content=f"✅ **IHTX syncaudio** ({mode_label}) applied!\n```\n{info}\n```",
                 file=discord.File(output_path, filename=out_filename),
             )
             await status_msg.delete()
@@ -10008,7 +10008,7 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
         out_filename = f"swirl_{Path(source.filename).stem}{out_suffix}"
         try:
             embed = discord.Embed(
-                title="534gurts Bot — th/swirl",
+                title="IHTX Bot — th/swirl",
                 description=(
                     f"strength={strength}° · radius={radius} · center=({xc},{yc}) · "
                     f"fallout={fallout} · 1:1={is1to1}"
@@ -10095,7 +10095,7 @@ async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = "")
         out_filename = f"freakzinga_test_{Path(source.filename).stem}.mp4"
         try:
             embed = discord.Embed(
-                title="534gurts Bot — th/freakzingatesteffect",
+                title="IHTX Bot — th/freakzingatesteffect",
                 description="invlum→huehsv→ccshue→channelblend→invlum→rotate→tvsim→wave→rotate→mirror→mirror→mirror→ffmpeg→mp3",
                 color=4886754,
             )
@@ -10223,7 +10223,7 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
         out_filename = f"tvsim_{Path(source.filename).stem}.mp4"
         try:
             embed = discord.Embed(
-                title="534gurts Bot — th/tvsim",
+                title="IHTX Bot — th/tvsim",
                 description=(
                     f"line_sync={line_sync} · zoom={detail_zoom} · vert={vertical_sync} · "
                     f"phosphor={phosphorescence} · interlace={interlacing} · scan={scan_phasing} · "
@@ -10307,7 +10307,7 @@ async def folkvalley_command(ctx: commands.Context):
         out_filename = f"folkvalley_{Path(source.filename).stem}.mp4"
         try:
             embed = discord.Embed(
-                title="534gurts Bot — th/folkvalley",
+                title="IHTX Bot — th/folkvalley",
                 description="Music replacement · brightness boost (HSV V+100) · decorative overlay",
                 color=0x40E0D0,
             )
@@ -10420,7 +10420,7 @@ async def vocoder_command(ctx: commands.Context, *, args: str = ""):
         out_filename = f"vocoder_{Path(source.filename).stem}.mp4"
         try:
             embed = discord.Embed(
-                title="534gurts Bot — th/vocoder",
+                title="IHTX Bot — th/vocoder",
                 description=f"Mode: `{mode}` · Bands: `{bw_display}` · Python FFT phase vocoder",
                 color=0x40E0D0,
             )
@@ -10437,7 +10437,7 @@ async def presets_command(ctx: commands.Context):
     """List all available IHTX presets."""
     lines = [f"`{name}` — {PRESET_FILTERS[name]['vf'] or PRESET_FILTERS[name]['complex']}" for name in sorted(PRESET_FILTERS)]
     embed = discord.Embed(
-        title="534gurts Bot — Available Presets",
+        title="IHTX Bot — Available Presets",
         description="\n".join(lines),
         color=0x40E0D0,
     )
@@ -10446,7 +10446,7 @@ async def presets_command(ctx: commands.Context):
         value="Attach a video or image and run:\n`th/ihtx [preset]`\n\nDefault preset: `chaos`",
         inline=False,
     )
-    embed.set_footer(text="534gurts — FFmpeg logo destruction bot")
+    embed.set_footer(text="I Hate The X — FFmpeg logo destruction bot")
     await ctx.reply(embed=embed)
 
 
@@ -10723,7 +10723,7 @@ _HELP_ENTRIES: list[dict] = [
         "cat": "heavy",
         "name": "th/ihtxsap  (aliases: sap)",
         "value": (
-            "Audio-only iterative 534gurts. Repetitions, duration, pitch set, style, volume.\n"
+            "Audio-only iterative IHTX. Repetitions, duration, pitch set, style, volume.\n"
             "Positional: `th/ihtxsap 5 0.7 -7;5;6 \"Rubberband R3\" volume=4`\n"
             "Keyword: `th/ihtxsap pitchstyle=\"Rubberband Custom\" pitches=-7;8;-4 repetitions=20 duration=0.4 volume=1.3 rubberbandcustom=\"-3 --centre-focus\"`\n"
             "**Styles:** `Rubberband R2`, `Rubberband R3`, `Soundtouch`, `Bungee`, `Rubberband Custom`\n"
@@ -10825,7 +10825,7 @@ _HELP_ENTRIES: list[dict] = [
     {
         "cat": "fun",
         "name": "th/invite",
-        "value": "Get the link to invite 534gurts to your server.",
+        "value": "Get the link to invite IHTX to your server.",
     },
     {
         "cat": "fun",
@@ -10840,20 +10840,20 @@ _HELP_ENTRIES: list[dict] = [
     {
         "cat": "fun",
         "name": "th/chat <prompt>  (aliases: ask, ai)",
-        "value": "Chat with T1GNI 534gurts and Fun Bot using Groq.",
+        "value": "Chat with T1GNI IHTX and Fun Bot using Groq.",
     },
     {
         "cat": "fun",
         "name": "th/tag <name> [args]  (aliases: tags)",
         "value": (
             "Invoke a custom tag. Run `th/tag help` for the full scripting reference.\n"
-            "Supports variables, math, conditionals, embed JSON, iscript, mediascript, and 534gurts."
+            "Supports variables, math, conditionals, embed JSON, iscript, mediascript, and IHTX."
         ),
     },
     {
         "cat": "fun",
         "name": "th/presets",
-        "value": "List all available 534gurts presets.",
+        "value": "List all available IHTX presets.",
     },
     {
         "cat": "fun",
@@ -11046,7 +11046,7 @@ def _build_help_embed(
 def _build_home_embed() -> discord.Embed:
     counts = {c: sum(1 for e in _HELP_ENTRIES if e["cat"] == c) for c in _HELP_CATS}
     embed = discord.Embed(
-        title="534gurts Bot — Help",
+        title="IHTX Bot — Help",
         description=(
             "Pick a category from the dropdown below, or run:\n"
             "`th/ihtxhelp <query>` to search all commands.\n\n"
@@ -11056,7 +11056,7 @@ def _build_home_embed() -> discord.Embed:
         ),
         color=0x40E0D0,
     )
-    embed.set_footer(text="534gurts — FFmpeg logo destruction bot")
+    embed.set_footer(text="I Hate The X — FFmpeg logo destruction bot")
     return embed
 
 
@@ -12225,7 +12225,7 @@ _BOT_FAVORITE_COLOR = random.choice(_FAVORITE_COLORS)
 
 _CHAT_SYSTEM_PROMPT = f"""IDENTITY AND ROLE
 
-You are the AI assistant of the 534gurts Discord bot. You help users understand and use the bot's commands, effects, and features.
+You are the AI assistant of the IHTX Discord bot (I Hate The X). You help users understand and use the bot's commands, effects, and features.
 
 CORE COMMANDS REFERENCE — keep this knowledge accurate and ready to answer questions:
 
@@ -12259,7 +12259,7 @@ AI:
 • th/clearchat — clear your chat history
 
 Important:
-- When asked about 534gurts commands, answer accurately using the reference above.
+- When asked about IHTX commands, answer accurately using the reference above.
 - Do not invent commands or effects that do not exist.
 - Stay concise and helpful. No roleplay, no lore, no fictional backstory.
 - If a query is NSFW, refuse calmly.
@@ -12379,7 +12379,7 @@ _load_chat_profiles()
 # knows every implemented command and can answer "what can you do?" questions.
 _AR2_COMMAND_REF = """
 
-COMMANDS YOU KNOW (534gurts Bot — prefix th/):
+COMMANDS YOU KNOW (IHTX Bot — prefix th/):
 
 Heavy (media processing):
 - th/ihtx [preset | <exports> <dur> <no_trim> <fmt> <pipe_effects>] — main effect engine
@@ -12407,14 +12407,14 @@ AI & Chat:
 - th/clearchat — clear your chat history
 
 Economy & Profile:
-- /profile — view your 534gurts profile and wallet balance
+- /profile — view your IHTX profile and wallet balance
 - /jackpot — spend $10 for a random jackpot reward
 - /ping — bot latency
 - /status — bot status (uptime, guilds, users)
 
 Fun & Utility:
 - th/tag <name> [args] — run a custom TagScript tag
-- th/presets — list all 534gurts presets (chaos, glitch, melt, etc.)
+- th/presets — list all IHTX presets (chaos, glitch, melt, etc.)
 - th/ihtxhelp — full IHTX command reference
 - th/klaskycsupo — reveals the Klasky Csupo video
 - th/join [media1] [media2] [-vertical] — join 2 videos side-by-side (default) or stacked (vertical)

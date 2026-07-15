@@ -29,7 +29,7 @@ export async function handleChoose(message: Message, args: string[], ownerId: st
         value: options.map((o, i) => `${o === winner ? '➡️' : `${i + 1}.`} ${o}`).join('\n'),
       },
     ],
-    footer: '534gurts Games • Choose',
+    footer: 'IHTX Games • Choose',
   });
 
   await message.reply({ embeds: [embed] });

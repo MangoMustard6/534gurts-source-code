@@ -43,7 +43,7 @@ export async function handleInfo(message: Message): Promise<void> {
       name: isOwner ? `👑 ${message.author.displayName}` : message.author.displayName,
       iconURL: message.author.displayAvatarURL(),
     })
-    .setTitle('ℹ️ 534gurts Bot — Info')
+    .setTitle('ℹ️ IHTX Bot — Info')
     .addFields(
       {
         name: '🤖 Bot',
@@ -64,7 +64,7 @@ export async function handleInfo(message: Message): Promise<void> {
         inline: true,
       },
     )
-    .setFooter({ text: '534gurts Bot (TypeScript)' })
+    .setFooter({ text: 'IHTX Bot (TypeScript)' })
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });

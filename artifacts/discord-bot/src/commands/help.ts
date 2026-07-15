@@ -43,7 +43,7 @@ function truncate(text: string, max: number): string {
 function buildEmbed(page: HelpPage, index: number, total: number, author: Message['author']): EmbedBuilder {
   const fields = page.fields.map((f) => ({ name: f.name, value: truncate(f.value, FIELD_VALUE_LIMIT) }));
 
-  const footerText = `Page ${index + 1}/${total} — 534gurts Bot ${TITLE_TAG}`;
+  const footerText = `Page ${index + 1}/${total} — IHTX Bot ${TITLE_TAG}`;
   const fixedBudget =
     page.title.length + (page.description?.length ?? 0) + footerText.length +
     fields.reduce((sum, f) => sum + f.name.length, 0);
@@ -89,7 +89,7 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
   // ── Page 1: Heavy Effects ─────────────────────────────────────────────────
   pages.push({
     color: 0x40E0D0,
-    title: `534gurts Bot — Commands ${TITLE_TAG}`,
+    title: `IHTX Bot — Commands ${TITLE_TAG}`,
     description: `Prefix: \`${PREFIX}\``,
     fields: [
       {
@@ -138,7 +138,7 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
   // ── Page 2: TypeScript commands + Download + Info ─────────────────────────
   pages.push({
     color: 0x40E0D0,
-    title: `534gurts Bot — Commands ${TITLE_TAG}`,
+    title: `IHTX Bot — Commands ${TITLE_TAG}`,
     fields: [
       {
         name: '⬇️ Download',
@@ -196,7 +196,7 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
   // ── Page 3: Games + AI + Info ────────────────────────────────────────────
   pages.push({
     color: 0x40E0D0,
-    title: `534gurts Bot — Commands ${TITLE_TAG}`,
+    title: `IHTX Bot — Commands ${TITLE_TAG}`,
     fields: [
       {
         name: '🎮 Games  *(both bots)*',
@@ -218,7 +218,7 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
           '`th/chat <prompt>` *ask* — Chat with Clankered (Gemini 2.5 Flash), both bots',
           '`th/clearchat` *resetai chatclear* — Clear your AI conversation history',
           '`th/random [sub]` *rand* — Random media from pool; `add`/`remove`/`list`/`clear` sub-commands',
-          '`th/tag <name> [args]` *tags* — Custom scripting tags (variables, math, conditionals, iscript, 534gurts)',
+          '`th/tag <name> [args]` *tags* — Custom scripting tags (variables, math, conditionals, iscript, IHTX)',
         ].join('\n'),
       },
       {
@@ -226,7 +226,7 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
         value: [
           '`th/help` — This embed',
           '`th/info` — Bot uptime, tool versions, your role',
-          '`th/presets` *effects list* — List all 534gurts presets',
+          '`th/presets` *effects list* — List all IHTX presets',
           '`th/ihtxhelp [query]` *bothelp* — Full searchable Python bot help',
           '`th/updatelog` *updates changelog* — Recent bot updates',
           '`th/usage` *limit checklimit* — Check your heavy command usage',
@@ -245,7 +245,7 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
   // ── Page 4: Owner-only ────────────────────────────────────────────────────
   pages.push({
     color: 0x40E0D0,
-    title: `534gurts Bot — Commands ${TITLE_TAG} — 🔒 Owner Only`,
+    title: `IHTX Bot — Commands ${TITLE_TAG} — 🔒 Owner Only`,
     fields: [
       {
         name: '🚫 Blocking',
