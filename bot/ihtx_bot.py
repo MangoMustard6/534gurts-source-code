@@ -13986,8 +13986,12 @@ def _filename_from_response(url: str, resp: aiohttp.ClientResponse) -> str:
         "image/webp": ".webp", "image/bmp": ".bmp", "image/tiff": ".tiff",
         "image/avif": ".avif", "image/heic": ".heic",
         "application/pdf": ".pdf", "application/zip": ".zip",
+        "application/x-zip-compressed": ".zip",
         "application/x-rar-compressed": ".rar", "application/x-7z-compressed": ".7z",
         "application/gzip": ".gz", "application/x-gzip": ".gz",
+        "application/x-tar": ".tar", "application/x-bzip2": ".bz2",
+        "application/x-download": ".bin", "binary/octet-stream": ".bin",
+        "application/octet-stream": ".bin", "application/force-download": ".bin",
     }
     return f"download{ext_map.get(ct, '.bin')}"
 
@@ -14138,6 +14142,22 @@ async def download_command(ctx: commands.Context, *, query: str = ""):
                 content=f"❌ Download failed:\n```\n{last_err[-800:]}\n```"
             )
             return
+
+        # yt-dlp or the server may have produced a generic .bin file. Sniff the
+        # real format from the header and rename so Discord/Catbox present it
+        # with a usable extension.
+        if file_path.lower().endswith(".bin"):
+            try:
+                with open(file_path, "rb") as f:
+                    header = f.read(64)
+                ext = _ext_from_magic_bytes(header)
+                if ext:
+                    new_path = os.path.splitext(file_path)[0] + ext
+                    os.replace(file_path, new_path)
+                    file_path = new_path
+                    print(f"[download] renamed .bin to {ext}: {new_path}")
+            except Exception as exc:
+                print(f"[download] magic-bytes rename failed: {exc}")
 
         file_size = os.path.getsize(file_path)
         MAX_DL_BYTES = 200 * 1024 * 1024
