@@ -1,5 +1,6 @@
 - [Update log policy](updatelog-policy.md) — always add/update _UPDATELOG in bot/ihtx_bot.py when changing either bot; newest entry goes at top of list.
 - [BOT_OWNER_ID required policy](bot-owner-id-required.md) — never use a hardcoded default owner ID; both bots must exit at startup if BOT_OWNER_ID is missing.
 - [Tag parser execution model](tag-parser-execution-model.md) — ordering of set/foreach/get across parse pipeline; why foreach must be a deep engine and how inner-block resolution works for math.
+- [Gradientmap implementation](gradientmap-implementation.md) — cross-bot FFmpeg filtergraph shape, raw-param preprocessing, and why `-filter_complex` with `[v]` output is required.
 - [Discord Entry Point sync workaround](discord-entry-point-sync.md) — tree.sync() breaks with error 50240 when app has Entry Point (type=4); use t!syncslash instead (bulk_upsert + preserved EPs).
 - [Building missing frei0r plugins on Nix](frei0r-plugin-build.md) — the Nix frei0r package may omit newer plugins like mirr0r; build from source and install to ~/.frei0r-1/lib/ so FFmpeg discovers them.

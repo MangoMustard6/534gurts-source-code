@@ -45,10 +45,10 @@ export function applyGradientMap({ inputFile, outputFile, colors }: GradientMapO
   // Construct the complex filtergraph string
   const vfString =
     `split=3[a][b][t];` +
-    `[a]format=gray,curves=r=${rCurve}:g=${gCurve}:b=${bCurve}[aa];` +
-    `[b]format=gray,curves=all=${aCurve}[bb];` +
+    `[a]format=gray,curves=r='${rCurve}':g='${gCurve}':b='${bCurve}'[aa];` +
+    `[b]format=gray,curves=all='${aCurve}'[bb];` +
     `[aa][bb]alphamerge[c];` +
-    `[t][c]overlay`;
+    `[t][c]overlay,format=yuv420p[v]`;
 
   // Ensure the output directory exists
   const outputDir = path.dirname(path.resolve(outputFile));
@@ -57,7 +57,7 @@ export function applyGradientMap({ inputFile, outputFile, colors }: GradientMapO
   }
 
   // Build the FFmpeg command
-  const ffmpegCmd = `ffmpeg -y -i "${inputFile}" -vf "${vfString}" -pix_fmt yuv420p "${outputFile}"`;
+  const ffmpegCmd = `ffmpeg -y -i "${inputFile}" -filter_complex "${vfString}" -map "[v]" -pix_fmt yuv420p "${outputFile}"`;
 
   console.log(`\nExecuting FFmpeg Command:\n${ffmpegCmd}\n`);
 

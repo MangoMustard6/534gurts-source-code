@@ -56,10 +56,10 @@ export function buildGradientmapFilter(stops: ColorStop[]): string {
 
   return (
     `split=3[_gm_a][_gm_b][_gm_t];` +
-    `[_gm_a]format=gray,curves=r=${rCurve}:g=${gCurve}:b=${bCurve}[_gm_aa];` +
-    `[_gm_b]format=gray,curves=all=${aCurve}[_gm_bb];` +
+    `[_gm_a]format=gray,curves=r='${rCurve}':g='${gCurve}':b='${bCurve}'[_gm_aa];` +
+    `[_gm_b]format=gray,curves=all='${aCurve}'[_gm_bb];` +
     `[_gm_aa][_gm_bb]alphamerge[_gm_c];` +
-    `[_gm_t][_gm_c]overlay`
+    `[_gm_t][_gm_c]overlay,format=yuv420p[v]`
   );
 }
 
@@ -231,7 +231,8 @@ export async function applyGradientmap(
     [
       '-loglevel', 'error', '-hide_banner', '-y',
       '-i', inputPath,
-      '-vf', vf,
+      '-filter_complex', vf,
+      '-map', '[v]',
       '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
       '-pix_fmt', 'yuv420p',
       '-c:a', 'copy',
