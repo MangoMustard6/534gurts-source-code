@@ -718,8 +718,13 @@ export async function applyWave(
   // Displacement is scaled by W/640 so the visual amplitude is proportional to
   // the input's native width — matching the old "scale-to-640, apply wave, scale-back"
   // behaviour without needing a dimension probe or explicit scale steps.
-  const eqX = `X-((sin((T*5*${vSpeed}+(${vPhase}*15))+(Y/H)*(PI*${vFreq})))*(-15*${vAmp}*(W/640)))`;
-  const eqY = `Y-((sin((T*5*${hSpeed}+(${hPhase}*15))+(X/W)*(PI*${hFreq})))*(-15*${hAmp}*(W/640)))`;
+  //
+  // The spatial phase uses (Y/H-0.5) and (X/W-0.5) instead of (Y/H) and (X/W) so that
+  // the sine sweeps a symmetric range around 0 (-π/2 … +π/2 for freq=1) and its
+  // average over the frame is zero.  Without this, sin(0…π) has mean 2/π ≈ 0.64,
+  // which adds a constant vertical (or horizontal) shift to the whole image.
+  const eqX = `X-((sin((T*5*${vSpeed}+(${vPhase}*15))+(Y/H-0.5)*(PI*${vFreq})))*(-15*${vAmp}*(W/640)))`;
+  const eqY = `Y-((sin((T*5*${hSpeed}+(${hPhase}*15))+(X/W-0.5)*(PI*${hFreq})))*(-15*${hAmp}*(W/640)))`;
 
   let filterChain = '';
   if (noPixelClipping) {
