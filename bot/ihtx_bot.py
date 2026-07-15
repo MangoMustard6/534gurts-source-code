@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-15: Both bots: wave formula now uses `(Y/H-0.5)`/`(X/W-0.5)` phase centering (zero-mean, no constant shift) and `W/640` amplitude scaling (same visual strength at any resolution). Previously the Python bot used flat `-15*amp` pixels with no size compensation, so bigger videos got a proportionally weaker effect.
 - 2026-07-15: TS bot: fixed `applyWave` vertical offset — spatial phase now uses `(Y/H-0.5)` and `(X/W-0.5)` so the sine sweeps symmetrically around 0; the old `(Y/H)*PI` formula swept only a half-cycle whose mean is 2/π ≈ 0.64, adding a constant pixel shift to the whole image.
 - 2026-07-15: TS bot: fixed `applyWave` amplitude scaling — displacement is now multiplied by `W/640` so the visual effect is proportional to native resolution (matches old scale-to-640/scale-back behaviour without a dimension probe). Added `th/klaskysource` (alias `th/klasky`) command to TS bot — downloads and re-attaches the Klasky source clip; falls back to Catbox if the file exceeds the guild upload limit.
 - 2026-07-14: Added `gradientmap` as a TypeScript pipe effect in `artifacts/discord-bot/src/effects.ts` and exposed a `th/pipetest` (alias `th/pt`) one-shot runner that validates the `ProcessorContext` integration.
@@ -3368,10 +3369,10 @@ def _apply_pipe_effects(
 
                 drawbox = "drawbox=t=1," if noclip else ""
                 h_wave = (
-                    f"sin((T*5*({v_speed})+(({v_phase})*15))+(Y/H)*(PI*({v_freq})))*(-15*({v_amp}))"
+                    f"sin((T*5*({v_speed})+(({v_phase})*15))+(Y/H-0.5)*(PI*({v_freq})))*(-15*({v_amp})*(W/640))"
                 )
                 v_wave = (
-                    f"sin((T*5*({h_speed})+(({h_phase})*15))+(X/W)*(PI*({h_freq})))*(-15*({h_amp}))"
+                    f"sin((T*5*({h_speed})+(({h_phase})*15))+(X/W-0.5)*(PI*({h_freq})))*(-15*({h_amp})*(W/640))"
                 )
 
                 def _wave_cmd(inp, op, x_expr, y_expr):
