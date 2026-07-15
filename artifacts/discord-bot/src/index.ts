@@ -35,6 +35,7 @@ import { handleGradientmap } from './commands/gradientmap.js';
 import { handlePipetest } from './commands/pipetest.js';
 import { handleBlockuserCommand, handleUnblockuserCommand, isBlocked as isUserBlocked } from './commands/blockuser.js';
 import { handleBlockchannelCommand, handleUnblockchannelCommand, isBlockedInChannel } from './commands/blockchannel.js';
+import { handleKlaskysource } from './commands/klaskysource.js';
 
 if (!BOT_TOKEN) {
   console.error('ERROR: DISCORD_TOKEN environment variable is not set.');
@@ -316,6 +317,11 @@ client.on('messageCreate', async (message: Message) => {
 
       case 'unblockchannel':
         await handleUnblockchannelCommand(message);
+        break;
+
+      case 'klaskysource':
+      case 'klasky':
+        await handleKlaskysource(message);
         break;
 
       default:
