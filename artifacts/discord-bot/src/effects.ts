@@ -715,9 +715,11 @@ export async function applyWave(
   const separateWaves = parseBool(params[8]);
   const noPixelClipping = parseBool(params[9]);
 
-  // Wave equations use FFmpeg's native W/H — no dimension probe needed.
-  const eqX = `X-((sin((T*5*${vSpeed}+(${vPhase}*15))+(Y/H)*(PI*${vFreq})))*(-15*${vAmp}))`;
-  const eqY = `Y-((sin((T*5*${hSpeed}+(${hPhase}*15))+(X/W)*(PI*${hFreq})))*(-15*${hAmp}))`;
+  // Displacement is scaled by W/640 so the visual amplitude is proportional to
+  // the input's native width — matching the old "scale-to-640, apply wave, scale-back"
+  // behaviour without needing a dimension probe or explicit scale steps.
+  const eqX = `X-((sin((T*5*${vSpeed}+(${vPhase}*15))+(Y/H)*(PI*${vFreq})))*(-15*${vAmp}*(W/640)))`;
+  const eqY = `Y-((sin((T*5*${hSpeed}+(${hPhase}*15))+(X/W)*(PI*${hFreq})))*(-15*${hAmp}*(W/640)))`;
 
   let filterChain = '';
   if (noPixelClipping) {
