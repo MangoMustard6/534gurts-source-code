@@ -38,12 +38,12 @@ export async function handleInfo(message: Message): Promise<void> {
   ]);
 
   const embed = new EmbedBuilder()
-    .setColor(0x5865f2)
+    .setColor(0x40E0D0)
     .setAuthor({
       name: isOwner ? `👑 ${message.author.displayName}` : message.author.displayName,
       iconURL: message.author.displayAvatarURL(),
     })
-    .setTitle('ℹ️ IHTX Bot — Info')
+    .setTitle('ℹ️ 534gurts Bot — Info')
     .addFields(
       {
         name: '🤖 Bot',
@@ -64,7 +64,7 @@ export async function handleInfo(message: Message): Promise<void> {
         inline: true,
       },
     )
-    .setFooter({ text: 'IHTX Bot (TypeScript)' })
+    .setFooter({ text: '534gurts Bot (TypeScript)' })
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });

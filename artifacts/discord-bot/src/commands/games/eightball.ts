@@ -34,9 +34,7 @@ export async function handleEightBall(message: Message, args: string[], ownerId:
 
   const response = RESPONSES[Math.floor(Math.random() * RESPONSES.length)];
   const color =
-    response.type === 'positive' ? 0x57f287 :
-    response.type === 'negative' ? 0xed4245 :
-    0xfee75c;
+    0x40E0D0;
 
   const embed = gameEmbed(message, ownerId, {
     title: '🎱 Magic 8-Ball',
@@ -45,7 +43,7 @@ export async function handleEightBall(message: Message, args: string[], ownerId:
       { name: 'Question', value: question.length > 256 ? question.slice(0, 253) + '…' : question },
       { name: 'Answer', value: `> ${response.text}` },
     ],
-    footer: 'IHTX Games • 8-Ball',
+    footer: '534gurts Games • 8-Ball',
   });
 
   await message.reply({ embeds: [embed] });

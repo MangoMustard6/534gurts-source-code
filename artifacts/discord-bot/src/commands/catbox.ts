@@ -103,7 +103,7 @@ export async function handleCatbox(message: Message, args: string[]): Promise<vo
 
     const sizeMB = (attachment.size / 1024 / 1024).toFixed(2);
     const embed = new EmbedBuilder()
-      .setColor(0x2ecc71)
+      .setColor(0x40E0D0)
       .setAuthor({
         name: isOwner ? `👑 ${message.author.displayName}` : message.author.displayName,
         iconURL: message.author.displayAvatarURL(),

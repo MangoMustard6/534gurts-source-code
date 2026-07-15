@@ -49,7 +49,7 @@ export async function handleDice(message: Message, args: string[], ownerId: stri
   const embed = gameEmbed(message, ownerId, {
     title: `🎲 Rolling \`${expr.trim()}\``,
     description: desc,
-    color: isNat20 ? 0x57f287 : isNat1 ? 0xed4245 : 0x5865f2,
+    color: 0x40E0D0,
     fields: count > 1
       ? [
           { name: 'Total', value: `**${total}**`, inline: true },
@@ -57,7 +57,7 @@ export async function handleDice(message: Message, args: string[], ownerId: stri
           { name: 'Modifier', value: modifier !== 0 ? `${modifier > 0 ? '+' : ''}${modifier}` : 'None', inline: true },
         ]
       : [],
-    footer: 'IHTX Games • Dice',
+    footer: '534gurts Games • Dice',
   });
 
   await message.reply({ embeds: [embed] });

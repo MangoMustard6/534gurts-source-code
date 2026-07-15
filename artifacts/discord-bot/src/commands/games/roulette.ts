@@ -51,12 +51,12 @@ export async function handleRoulette(message: Message, args: string[], ownerId: 
   const embed = gameEmbed(message, ownerId, {
     title: '🎡 Roulette',
     description: resultLine,
-    color: won ? 0x57f287 : 0xed4245,
+    color: 0x40E0D0,
     fields: [
       { name: 'Your bet', value: betLabel, inline: true },
       { name: 'Landed on', value: landed, inline: true },
     ],
-    footer: 'IHTX Games • Roulette',
+    footer: '534gurts Games • Roulette',
   });
 
   await message.reply({ embeds: [embed] });

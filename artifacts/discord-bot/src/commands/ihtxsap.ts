@@ -505,7 +505,7 @@ export async function handleIhtxSap(message: Message): Promise<void> {
 
   const volDesc = parsed.volume !== 1 ? `, vol ×${parsed.volume}` : '';
   const status = await message.reply(
-    `⏳ IHTX-Sap — **${parsed.pitches.length}** layer${parsed.pitches.length > 1 ? 's' : ''}, ` +
+    `⏳ 534gurts-Sap — **${parsed.pitches.length}** layer${parsed.pitches.length > 1 ? 's' : ''}, ` +
     `**${parsed.repetitions}×** loop, ratio **×${parsed.duration}**, **${styleLabel(parsed.style)}**${volDesc}`,
   );
 
@@ -529,7 +529,7 @@ export async function handleIhtxSap(message: Message): Promise<void> {
     }
 
     await status.edit({
-      content:  `✅ IHTX-Sap done! ${summaryLine(parsed)}`,
+      content:  `✅ 534gurts-Sap done! ${summaryLine(parsed)}`,
       files:    [{ attachment: result, name: 'ihtxsap.mp3' }],
     });
   } catch (err) {
@@ -596,7 +596,7 @@ export async function handleIhtxSapInteraction(slash: ChatInputCommandInteractio
 
   const volDesc = volumeRaw !== 1 ? `, vol ×${volumeRaw}` : '';
   await setStatus(
-    `⏳ IHTX-Sap — **${pitches.length}** layer${pitches.length > 1 ? 's' : ''}, ` +
+    `⏳ 534gurts-Sap — **${pitches.length}** layer${pitches.length > 1 ? 's' : ''}, ` +
     `**${reps}×** loop, ratio **×${duration}**, **${styleLabel(styleRaw)}**${volDesc}`,
   );
 
@@ -614,7 +614,7 @@ export async function handleIhtxSapInteraction(slash: ChatInputCommandInteractio
     }
 
     await slash.editReply({
-      content: `✅ IHTX-Sap done! ${summaryLine(opts)}`,
+      content: `✅ 534gurts-Sap done! ${summaryLine(opts)}`,
       files:   [{ attachment: result, name: 'ihtxsap.mp3' }],
     });
   } catch (err) {
