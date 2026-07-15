@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-15: TS bot: fixed `applyWave` amplitude scaling — displacement is now multiplied by `W/640` so the visual effect is proportional to native resolution (matches old scale-to-640/scale-back behaviour without a dimension probe). Added `th/klaskysource` (alias `th/klasky`) command to TS bot — downloads and re-attaches the Klasky source clip; falls back to Catbox if the file exceeds the guild upload limit.
 - 2026-07-14: Added `gradientmap` as a TypeScript pipe effect in `artifacts/discord-bot/src/effects.ts` and exposed a `th/pipetest` (alias `th/pt`) one-shot runner that validates the `ProcessorContext` integration.
 - 2026-07-14: Added standalone ESM gradientmap script at `scripts/src/gradient_map.ts` and updated the TypeScript `th/gradientmap` / `th/gm` command to expose the same `ColorStop`/`GradientMapOptions` API and synchronous `applyGradientMap` helper.
 - 2026-07-15: Fixed `th/download` for YouTube/TikTok-style URLs: removed the direct-download fallback that produced HTML `.bin` files when yt-dlp failed; matched the yt-dlp format selector to the TypeScript bot; filtered `.part`/`.ytdl` leftovers; added magic-bytes sniffing and `.bin` renaming for any generic download.
