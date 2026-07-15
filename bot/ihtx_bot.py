@@ -10,7 +10,7 @@ ImageMagick/sox/etc. depending on advanced effects.
 _UPDATELOG (newest first):
 - 2026-07-14: Added `gradientmap` as a TypeScript pipe effect in `artifacts/discord-bot/src/effects.ts` and exposed a `th/pipetest` (alias `th/pt`) one-shot runner that validates the `ProcessorContext` integration.
 - 2026-07-14: Added standalone ESM gradientmap script at `scripts/src/gradient_map.ts` and updated the TypeScript `th/gradientmap` / `th/gm` command to expose the same `ColorStop`/`GradientMapOptions` API and synchronous `applyGradientMap` helper.
-- 2026-07-14: Removed Python `th/gradientmap` / `th/gm` command and `gradientmap`/`gmap` pipe effect; the feature now lives only in the TypeScript bot.
+- 2026-07-14: Re-added Python `gradientmap`/`gmap` pipe effect to the Python bot with the same ColorStop/GradientMapOptions logic as the TypeScript bot, so `th/ihtx gradientmap=...` works on both bots.
 - 2026-07-14: Hardened `gradientmap`/`gmap` parsing: now accepts double-bracket `[[...]]`, single-bracket `[...]`, colon/space-separated values, bare number groups, and JSON/flat-list gradient files from URLs or attachments. Error messages now report how many points were actually parsed.
 - 2026-07-14: `gradientmap`/`gmap` now supports unlimited color points via external sources: a `url:https://...` point list (works in both standalone `th/gradientmap` and the `th/ihtx` pipe effect) or a `.txt`/`.csv`/`.json` gradient file attached alongside the media for the standalone command.
 - 2026-07-14: Added `spherize` pipe effect (aliases `sphere`, `bulge`) — Vegas-style bulge/spherize distortion via FFmpeg geq. Params: `amount|radius|center_x|center_y` (default `0.8|0.5|0.5|0.5`). Added to the pipe effects list in `th/ihtxhelp`. Also added `th/download` (alias `th/dl`) — generic media downloader for any URL including Discord CDN links. Also reordered `th/ihtxsap` pitch styles and added `Rubberband Custom` with `rubberbandcustom=...` arbitrary flag support.
@@ -2872,6 +2872,138 @@ def _mux_audio_onto(out: str, audio_src: str) -> tuple[bool, str]:
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _parse_gradientmap_stops(params: list[str]) -> tuple[list[tuple[int, int, int, int, float]] | None, str]:
+    """Parse color-stop parameters for the gradientmap pipe effect.
+
+    Accepts multiple forms:
+      - `gradientmap=0,0,0 255,255,255`
+      - `gradientmap=0:0:0:255:0.0;255:0:0:255:0.5`
+      - `gradientmap=[[0,0,0,255,0],[255,0,0,255,0.5]]`
+      - `gradientmap=url:https://example.com/gradient.txt`
+
+    Each point has R,G,B [A] [pos] where A defaults to 255 and pos defaults to
+    even spacing across the provided points. At least two points are required.
+    """
+    import json as _json
+    import urllib.request as _ur
+    import ssl as _ssl
+    import re as _re
+
+    def _split_points(raw: str) -> list[str]:
+        raw = raw.strip()
+        if not raw:
+            return []
+        # Try JSON array first (flat or nested).
+        try:
+            data = _json.loads(raw)
+            if isinstance(data, list) and len(data) >= 2:
+                out: list[str] = []
+                for item in data:
+                    if isinstance(item, list):
+                        out.append(",".join(str(x) for x in item))
+                    elif isinstance(item, str):
+                        out.append(item)
+                if out:
+                    return out
+        except Exception:
+            pass
+        # Flat list of 5-tuples or 3-tuples?
+        flat = [s.strip() for s in raw.replace(";", ",").split(",") if s.strip()]
+        if len(flat) >= 6 and len(flat) % 5 == 0:
+            return [",".join(flat[i:i + 5]) for i in range(0, len(flat), 5)]
+        if len(flat) >= 6 and len(flat) % 3 == 0:
+            return [",".join(flat[i:i + 3]) for i in range(0, len(flat), 3)]
+        # Semicolon/line-based with comment support.
+        points: list[str] = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            hash_idx = line.find("#")
+            if hash_idx != -1:
+                line = line[:hash_idx].strip()
+            for segment in line.split(";"):
+                segment = segment.strip()
+                segment = _re.sub(r"^[\[\]\s]+|[\[\]\s]+$", "", segment)
+                if segment and not segment.startswith("#"):
+                    points.append(segment)
+        return points
+
+    if not params:
+        return None, "gradientmap needs at least 2 color stops: `gradientmap=R,G,B [R,G,B ...]`"
+
+    first = params[0].strip()
+    raw_points: list[str] = []
+
+    if first.startswith("url:") or first.startswith("http://") or first.startswith("https://"):
+        url = first[4:] if first.startswith("url:") else first
+        try:
+            ctx = _ssl.create_default_context()
+            req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"})
+            with _ur.urlopen(req, context=ctx, timeout=30) as r:
+                text = r.read().decode("utf-8", errors="replace")
+            raw_points = _split_points(text)
+        except Exception as e:
+            return None, f"gradientmap: failed to fetch URL points: {e}"
+    elif len(params) == 1 and first.startswith("[[") and first.endswith("]]"):
+        inner = first[2:-2].strip()
+        raw_points = [p.strip() for p in inner.split("]")]
+        raw_points = [_re.sub(r"^[\[,\s]+|[\],\s]+$", "", p) for p in raw_points if p.strip()]
+    elif len(params) == 1 and first.startswith("[") and first.endswith("]"):
+        bracketed = [m.group(1).strip() for m in _re.finditer(r"\[([^\]]+)\]", first)]
+        if len(bracketed) >= 2:
+            raw_points = bracketed
+        else:
+            raw_points = _split_points(first[1:-1])
+    else:
+        raw_points = [p.strip() for p in params]
+        raw_points = [_re.sub(r"^[\[\]\s]+|[\[\]\s]+$", "", p) for p in raw_points if p.strip()]
+        # If every token is a bare number and they collectively form a flat list, group them.
+        if raw_points and all(_re.match(r"^-?\d+(\.\d+)?$", p) for p in raw_points):
+            if len(raw_points) % 5 == 0:
+                raw_points = [",".join(raw_points[i:i + 5]) for i in range(0, len(raw_points), 5)]
+            elif len(raw_points) % 3 == 0:
+                raw_points = [",".join(raw_points[i:i + 3]) for i in range(0, len(raw_points), 3)]
+
+    if len(raw_points) < 2:
+        preview = ", ".join(f"'{p}'" for p in raw_points[:5]) if raw_points else "(none)"
+        return None, f"gradientmap needs >=2 points; got {len(raw_points)}: {preview}"
+
+    stops: list[tuple[int, int, int, int, float]] = []
+    for i, p in enumerate(raw_points):
+        parts = [s.strip() for s in _re.split(r"[,;:_\s]+", p) if s.strip()]
+        if len(parts) < 3:
+            return None, f"gradientmap: invalid point '{p}' -- need at least R,G,B"
+        try:
+            nums = [float(s) for s in parts]
+        except ValueError:
+            return None, f"gradientmap: invalid point '{p}' -- values must be numbers"
+        r, g, b = int(round(nums[0])), int(round(nums[1])), int(round(nums[2]))
+        a = int(round(nums[3])) if len(nums) > 3 else 255
+        pos = nums[4] if len(nums) > 4 else i / max(len(raw_points) - 1, 1)
+        if any(v < 0 or v > 255 for v in (r, g, b, a)):
+            return None, f"gradientmap: color values in '{p}' must be 0-255"
+        if pos < 0.0 or pos > 1.0:
+            return None, f"gradientmap: position in '{p}' must be 0.0-1.0"
+        stops.append((r, g, b, a, pos))
+
+    return stops, ""
+
+
+def _build_gradientmap_filter(stops: list[tuple[int, int, int, int, float]]) -> str:
+    r_curve = " ".join(f"{pos}/{r/255.0:.6f}" for r, g, b, a, pos in stops)
+    g_curve = " ".join(f"{pos}/{g/255.0:.6f}" for r, g, b, a, pos in stops)
+    b_curve = " ".join(f"{pos}/{b/255.0:.6f}" for r, g, b, a, pos in stops)
+    a_curve = " ".join(f"{pos}/{a/255.0:.6f}" for r, g, b, a, pos in stops)
+    return (
+        f"split=3[_gm_a][_gm_b][_gm_t];"
+        f"[_gm_a]format=gray,curves=r='{r_curve}':g='{g_curve}':b='{b_curve}'[_gm_aa];"
+        f"[_gm_b]format=gray,curves=all='{a_curve}'[_gm_bb];"
+        f"[_gm_aa][_gm_bb]alphamerge[_gm_c];"
+        f"[_gm_t][_gm_c]overlay,format=yuv420p[v]"
+    )
+
+
 
 def _apply_pipe_effects(
     input_path: str,
@@ -2906,7 +3038,7 @@ def _apply_pipe_effects(
     # Preprocess effect parameters: expand lerp, replace $fc, collapse constants.
     # Skip for effects whose params are raw FFmpeg/shell command strings
     # (they may contain '=' that is NOT a key=value separator).
-    _RAW_ARG_EFFECTS = {"ffmpeg", "leftsplit", "rightsplit"}
+    _RAW_ARG_EFFECTS = {"ffmpeg", "leftsplit", "rightsplit", "gradientmap", "gmap"}
     effects = [
         (
             name,
@@ -4223,6 +4355,25 @@ def _apply_pipe_effects(
                 current = out
                 continue
 
+
+            # gradientmap -- map grayscale luminance to an RGBA gradient
+            if name in ("gradientmap", "gmap"):
+                gm_stops, gm_err = _parse_gradientmap_stops(params)
+                if gm_stops is None:
+                    return False, gm_err
+                gm_fc = _build_gradientmap_filter(gm_stops)
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE
+                    + ["-i", current, "-filter_complex", gm_fc, "-map", "[v]"]
+                    + ["-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                       "-pix_fmt", "yuv420p"]
+                    + ["-c:a", "copy", out],
+                    timeout=step_timeout,
+                )
+                if not ok:
+                    return False, f"gradientmap failed: {err}"
+                current = out
+                continue
             return False, f"Unknown pipe effect: {name}"
 
         if current != output_path:
