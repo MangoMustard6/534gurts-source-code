@@ -4,7 +4,7 @@ import fs from 'fs';
 import { makeTempDir, cleanupDir, downloadUrl } from '../utils/temp.js';
 import { getUploadLimitBytes, formatBytes } from '../utils/limits.js';
 import { _upload_to_catbox } from '../utils/catbox.js';
-import { applyGradientmap } from '../effects.js';
+import { applyGradientmap, applyWave } from '../effects.js';
 import {
   parseGradientParams,
   parseGradientPointsText,
@@ -16,9 +16,11 @@ import {
 } from './gradientmap.js';
 
 const USAGE =
-  '**Usage:** `th/pipetest <gradientmap-params>` — attach or reply-to a video/image\n' +
-  'Tests the `gradientmap` pipe effect using the same syntax as `th/gradientmap`.\n' +
-  '**Example:** `th/pipetest 0,0,0 255,255,255`';
+  '**Usage:** `th/pipetest <effect>=<params>` — attach or reply-to a video/image\n' +
+  'Tests one pipe effect at a time. Supported effects: `gradientmap`, `wave`.\n' +
+  '**Examples:**\n' +
+  '`th/pipetest gradientmap 0,0,0 255,255,255`\n' +
+  '`th/pipetest wave 1|2|3|4|5|6|7|8|true|false`';
 
 function tokenizeParams(rest: string): string[] {
   const tokens: string[] = [];
