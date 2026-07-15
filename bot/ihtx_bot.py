@@ -10,7 +10,7 @@ ImageMagick/sox/etc. depending on advanced effects.
 _UPDATELOG (newest first):
 - 2026-07-14: Added `gradientmap` as a TypeScript pipe effect in `artifacts/discord-bot/src/effects.ts` and exposed a `th/pipetest` (alias `th/pt`) one-shot runner that validates the `ProcessorContext` integration.
 - 2026-07-14: Added standalone ESM gradientmap script at `scripts/src/gradient_map.ts` and updated the TypeScript `th/gradientmap` / `th/gm` command to expose the same `ColorStop`/`GradientMapOptions` API and synchronous `applyGradientMap` helper.
-- 2026-07-15: Fixed `th/download` generic downloader: unknown/generic Content-Types (including `application/octet-stream`) and URLs without extensions now fall back to magic-bytes sniffing, so downloaded files get a proper extension (e.g. `.png`, `.mp4`, `.zip`) instead of `.bin`.
+- 2026-07-15: Fixed `th/download` for YouTube/TikTok-style URLs: removed the direct-download fallback that produced HTML `.bin` files when yt-dlp failed; matched the yt-dlp format selector to the TypeScript bot; filtered `.part`/`.ytdl` leftovers; added magic-bytes sniffing and `.bin` renaming for any generic download.
 - 2026-07-14: Re-added Python `gradientmap`/`gmap` pipe effect to the Python bot with the same ColorStop/GradientMapOptions logic as the TypeScript bot, so `th/ihtx gradientmap=...` works on both bots.
 - 2026-07-14: Hardened `gradientmap`/`gmap` parsing: now accepts double-bracket `[[...]]`, single-bracket `[...]`, colon/space-separated values, bare number groups, and JSON/flat-list gradient files from URLs or attachments. Error messages now report how many points were actually parsed.
 - 2026-07-14: `gradientmap`/`gmap` now supports unlimited color points via external sources: a `url:https://...` point list (works in both standalone `th/gradientmap` and the `th/ihtx` pipe effect) or a `.txt`/`.csv`/`.json` gradient file attached alongside the media for the standalone command.
@@ -14040,22 +14040,27 @@ def _run_ytdlp_url(url: str, out_dir: str) -> tuple[str | None, str]:
     out_template = os.path.join(out_dir, "%(title).80s.%(ext)s")
     args = [
         "yt-dlp", url,
-        "-f", "bestvideo[ext=mp4][filesize<?200M]+bestaudio[ext=m4a]"
-              "/bestvideo[filesize<?200M]+bestaudio"
-              "/best[filesize<?200M]/best",
+        "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best",
         "--merge-output-format", "mp4",
         "--no-playlist",
         "--max-filesize", "200m",
         "--output", out_template,
         "--no-warnings",
         "--socket-timeout", "30",
+        "--age-limit", "99",
     ]
     result = _sp.run(args, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
         return None, (result.stderr or result.stdout)[-800:]
-    files = [f for f in os.listdir(out_dir) if not f.startswith(".")]
+    # yt-dlp can leave temporary `.part` or `.ytdl` files behind if it had to
+    # restart. Pick the most recently modified non-temporary file.
+    files = [
+        f for f in os.listdir(out_dir)
+        if not f.startswith(".") and not f.endswith(".part") and not f.endswith(".ytdl")
+    ]
     if not files:
         return None, "yt-dlp produced no output file."
+    files.sort(key=lambda f: os.path.getmtime(os.path.join(out_dir, f)), reverse=True)
     return os.path.join(out_dir, files[0]), ""
 
 
@@ -14127,15 +14132,14 @@ async def download_command(ctx: commands.Context, *, query: str = ""):
                     None, lambda: _run_ytdlp_url(url, tmpdir)
                 )
         else:
+            # YouTube/TikTok and similar sites require yt-dlp. A direct fallback
+            # only downloads the HTML page and ends up as a useless `.bin` file,
+            # so report the yt-dlp error instead.
             file_path, last_err = await loop.run_in_executor(
                 None, lambda: _run_ytdlp_url(url, tmpdir)
             )
             if not file_path:
-                try:
-                    file_path = await _download_direct_url(url, tmpdir)
-                    last_err = ""
-                except Exception as exc:
-                    last_err = f"{last_err}\nDirect fallback: {exc}"
+                print(f"[download] yt-dlp failed for {url[:80]}: {last_err[:200]}")
 
         if not file_path or not os.path.exists(file_path):
             await status_msg.edit(
