@@ -58,11 +58,11 @@
     "submitted_at": "2026-07-14T07:39:17.851663+00:00"
   },
   "gmajor100": {
-    "effects": "channelblend=b|g|r,ccshue=100,mirror=left,wave=0|3.2|2|0.0419|0|3.2|2|0.0419,mp=-1|-5",
+    "effects": "channelblend=b|g|r,ccshue=100,mirror=left,ffmpeg(-vf scale=640:640),wave=0|3.2|2|0.0419|0|3.2|2|0.0419,ffmpeg(-vf scale=640:360),mp=-1|-5",
     "author_id": "1355759019330895973",
     "author_name": "thatoneguynobodyinvited",
-    "guild_id": "1513817958391087276",
-    "guild_name": "chuan_vines's server",
-    "submitted_at": "2026-07-14T13:41:07.966988+00:00"
+    "guild_id": "1496091892067209307",
+    "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
+    "submitted_at": "2026-07-15T12:10:15.628310+00:00"
   }
 }

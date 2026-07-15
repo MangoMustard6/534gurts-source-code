@@ -10,6 +10,7 @@
 import { spawnAsync } from './utils/spawn.js';
 import { PROCESS_TIMEOUTS } from './config.js';
 import { parseGradientParams, applyGradientmap as applyGradientmapCore } from './commands/gradientmap.js';
+import { WAVE_PRESETS, WavePresetKey } from './wavePresets.js';
 
 // ── Processor context ────────────────────────────────────────────────
 
@@ -683,17 +684,41 @@ export async function applyGradientmap(
 /**
  * Apply the **Wave** sinusoidal pixel-displacement distortion.
  *
- * Parameters are passed as a pipe-style token array:
- *   hSpeed|hFreq|hAmp|hPhase|vSpeed|vFreq|vAmp|vPhase|separateWaves|noPixelClipping
+ * Accepts either a named preset or custom numeric parameters:
  *
- * Defaults:
- *   h/v speed = 0, h/v frequency = 0, h/v amplitude = 0, h/v phase = 0,
- *   separateWaves = false, noPixelClipping = false.
+ *   Preset:  params = ['largeWave']  (any key from WAVE_PRESETS)
+ *   Custom:  params = ['custom:hSpeed', hFreq, hAmp, hPhase, vSpeed, vFreq, vAmp, vPhase, sep?, noclip?]
+ *            OR the legacy positional form: params = [hSpeed, hFreq, hAmp, ...]
+ *
+ * Pipe-effect syntax examples:
+ *   wave=largeWave
+ *   wave=custom:0|15|0.8|0|0|0|0|0
  */
 export async function applyWave(
   ctx: ProcessorContext,
   params: string[] = [],
 ): Promise<void> {
+  // ── Named preset path ────────────────────────────────────────────────
+  const firstParam = (params[0] ?? '').trim();
+
+  if (firstParam in WAVE_PRESETS) {
+    const filterChain = WAVE_PRESETS[firstParam as WavePresetKey];
+    await spawnAsync('ffmpeg', [
+      '-y', '-i', ctx.inputFile,
+      '-vf', filterChain,
+      '-c:a', 'copy',
+      ctx.outputFile,
+    ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
+    return;
+  }
+
+  // ── Numeric / custom path ────────────────────────────────────────────
+  // Strip optional "custom:" prefix from first param so wave=custom:1|2|3 works.
+  let resolvedParams = params;
+  if (firstParam.toLowerCase().startsWith('custom:')) {
+    resolvedParams = [firstParam.slice('custom:'.length), ...params.slice(1)];
+  }
+
   const parseBool = (val: string | undefined): boolean => {
     if (!val) return false;
     const s = String(val).toLowerCase().trim();
@@ -704,25 +729,17 @@ export async function applyWave(
     return Number.isNaN(n) ? def : n;
   };
 
-  const hSpeed = parseNum(params[0], 0);
-  const hFreq = parseNum(params[1], 0);
-  const hAmp = parseNum(params[2], 0);
-  const hPhase = parseNum(params[3], 0);
-  const vSpeed = parseNum(params[4], 0);
-  const vFreq = parseNum(params[5], 0);
-  const vAmp = parseNum(params[6], 0);
-  const vPhase = parseNum(params[7], 0);
-  const separateWaves = parseBool(params[8]);
-  const noPixelClipping = parseBool(params[9]);
+  const hSpeed = parseNum(resolvedParams[0], 0);
+  const hFreq = parseNum(resolvedParams[1], 0);
+  const hAmp = parseNum(resolvedParams[2], 0);
+  const hPhase = parseNum(resolvedParams[3], 0);
+  const vSpeed = parseNum(resolvedParams[4], 0);
+  const vFreq = parseNum(resolvedParams[5], 0);
+  const vAmp = parseNum(resolvedParams[6], 0);
+  const vPhase = parseNum(resolvedParams[7], 0);
+  const separateWaves = parseBool(resolvedParams[8]);
+  const noPixelClipping = parseBool(resolvedParams[9]);
 
-  // Displacement is scaled by W/640 so the visual amplitude is proportional to
-  // the input's native width — matching the old "scale-to-640, apply wave, scale-back"
-  // behaviour without needing a dimension probe or explicit scale steps.
-  //
-  // The spatial phase uses (Y/H-0.5) and (X/W-0.5) instead of (Y/H) and (X/W) so that
-  // the sine sweeps a symmetric range around 0 (-π/2 … +π/2 for freq=1) and its
-  // average over the frame is zero.  Without this, sin(0…π) has mean 2/π ≈ 0.64,
-  // which adds a constant vertical (or horizontal) shift to the whole image.
   const eqX = `X-((sin((T*5*${vSpeed}+(${vPhase}*15))+(Y/H)*(PI*${vFreq})))*(-15*${vAmp}*(W/640)))`;
   const eqY = `Y-((sin((T*5*${hSpeed}+(${hPhase}*15))+(X/W)*(PI*${hFreq})))*(-15*${hAmp}*(W/640)))`;
 
