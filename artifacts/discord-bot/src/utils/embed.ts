@@ -23,7 +23,7 @@ export function gameEmbed(
       iconURL: message.author.displayAvatarURL(),
     })
     .setTitle(options.title)
-    .setColor(options.color ?? 0x5865f2)
+    .setColor(options.color ?? 0x40E0D0)
     .setTimestamp();
 
   if (options.description) embed.setDescription(options.description);
@@ -31,7 +31,7 @@ export function gameEmbed(
   if (options.thumbnail) embed.setThumbnail(options.thumbnail);
 
   embed.setFooter({
-    text: options.footer ?? 'IHTX Games',
+    text: options.footer ?? '534gurts Games',
     iconURL: message.client.user?.displayAvatarURL(),
   });
 

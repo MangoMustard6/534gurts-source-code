@@ -22,14 +22,14 @@ export async function handleChoose(message: Message, args: string[], ownerId: st
   const embed = gameEmbed(message, ownerId, {
     title: '🎯 I Choose…',
     description: `## ${winner}`,
-    color: 0x57f287,
+    color: 0x40E0D0,
     fields: [
       {
         name: `All ${options.length} options`,
         value: options.map((o, i) => `${o === winner ? '➡️' : `${i + 1}.`} ${o}`).join('\n'),
       },
     ],
-    footer: 'IHTX Games • Choose',
+    footer: '534gurts Games • Choose',
   });
 
   await message.reply({ embeds: [embed] });

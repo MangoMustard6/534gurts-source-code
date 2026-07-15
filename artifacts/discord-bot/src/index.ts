@@ -63,7 +63,7 @@ const SLASH_COMMANDS = [
 
   new SlashCommandBuilder()
     .setName('ihtxsap')
-    .setDescription('IHTX-Sap: pitch-layer audio processor — strips video, outputs pure MP3')
+    .setDescription('534gurts-Sap: pitch-layer audio processor — strips video, outputs pure MP3')
     .addAttachmentOption((opt) =>
       opt.setName('file').setDescription('Audio or video file to process (images rejected)').setRequired(true),
     )
