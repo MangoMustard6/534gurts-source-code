@@ -10,6 +10,7 @@ ImageMagick/sox/etc. depending on advanced effects.
 _UPDATELOG (newest first):
 - 2026-07-14: Added `gradientmap` as a TypeScript pipe effect in `artifacts/discord-bot/src/effects.ts` and exposed a `th/pipetest` (alias `th/pt`) one-shot runner that validates the `ProcessorContext` integration.
 - 2026-07-14: Added standalone ESM gradientmap script at `scripts/src/gradient_map.ts` and updated the TypeScript `th/gradientmap` / `th/gm` command to expose the same `ColorStop`/`GradientMapOptions` API and synchronous `applyGradientMap` helper.
+- 2026-07-15: Fixed `th/download` generic downloader: unknown/generic Content-Types (including `application/octet-stream`) and URLs without extensions now fall back to magic-bytes sniffing, so downloaded files get a proper extension (e.g. `.png`, `.mp4`, `.zip`) instead of `.bin`.
 - 2026-07-14: Re-added Python `gradientmap`/`gmap` pipe effect to the Python bot with the same ColorStop/GradientMapOptions logic as the TypeScript bot, so `th/ihtx gradientmap=...` works on both bots.
 - 2026-07-14: Hardened `gradientmap`/`gmap` parsing: now accepts double-bracket `[[...]]`, single-bracket `[...]`, colon/space-separated values, bare number groups, and JSON/flat-list gradient files from URLs or attachments. Error messages now report how many points were actually parsed.
 - 2026-07-14: `gradientmap`/`gmap` now supports unlimited color points via external sources: a `url:https://...` point list (works in both standalone `th/gradientmap` and the `th/ihtx` pipe effect) or a `.txt`/`.csv`/`.json` gradient file attached alongside the media for the standalone command.
@@ -778,7 +779,7 @@ async def download_attachment(attachment: discord.Attachment, dest: str):
     falling back to ``url``. Discord CDN now requires auth; direct ``url``
     often returns 404 for fresh uploads.
     """
-    url = attachment.proxy_url or source.url
+    url = attachment.proxy_url or attachment.url
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
             if resp.status != 200:
@@ -13910,6 +13911,51 @@ _Download_MEDIA_EXTS = _IHTXSAP_AUDIO_EXTS | {
 }
 
 
+def _ext_from_magic_bytes(data: bytes) -> str:
+    """Return a file extension guessed from magic bytes, or '' if unknown."""
+    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return ".png"
+    if data.startswith(b'\xff\xd8\xff'):
+        return ".jpg"
+    if data.startswith(b'GIF87a') or data.startswith(b'GIF89a'):
+        return ".gif"
+    if data.startswith(b'RIFF') and len(data) >= 12 and data[8:12] == b'WEBP':
+        return ".webp"
+    if data.startswith(b'BM'):
+        return ".bmp"
+    if data.startswith(b'%PDF'):
+        return ".pdf"
+    if data.startswith(b'PK\x03\x04'):
+        return ".zip"
+    if data.startswith(b'Rar!\x1a\x07') or data.startswith(b'Rar!\x1a\x07\x01'):
+        return ".rar"
+    if data.startswith(b'\x1f\x8b'):
+        return ".gz"
+    if len(data) >= 12 and data[4:8] == b'ftyp':
+        # ISO base media file format (MP4, MOV, etc.).
+        brand = data[8:12].decode('ascii', errors='ignore').lower()
+        if brand.startswith('qt'):
+            return ".mov"
+        return ".mp4"
+    if data.startswith(b'\x1aE\xdf\xa3'):
+        return ".webm"
+    if data.startswith(b'\x00\x00\x00 ') and len(data) >= 24 and data[12:16] == b'ftyp':
+        return ".mp4"
+    if data.startswith(b'\xff\xfb') or data.startswith(b'\xff\xf3') or data.startswith(b'\xff\xf2'):
+        return ".mp3"
+    if data.startswith(b'RIFF') and len(data) >= 12 and data[8:12] == b'WAVE':
+        return ".wav"
+    if data.startswith(b'OggS'):
+        return ".ogg"
+    if data.startswith(b'fLaC'):
+        return ".flac"
+    if data.startswith(b'FLV\x01'):
+        return ".flv"
+    if data.startswith(b'\x00\x00\x01\xb3') or data.startswith(b'\x00\x00\x01\xba'):
+        return ".mpg"
+    return ""
+
+
 def _filename_from_response(url: str, resp: aiohttp.ClientResponse) -> str:
     """Pick a sensible filename from Content-Disposition or URL path."""
     cd = resp.headers.get("Content-Disposition", "")
@@ -13931,11 +13977,17 @@ def _filename_from_response(url: str, resp: aiohttp.ClientResponse) -> str:
     ext_map = {
         "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov",
         "video/x-matroska": ".mkv", "video/avi": ".avi", "video/x-msvideo": ".avi",
+        "video/x-flv": ".flv", "video/mpeg": ".mpg", "video/mp2t": ".ts",
         "audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav",
         "audio/ogg": ".ogg", "audio/flac": ".flac", "audio/aac": ".aac",
         "audio/m4a": ".m4a", "audio/opus": ".opus", "audio/webm": ".webm",
+        "audio/x-matroska": ".mka",
         "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif",
-        "image/webp": ".webp", "image/bmp": ".bmp",
+        "image/webp": ".webp", "image/bmp": ".bmp", "image/tiff": ".tiff",
+        "image/avif": ".avif", "image/heic": ".heic",
+        "application/pdf": ".pdf", "application/zip": ".zip",
+        "application/x-rar-compressed": ".rar", "application/x-7z-compressed": ".7z",
+        "application/gzip": ".gz", "application/x-gzip": ".gz",
     }
     return f"download{ext_map.get(ct, '.bin')}"
 
@@ -13962,6 +14014,19 @@ async def _download_direct_url(url: str, out_dir: str) -> str:
                 async for chunk in resp.content.iter_chunked(1024 * 256):
                     f.write(chunk)
             os.replace(tmp, dest)
+            # If the server gave a generic filename, sniff the real format from the
+            # file header and rename so Discord shows a proper extension.
+            if filename == "download.bin" or filename.endswith(".bin"):
+                try:
+                    with open(dest, "rb") as f:
+                        header = f.read(64)
+                    ext = _ext_from_magic_bytes(header)
+                    if ext:
+                        new_dest = os.path.join(out_dir, f"download{ext}")
+                        os.replace(dest, new_dest)
+                        return new_dest
+                except Exception:
+                    pass
             return dest
 
 
