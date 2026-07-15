@@ -57,7 +57,7 @@ export async function handleDice(message: Message, args: string[], ownerId: stri
           { name: 'Modifier', value: modifier !== 0 ? `${modifier > 0 ? '+' : ''}${modifier}` : 'None', inline: true },
         ]
       : [],
-    footer: '534gurts Games • Dice',
+    footer: 'IHTX Games • Dice',
   });
 
   await message.reply({ embeds: [embed] });

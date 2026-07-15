@@ -44,7 +44,7 @@ export async function handleRPS(message: Message, args: string[], ownerId: strin
       { name: 'You', value: `${EMOJI[player]} ${player}`, inline: true },
       { name: 'Bot', value: `${EMOJI[bot]} ${bot}`, inline: true },
     ],
-    footer: '534gurts Games • Rock Paper Scissors',
+    footer: 'IHTX Games • Rock Paper Scissors',
   });
 
   await message.reply({ embeds: [embed] });

@@ -9,7 +9,7 @@ export async function handleCoinflip(message: Message, ownerId: string): Promise
     title: `${emoji} Coin Flip`,
     description: `## ${result}!`,
     color: 0x40E0D0,
-    footer: '534gurts Games • Coinflip',
+    footer: 'IHTX Games • Coinflip',
   });
 
   await message.reply({ embeds: [embed] });

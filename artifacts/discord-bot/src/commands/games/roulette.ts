@@ -56,7 +56,7 @@ export async function handleRoulette(message: Message, args: string[], ownerId: 
       { name: 'Your bet', value: betLabel, inline: true },
       { name: 'Landed on', value: landed, inline: true },
     ],
-    footer: '534gurts Games • Roulette',
+    footer: 'IHTX Games • Roulette',
   });
 
   await message.reply({ embeds: [embed] });

@@ -36,7 +36,7 @@ export async function handleSlots(message: Message, ownerId: string): Promise<vo
     title: '🎰 Slot Machine',
     description: `# ${s1}  ${s2}  ${s3}\n\n${label}`,
     color,
-    footer: '534gurts Games • Slots',
+    footer: 'IHTX Games • Slots',
   });
 
   await message.reply({ embeds: [embed] });

@@ -31,7 +31,7 @@ export function gameEmbed(
   if (options.thumbnail) embed.setThumbnail(options.thumbnail);
 
   embed.setFooter({
-    text: options.footer ?? '534gurts Games',
+    text: options.footer ?? 'IHTX Games',
     iconURL: message.client.user?.displayAvatarURL(),
   });
 
