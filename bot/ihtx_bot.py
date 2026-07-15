@@ -2227,6 +2227,21 @@ def _run_ccshue(
         return True, ""
 
 
+# ---------- Wave presets ----------
+
+WAVE_PRESETS = {
+    "largeWave":
+        "format=yuv444p,geq='p(X-((sin((T*5*0+(0*15))+(Y/H)*(PI*5.4)))*(-15*2)),Y-((sin((T*5*0+(0*15))+(X/W)*(PI*5.4)))*(-15*2)))',setsar=1:1,format=yuv420p",
+    "mediumWave":
+        "format=yuv444p,geq='p(X-((sin((T*5*0+(0*15))+(Y/H)*(PI*14)))*(-15*2)),Y-((sin((T*5*0+(0*15))+(X/W)*(PI*14)))*(-15*2)))',setsar=1:1,format=yuv420p",
+    "smallWave":
+        "format=yuv444p,geq='p(X-((sin((T*5*0+(0*15))+(Y/H)*(PI*20)))*(-15*1.2)),Y-((sin((T*5*0+(0*15))+(X/W)*(PI*20)))*(-15*1.2)))',setsar=1:1,format=yuv420p",
+    "horizontalOnly":
+        "format=yuv444p,geq='p(X-((sin((T*5*0+(0.053*15))+(Y/H)*(PI*10)))*(-15*1.5)),Y-((sin((T*5*0+(0*15))+(X/W)*(PI*0)))*(-15*0)))',setsar=1:1,format=yuv420p",
+    "verticalOnly":
+        "format=yuv444p,geq='p(X-((sin((T*5*0+(0*15))+(Y/H)*(PI*0)))*(-15*0)),Y-((sin((T*5*0+(0.053*15))+(X/W)*(PI*10)))*(-15*1.6)))',setsar=1:1,format=yuv420p",
+}
+
 # ---------- Pipe effects engine ----------
 
 PIPE_EFFECT_NAMES = {
@@ -3354,9 +3369,28 @@ def _apply_pipe_effects(
                 continue
 
             # wave — sinusoidal pixel-displacement distortion
+            # Syntax:
+            #   wave=largeWave            (named preset)
+            #   wave=custom:hSpd|hFreq|…  (custom numeric params)
+            #   wave=hSpd|hFreq|…          (legacy positional)
             if name == "wave":
+                first_p = params[0].strip() if params else ""
+
+                # ── Named preset ──────────────────────────────────────
+                if first_p in WAVE_PRESETS:
+                    ok, err = _ff_vf(current, WAVE_PRESETS[first_p], out)
+                    if not ok:
+                        return False, f"wave preset '{first_p}' failed: {err}"
+                    current = out
+                    continue
+
+                # ── Custom / legacy numeric ───────────────────────────
+                num_params = params
+                if first_p.lower().startswith("custom:"):
+                    num_params = [first_p[len("custom:"):]] + params[1:]
+
                 def _wp(idx, default):
-                    return _expr_param(params[idx] if idx < len(params) else None, default)
+                    return _expr_param(num_params[idx] if idx < len(num_params) else None, default)
                 h_speed   = _wp(0, 1.0)
                 h_freq    = _wp(1, 1.0)
                 h_amp     = _wp(2, 1.0)
@@ -3365,8 +3399,8 @@ def _apply_pipe_effects(
                 v_freq    = _wp(5, 1.0)
                 v_amp     = _wp(6, 1.0)
                 v_phase   = _wp(7, 0.0)
-                sep       = len(params) > 8 and params[8].strip() in ("1", "true", "sep", "yes")
-                noclip    = len(params) > 9 and params[9].strip() in ("1", "true", "noclip", "yes")
+                sep       = len(num_params) > 8 and num_params[8].strip() in ("1", "true", "sep", "yes")
+                noclip    = len(num_params) > 9 and num_params[9].strip() in ("1", "true", "noclip", "yes")
 
                 drawbox = "drawbox=t=1," if noclip else ""
                 h_wave = (

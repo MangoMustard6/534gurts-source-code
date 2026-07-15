@@ -8,7 +8,8 @@ import fs from 'fs';
 import { makeTempDir, cleanupDir, downloadUrl } from '../utils/temp.js';
 import { getUploadLimitBytes, formatBytes } from '../utils/limits.js';
 import { _upload_to_catbox } from '../utils/catbox.js';
-import { spawnAsync, PROCESS_TIMEOUTS } from '../utils/process.js';
+import { spawnAsync } from '../utils/spawn.js';
+import { PROCESS_TIMEOUTS } from '../config.js';
 import { WAVE_PRESETS, WavePresetKey } from '../wavePresets.js';
 import { resolveAttachment, SUPPORTED_VIDEO_EXTS, SUPPORTED_IMAGE_EXTS } from './gradientmap.js';
 
