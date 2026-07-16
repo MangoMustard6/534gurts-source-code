@@ -63,7 +63,7 @@ interface SapOpts {
 const PREFIX_USAGE = [
   '**Usage:** `th/ihtxsap <repetitions> <duration> <pitches> [style] [volume=<n>]`',
   '',
-  '  `repetitions` — integer 1–100, how many times the mix is looped (default: `5`)',
+  '  `repetitions` — integer 1–1000, how many times the mix is looped (default: `5`)',
   '  `duration`    — seconds to snip from the start of the audio (e.g. `5` = first 5 s)',
   '  `pitches`     — semicolon-separated semitone shifts: `-7;5;6`',
   '  `style`       — optional, in quotes: `"Rubberband R2"` (default), `"Rubberband R3"`, `"Soundtouch"`, `"Bungee"`',
@@ -153,8 +153,8 @@ function parsePrefixArgs(raw: string): SapOpts | string {
   if (tokens.length < 3) return `❌ Not enough arguments.\n\n${PREFIX_USAGE}`;
 
   const reps = parseInt(tokens[0], 10);
-  if (isNaN(reps) || reps < 1 || reps > 100)
-    return `❌ \`repetitions\` must be an integer 1–100 (got \`${tokens[0]}\`).`;
+  if (isNaN(reps) || reps < 1 || reps > 1000)
+    return `❌ \`repetitions\` must be an integer 1–1000 (got \`${tokens[0]}\`).`;
 
   const dur = parseFloat(tokens[1]);
   if (isNaN(dur) || dur <= 0 || dur > 3600)
@@ -577,8 +577,8 @@ export async function handleIhtxSapInteraction(slash: ChatInputCommandInteractio
     await slash.editReply('❌ `duration` must be between 0.01 and 3600 seconds.');
     return;
   }
-  if (reps < 1 || reps > 100) {
-    await slash.editReply('❌ `repetitions` must be between 1 and 100.');
+  if (reps < 1 || reps > 1000) {
+    await slash.editReply('❌ `repetitions` must be between 1 and 1000.');
     return;
   }
 
