@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-16: Both bots: added `th/repeat [n]` (aliases: rep, loop) — repeats a video/GIF/audio N times (default 2, max 10) via FFmpeg concat demuxer. Removed `trim`, `chat`, `ask`, `ai`, `lexg` from HEAVY_COMMANDS (not computationally heavy). Added wave preset support to pipe effects: `wave=largeWave`, `wave=mediumWave`, `wave=smallWave`, `wave=horizontalOnly`, `wave=verticalOnly`, and `wave=custom:<params>`. Fixed `th/pipetest` to route both `wave` and `gradientmap` effects.
 - 2026-07-15: Both bots: wave phase reverted to `(Y/H)*PI` / `(X/W)*PI` (restores half-sine widening shape); added `scale=iw:ih` after geq in both bots to preserve output aspect ratio; removed `setsar=1:1` from TS bot. The `-0.5` centered variant turned the bulge into an S-curve shear and is incompatible with the expected widening look.
 - 2026-07-15: Both bots: wave formula now uses `W/640` amplitude scaling (same visual strength at any resolution). Previously the Python bot used flat `-15*amp` pixels with no size compensation, so bigger videos got a proportionally weaker effect.
 - 2026-07-15: TS bot: fixed `applyWave` vertical offset — spatial phase now uses `(Y/H-0.5)` and `(X/W-0.5)` so the sine sweeps symmetrically around 0; the old `(Y/H)*PI` formula swept only a half-cycle whose mean is 2/π ≈ 0.64, adding a constant pixel shift to the whole image.
@@ -286,7 +287,7 @@ def _expr_param(param: str | None, default: float) -> str:
 
 
 # Heavy command rate limiting
-HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "preview1280", "p1280", "oppositep1280", "op1280", "preview1280with640x360resize", "p1280ff!3", "p1280w16:9r", "multipitch", "mp", "multi", "lexg", "chat", "ask", "ai", "ihtxsap", "sap", "concatenate", "concat", "join", "multipitch_bungee", "mpb", "bmp", "multipitchbungee", "bungeemultipitch"}
+HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "preview1280", "p1280", "oppositep1280", "op1280", "preview1280with640x360resize", "p1280ff!3", "p1280w16:9r", "multipitch", "mp", "multi", "ihtxsap", "sap", "concatenate", "concat", "join", "multipitch_bungee", "mpb", "bmp", "multipitchbungee", "bungeemultipitch"}
 HEAVY_LIMIT_DEFAULT = 20
 HEAVY_LIMIT_OWNER = 5340
 LIMITS_FILE = Path("bot/limits.json")
@@ -8589,6 +8590,108 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Failed to upload result: {exc}")
 
 
+# ---------- th/repeat — repeat media N times ----------
+
+@bot.command(name="repeat", aliases=["rep", "loop"])
+async def repeat_command(ctx: commands.Context, *, args: str = ""):
+    """Repeat a video, GIF, or audio file N times using FFmpeg concat.
+
+    Usage:
+      th/repeat [n]
+      th/repeat 3
+
+    n defaults to 2, max 10.
+    Media from: attachment on this message, replied-to message, or URL in args.
+    Supported: mp4, mov, webm, mkv, gif, mp3, wav, flac, ogg, m4a.
+    """
+    _SUPPORTED = {".mp4", ".mov", ".webm", ".mkv", ".gif", ".mp3", ".wav", ".flac", ".ogg", ".m4a"}
+    tokens = args.split()
+    n = 2
+    url_arg = None
+    for tok in tokens:
+        if tok.startswith("http://") or tok.startswith("https://"):
+            url_arg = tok
+        else:
+            try:
+                n = max(1, min(10, int(tok)))
+            except ValueError:
+                pass
+
+    source = await _resolve_media_source(ctx)
+    if source is None and url_arg:
+        source = url_arg
+    if source is None:
+        await ctx.reply(
+            "❌ Usage: `th/repeat [n]`\n"
+            "Attach or reply to a video, GIF, or audio file. Optionally pass a URL.\n"
+            "Example: `th/repeat 3`"
+        )
+        return
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        if isinstance(source, discord.Attachment):
+            ext = os.path.splitext(source.filename)[1].lower()
+            if ext not in _SUPPORTED:
+                await ctx.reply(f"❌ Unsupported file type `{ext}`.")
+                return
+            base = os.path.splitext(source.filename)[0]
+            inp = os.path.join(tmpdir, f"input{ext}")
+            await download_attachment(source, inp)
+        else:
+            url_path = source.split("?")[0]
+            ext = os.path.splitext(url_path)[1].lower()
+            if ext not in _SUPPORTED:
+                ext = ".mp4"
+            base = "media"
+            inp = os.path.join(tmpdir, f"input{ext}")
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(source) as resp:
+                    if resp.status != 200:
+                        await ctx.reply(f"❌ Failed to download media (HTTP {resp.status}).")
+                        return
+                    with open(inp, "wb") as f:
+                        f.write(await resp.read())
+
+        out_ext = ".mp4" if ext in {".mp4", ".mov", ".webm", ".mkv", ".gif"} else ext
+        out = os.path.join(tmpdir, f"repeat_{base}{out_ext}")
+        concat_list = os.path.join(tmpdir, "concat.txt")
+        safe_inp = inp.replace("'", "'\\''")
+        with open(concat_list, "w") as f:
+            for _ in range(n):
+                f.write(f"file '{safe_inp}'\n")
+
+        status_msg = await ctx.reply(f"⏳ Repeating {n}×…")
+
+        def _run():
+            return subprocess.run(
+                ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list, "-c", "copy", out],
+                capture_output=True, text=True, timeout=120,
+            )
+        try:
+            proc = await asyncio.get_event_loop().run_in_executor(None, _run)
+        except Exception as exc:
+            await status_msg.edit(content=f"❌ Repeat failed: {exc}")
+            return
+
+        if proc.returncode != 0 or not os.path.exists(out) or os.stat(out).st_size == 0:
+            err = (proc.stderr or "")[-300:]
+            await status_msg.edit(content=f"❌ Repeat failed:\n```\n{err}\n```")
+            return
+
+        out_name = f"repeat_{base}{out_ext}"
+        file_size = os.stat(out).st_size
+        if file_size <= 8 * 1024 * 1024:
+            await status_msg.edit(content=f"✅ Repeated {n}×!")
+            await ctx.reply(file=discord.File(out, filename=out_name))
+        else:
+            await status_msg.edit(content=f"⏳ Output too large ({file_size // 1024 // 1024} MB) — uploading to Catbox…")
+            cat_url = await _upload_to_catbox(out)
+            if cat_url:
+                await status_msg.edit(content=f"✅ Repeated {n}× — {cat_url}")
+            else:
+                await status_msg.edit(content="❌ Too large for Discord and Catbox upload failed.")
+
+
 # ---------- th/concatenate / th/concat — join 2-10 media files into one ----------
 
 _CONCAT_VIDEO_EXTS = {".mp4", ".mov", ".webm", ".gif", ".mkv"}
@@ -10845,6 +10948,11 @@ _HELP_ENTRIES: list[dict] = [
         "cat": "fun",
         "name": "th/trim <start> <end>",
         "value": "Trim audio, video, or GIF. Supports HH:MM:SS.frac and plain seconds.",
+    },
+    {
+        "cat": "fun",
+        "name": "th/repeat [n]  (aliases: rep, loop)",
+        "value": "Repeat a video, GIF, or audio file N times (default 2, max 10). Attach or reply-to media.",
     },
     {
         "cat": "fun",
