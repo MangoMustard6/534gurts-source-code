@@ -4572,6 +4572,24 @@ def _apply_pipe_effects(
 
 # ---------- IHTX TagScript workflow ----------
 
+def _raw_tail_after_n_tokens(s: str, n: int) -> str:
+    """Return the raw substring of *s* after skipping the first *n* tokens.
+
+    Tokens are whitespace-delimited but double- and single-quoted strings
+    count as one token (quotes and their contents are skipped as a unit).
+    The returned tail preserves the original characters verbatim — including
+    any quotes — so callers can shlex.split it later without information loss.
+    """
+    _TOK = re.compile(r'"[^"]*"|'[^']*'|\S+')
+    pos = 0
+    for _ in range(n):
+        m = _TOK.search(s, pos)
+        if not m:
+            return ""
+        pos = m.end()
+    return s[pos:].strip()
+
+
 def _parse_ihtx_custom_args(args: str) -> tuple[int, str, str, str, str] | None:
     """Parse TagScript-style IHTX custom syntax.
 
@@ -4593,7 +4611,10 @@ def _parse_ihtx_custom_args(args: str) -> tuple[int, str, str, str, str] | None:
     duration_expr = parts[1]
     no_trim = parts[2]
     export_format = parts[3].lstrip(".") or "mp4"
-    pipe_effects = " ".join(parts[4:]).strip()
+    # Extract pipe_effects from the ORIGINAL raw string so quoted groups
+    # (e.g. "-color-matrix \"0 1 0 1 0 0 0 0 1\"") are preserved verbatim.
+    # " ".join(parts[4:]) would strip the quotes and lose grouping.
+    pipe_effects = _raw_tail_after_n_tokens(args, 4)
     if not pipe_effects:
         return None
     return exports, duration_expr, no_trim, export_format, pipe_effects
