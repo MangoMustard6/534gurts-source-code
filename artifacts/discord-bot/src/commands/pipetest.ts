@@ -14,13 +14,20 @@ import {
   SUPPORTED_IMAGE_EXTS,
   GRADIENT_FILE_EXTS,
 } from './gradientmap.js';
+import { WAVE_PRESETS } from '../wavePresets.js';
+
+const WAVE_PRESET_LIST = Object.keys(WAVE_PRESETS).map((k) => `\`${k}\``).join(', ');
 
 const USAGE =
-  '**Usage:** `th/pipetest <effect>=<params>` — attach or reply-to a video/image\n' +
-  'Tests one pipe effect at a time. Supported effects: `gradientmap`, `wave`.\n' +
+  '**Usage:** `th/pipetest <effect>` — attach or reply-to a video/image\n' +
+  '**Effects:**\n' +
+  `• \`wave=<preset>\` — ${WAVE_PRESET_LIST}\n` +
+  '• `wave=custom:<hSpd>|<hFreq>|<hAmp>|<hPhase>|<vSpd>|<vFreq>|<vAmp>|<vPhase>`\n' +
+  '• `gradientmap <R,G,B> <R,G,B> ...` — color gradient map\n' +
   '**Examples:**\n' +
-  '`th/pipetest gradientmap 0,0,0 255,255,255`\n' +
-  '`th/pipetest wave 1|2|3|4|5|6|7|8|true|false`';
+  '`th/pipetest wave=largeWave`\n' +
+  '`th/pipetest wave=custom:0|15|0.8|0|0|0|0|0`\n' +
+  '`th/pipetest gradientmap 0,0,0 255,255,255`';
 
 function tokenizeParams(rest: string): string[] {
   const tokens: string[] = [];
@@ -59,9 +66,9 @@ async function loadGradientPoints(source: string): Promise<{ ok: boolean; points
 }
 
 export async function handlePipetest(message: Message, rest: string): Promise<void> {
-  const cleaned = tokenizeParams(rest);
+  const tokens = tokenizeParams(rest);
 
-  if (!cleaned.length) {
+  if (!tokens.length) {
     await message.reply(USAGE);
     return;
   }
@@ -82,7 +89,11 @@ export async function handlePipetest(message: Message, rest: string): Promise<vo
     return;
   }
 
-  const status = await message.reply(`⏳ Running pipe effect \`gradientmap\` (${cleaned.length} color stops)…`);
+  // ── Determine effect type ────────────────────────────────────────────────
+  const firstToken = tokens[0];
+  const firstLower = firstToken.toLowerCase();
+  const isWave = firstLower.startsWith('wave=') || firstLower === 'wave';
+
   const tmpDir = makeTempDir('pipetest');
   const startTime = Date.now();
 
@@ -94,62 +105,113 @@ export async function handlePipetest(message: Message, rest: string): Promise<vo
 
     await downloadUrl(url, inputPath);
 
-    let params = cleaned;
-    if (params.length && (params[0].startsWith('url:') || params[0].startsWith('http'))) {
-      const loaded = await loadGradientPoints(params[0]);
-      if (!loaded.ok) {
-        await status.edit(`❌ ${loaded.error}`);
+    if (isWave) {
+      // ── Wave effect ────────────────────────────────────────────────────
+      let waveParams: string[];
+      if (firstLower.startsWith('wave=')) {
+        // wave=largeWave  or  wave=custom:1  (with rest of numeric params as separate tokens)
+        waveParams = [firstToken.slice('wave='.length), ...tokens.slice(1)];
+      } else {
+        // bare 'wave' token — rest are numeric params
+        waveParams = tokens.slice(1);
+      }
+
+      const presetLabel = waveParams[0] ?? 'custom';
+      const status = await message.reply(`⏳ Applying wave effect \`${presetLabel}\`…`);
+
+      await applyWave({ inputFile: inputPath, outputFile: outputPath }, waveParams);
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(3);
+      if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
+        await status.edit('❌ Wave effect produced no output.');
         return;
       }
-      params = loaded.points;
-    } else {
-      const filePoints = await maybeLoadGradientFileAttachment(message, tmpDir);
-      if (filePoints) params = filePoints;
-    }
 
-    const stopsResult = parseGradientParams(params);
-    if (!stopsResult.ok) {
-      await status.edit(`❌ ${stopsResult.error}`);
-      return;
-    }
-
-    await applyGradientmap(
-      { inputFile: inputPath, outputFile: outputPath },
-      params.join(' '),
-    );
-
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(3);
-    if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
-      await status.edit('❌ Pipe effect produced no output.');
-      return;
-    }
-
-    const outSize = fs.statSync(outputPath).size;
-    const uploadLimit = getUploadLimitBytes(message.guild ?? null);
-    if (outSize > uploadLimit) {
-      await status.edit(`Output too large for Discord (${formatBytes(outSize)}). Uploading to Catbox…`);
-      const catboxUrl = await _upload_to_catbox(outputPath);
-      if (catboxUrl) {
-        await status.edit(
-          `✅ Pipe effect \`gradientmap\` done! (${elapsed}s)\n-# Output exceeded Discord limit — uploaded to Catbox.\n${catboxUrl}`,
-        );
-      } else {
-        await status.edit(`❌ Too large for Discord and Catbox upload failed. (${formatBytes(outSize)})`);
+      const outSize = fs.statSync(outputPath).size;
+      const uploadLimit = getUploadLimitBytes(message.guild ?? null);
+      if (outSize > uploadLimit) {
+        await status.edit(`Output too large for Discord (${formatBytes(outSize)}). Uploading to Catbox…`);
+        const catboxUrl = await _upload_to_catbox(outputPath);
+        if (catboxUrl) {
+          await status.edit(
+            `✅ Wave \`${presetLabel}\` done! (${elapsed}s)\n-# Output exceeded Discord limit — uploaded to Catbox.\n${catboxUrl}`,
+          );
+        } else {
+          await status.edit(`❌ Too large for Discord and Catbox upload failed. (${formatBytes(outSize)})`);
+        }
+        return;
       }
-      return;
-    }
 
-    await status.edit({
-      content: `✅ Pipe effect \`gradientmap\` — ${stopsResult.stops.length} color stops\n-# Took ${elapsed} seconds.`,
-      files: [{ attachment: outputPath, name: path.basename(outputPath) }],
-    });
+      await status.edit({
+        content: `✅ Wave \`${presetLabel}\` applied!\n-# Took ${elapsed} seconds.`,
+        files: [{ attachment: outputPath, name: path.basename(outputPath) }],
+      });
+
+    } else {
+      // ── Gradientmap effect ─────────────────────────────────────────────
+      let params = tokens;
+      if (params.length && (params[0].startsWith('url:') || params[0].startsWith('http'))) {
+        const loaded = await loadGradientPoints(params[0]);
+        if (!loaded.ok) {
+          await message.reply(`❌ ${loaded.error}`);
+          return;
+        }
+        params = loaded.points;
+      } else {
+        // Skip a leading 'gradientmap'/'gm' keyword if present
+        if (['gradientmap', 'gm', 'gmap'].includes(params[0]?.toLowerCase())) {
+          params = params.slice(1);
+        }
+        const filePoints = await maybeLoadGradientFileAttachment(message, tmpDir);
+        if (filePoints) params = filePoints;
+      }
+
+      const stopsResult = parseGradientParams(params);
+      if (!stopsResult.ok) {
+        await message.reply(`❌ ${stopsResult.error}`);
+        return;
+      }
+
+      const status = await message.reply(`⏳ Applying gradient map (${stopsResult.stops.length} stops)…`);
+
+      await applyGradientmap(
+        { inputFile: inputPath, outputFile: outputPath },
+        params.join(' '),
+      );
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(3);
+      if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
+        await status.edit('❌ Gradient map produced no output.');
+        return;
+      }
+
+      const outSize = fs.statSync(outputPath).size;
+      const uploadLimit = getUploadLimitBytes(message.guild ?? null);
+      if (outSize > uploadLimit) {
+        await status.edit(`Output too large for Discord (${formatBytes(outSize)}). Uploading to Catbox…`);
+        const catboxUrl = await _upload_to_catbox(outputPath);
+        if (catboxUrl) {
+          await status.edit(
+            `✅ Gradient map done! (${elapsed}s)\n-# Output exceeded Discord limit — uploaded to Catbox.\n${catboxUrl}`,
+          );
+        } else {
+          await status.edit(`❌ Too large for Discord and Catbox upload failed. (${formatBytes(outSize)})`);
+        }
+        return;
+      }
+
+      await status.edit({
+        content: `✅ Gradient map — ${stopsResult.stops.length} color stops\n-# Took ${elapsed} seconds.`,
+        files: [{ attachment: outputPath, name: path.basename(outputPath) }],
+      });
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(3);
     if (msg.includes('timed out')) {
-      await status.edit(`❌ Processing timed out after ${elapsed}s.`);
+      await message.reply(`❌ Processing timed out after ${elapsed}s.`);
     } else {
-      await status.edit(`❌ \`${msg.slice(0, 300)}\`\n-# Took ${elapsed}s.`);
+      await message.reply(`❌ \`${msg.slice(0, 300)}\`\n-# Took ${elapsed}s.`);
     }
   } finally {
     cleanupDir(tmpDir);
