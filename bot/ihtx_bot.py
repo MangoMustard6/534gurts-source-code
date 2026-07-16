@@ -18,6 +18,7 @@ _UPDATELOG (newest first):
 - 2026-07-14: Added `gradientmap` as a TypeScript pipe effect in `artifacts/discord-bot/src/effects.ts` and exposed a `th/pipetest` (alias `th/pt`) one-shot runner that validates the `ProcessorContext` integration.
 - 2026-07-14: Added standalone ESM gradientmap script at `scripts/src/gradient_map.ts` and updated the TypeScript `th/gradientmap` / `th/gm` command to expose the same `ColorStop`/`GradientMapOptions` API and synchronous `applyGradientMap` helper.
 - 2026-07-16: Added `$vd` (duration s), `$sr` (sample rate Hz), `$f` (FPS) as th/ihtx pipe-effect math variables alongside the existing `$fc` (frame count). All four are substituted before lerp/math evaluation.
+- 2026-07-16: Updated `th/addsource`: new optional `trim_duration` arg applies reverse→trim→reverse (end-trim) to base video and areverse→atrim→areverse to audio via named filter labels `[out_v]`/`[out_a]`; audio always from base track when trim is used. `--base-audio` flag retained for no-trim mode.
 - 2026-07-16: Updated `imagemagick`/`im` pipe effect: switched frame format to PPM (faster magick I/O), frames now processed in parallel via ThreadPoolExecutor (in-place), `-r fps` passed to both extraction and reassembly, vf filter changed to `scale=-1:floor(ih/2)*2,setsar=1:1` (only force-even height).
 - 2026-07-16: Added `imagemagick`/`im` pipe effect: applies arbitrary ImageMagick args to a video (frame-by-frame extract→magick→reassemble with audio) or directly to a static image. Usage: `imagemagick=-monochrome`, `im=-blur 0x8|-edge|1`.
 - 2026-07-15: Fixed `th/download` for YouTube/TikTok-style URLs: removed the direct-download fallback that produced HTML `.bin` files when yt-dlp failed; matched the yt-dlp format selector to the TypeScript bot; filtered `.part`/`.ytdl` leftovers; added magic-bytes sniffing and `.bin` renaming for any generic download.
@@ -1844,13 +1845,19 @@ def _run_grid_overlay(
     pos: int,          # 1-indexed
     output_path: str,
     use_base_audio: bool = False,
+    trim_duration: float | None = None,
 ) -> tuple[bool, str]:
     """Overlay overlay_path into a specific grid cell of base_path.
 
     The base frame is divided into a rows×cols grid.  pos is 1-indexed,
     counted left-to-right then top-to-bottom.  The overlay is scaled to
-    exactly fill the cell.  Audio defaults to the overlay track; pass
-    use_base_audio=True to inherit the base audio instead.
+    exactly fill the cell.
+
+    When trim_duration is given the base video is end-trimmed to that many
+    seconds using the reverse→trim→reverse pattern, and base audio is
+    end-trimmed with areverse→atrim→areverse.  Audio always comes from the
+    base track when trim_duration is supplied (matching the TS reference).
+    Without trim_duration, audio source is controlled by use_base_audio.
     """
     import subprocess as _sp
 
@@ -1868,7 +1875,7 @@ def _run_grid_overlay(
     except Exception:
         return False, f"Could not parse base dimensions: {r.stdout}"
 
-    # ── 2. Probe base duration ─────────────────────────────────────────────────
+    # ── 2. Probe base duration (used when trim_duration is not supplied) ────────
     r2 = _sp.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", base_path],
@@ -1882,32 +1889,50 @@ def _run_grid_overlay(
             pass
 
     # ── 3. Calculate cell geometry ─────────────────────────────────────────────
-    idx   = pos - 1
-    row   = idx // cols
-    col   = idx % cols
+    idx    = pos - 1
+    row    = idx // cols
+    col    = idx % cols
     cell_w = base_w // cols
     cell_h = base_h // rows
     x_pos  = col * cell_w
     y_pos  = row * cell_h
 
     # ── 4. Build FFmpeg filter_complex ─────────────────────────────────────────
-    filter_complex = (
-        f"[0:v]scale={base_w}:{base_h}[base];"
-        f"[1:v]format=rgb24,scale={cell_w}:{cell_h}[ov];"
-        f"[base][ov]overlay={x_pos}:{y_pos}"
-    )
-
-    audio_map = ["-map", "0:a?"] if use_base_audio else ["-map", "1:a?"]
-    dur_args  = ["-t", str(base_dur)] if base_dur else []
+    if trim_duration is not None:
+        # End-trim pattern from TS reference:
+        #   reverse→trim→reverse trims the last N seconds of the base video.
+        #   areverse→atrim→areverse does the same for audio.
+        #   Audio always comes from the base track in this mode.
+        t = trim_duration
+        filter_parts = [
+            f"[0:v]reverse,trim=0:{t},reverse[trimmed_base]",
+            f"[trimmed_base]scale={base_w}:{base_h}[scaled_base]",
+            f"[1:v]format=rgb24,scale={cell_w}:{cell_h}[ov]",
+            f"[scaled_base][ov]overlay={x_pos}:{y_pos}[out_v]",
+            f"[0:a]areverse,atrim=0:{t},areverse[out_a]",
+        ]
+        filter_complex = ";".join(filter_parts)
+        map_args = ["-map", "[out_v]", "-map", "[out_a]"]
+        dur_args: list[str] = []
+    else:
+        filter_complex = (
+            f"[0:v]scale={base_w}:{base_h}[base];"
+            f"[1:v]format=rgb24,scale={cell_w}:{cell_h}[ov];"
+            f"[base][ov]overlay={x_pos}:{y_pos}"
+        )
+        map_args = ["-map", "0:a?"] if use_base_audio else ["-map", "1:a?"]
+        dur_args = ["-t", str(base_dur)] if base_dur else []
 
     cmd = [
         "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
         "-i", base_path,
         "-i", overlay_path,
         "-filter_complex", filter_complex,
+    ] + map_args + [
         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
         "-pix_fmt", "yuv420p",
-    ] + audio_map + dur_args + ["-shortest", output_path]
+        "-shortest",
+    ] + dur_args + [output_path]
 
     return _run_ffmpeg_raw(cmd, timeout=300)
 
@@ -9478,18 +9503,22 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
     """Overlay a secondary video onto a specific grid cell of a base video.
 
     Usage:
-      th/addsource <overlay_url> <grid> <pos> [--base-audio]
+      th/addsource <overlay_url> <grid> <pos> [trim_duration] [--base-audio]
 
     Arguments:
-      overlay_url   URL of the video to place in the cell
-      grid          Grid size as RxC, e.g. 2x2, 3x3, 4x4
-      pos           1-indexed cell number (left-to-right, top-to-bottom)
-      --base-audio  Use base video audio instead of overlay audio (optional)
+      overlay_url    URL of the video to place in the cell
+      grid           Grid size as RxC, e.g. 2x2, 3x3, 4x4
+      pos            1-indexed cell number (left-to-right, top-to-bottom)
+      trim_duration  Optional — trim base to last N seconds using
+                     reverse→trim→reverse (end-trim). Also end-trims audio.
+                     When supplied, audio always comes from the base track.
+      --base-audio   Use base video audio instead of overlay audio (no trim).
 
     Base video: attach to the message or reply to a message containing one.
 
     Examples:
       th/addsource https://example.com/clip.mp4 2x2 3
+      th/addsource https://example.com/clip.mp4 2x2 1 5.0
       th/addsource https://example.com/clip.mp4 3x3 5 --base-audio
     """
     import re as _re
@@ -9498,9 +9527,10 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
     args = args.replace("--base-audio", "").strip()
 
     # ── Parse tokens ──────────────────────────────────────────────────────────
-    overlay_url: str | None = None
-    grid_str:    str | None = None
-    pos_str:     str | None = None
+    overlay_url:    str | None   = None
+    grid_str:       str | None   = None
+    pos_str:        str | None   = None
+    trim_duration:  float | None = None
 
     for tok in args.split():
         if tok.startswith(("http://", "https://")) and overlay_url is None:
@@ -9509,13 +9539,18 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
             grid_str = tok.lower()
         elif tok.isdigit() and pos_str is None and grid_str is not None:
             pos_str = tok
+        elif trim_duration is None and pos_str is not None:
+            try:
+                trim_duration = float(tok)
+            except ValueError:
+                pass
 
     if not overlay_url or not grid_str or not pos_str:
         await ctx.reply(
-            "❌ Usage: `th/addsource <overlay_url> <grid> <pos>`\n"
-            "Example: `th/addsource https://... 2x2 3`\n"
+            "❌ Usage: `th/addsource <overlay_url> <grid> <pos> [trim_duration]`\n"
+            "Example: `th/addsource https://... 2x2 3` or `th/addsource https://... 2x2 1 5.0`\n"
             "Attach or reply to the base video.\n"
-            "Optional flag: `--base-audio` to keep base audio instead of overlay."
+            "Optional flag: `--base-audio` to keep base audio instead of overlay (without trim)."
         )
         return
 
@@ -9531,6 +9566,9 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
         return
     if pos < 1 or pos > rows * cols:
         await ctx.reply(f"❌ Position must be between 1 and {rows * cols} for a {rows}×{cols} grid.")
+        return
+    if trim_duration is not None and trim_duration <= 0:
+        await ctx.reply("❌ trim_duration must be a positive number of seconds.")
         return
 
     # ── Resolve base media ────────────────────────────────────────────────────
@@ -9586,10 +9624,12 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
             return
 
         # Composite
-        await status_msg.edit(content=f"🔧 Compositing `{grid_str}` grid, cell {pos}…")
+        trim_note = f", trimming to last {trim_duration}s" if trim_duration is not None else ""
+        await status_msg.edit(content=f"🔧 Compositing `{grid_str}` grid, cell {pos}{trim_note}…")
         ok, err = await loop.run_in_executor(
             None, _run_grid_overlay,
-            base_path, overlay_path, rows, cols, pos, output_path, use_base_audio,
+            base_path, overlay_path, rows, cols, pos, output_path,
+            use_base_audio, trim_duration,
         )
         if not ok:
             await status_msg.edit(content=f"❌ FFmpeg failed:\n```\n{err[-1200:]}\n```")
@@ -9608,7 +9648,10 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
 
         stem = Path(src_name).stem
         out_filename = f"addsource_{grid_str}_pos{pos}_{stem}.mp4"
-        audio_note = "base audio" if use_base_audio else "overlay audio"
+        if trim_duration is not None:
+            audio_note = f"base audio, trimmed to {trim_duration}s"
+        else:
+            audio_note = "base audio" if use_base_audio else "overlay audio"
 
         try:
             await ctx.reply(
