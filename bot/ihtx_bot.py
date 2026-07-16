@@ -2250,6 +2250,14 @@ def _run_imagemagick(
     """
     import glob as _glob
 
+    # Normalize params: join and shlex-split so both paren-syntax (single raw
+    # string, e.g. imagemagick(-blur 0x8 -edge 1)) and equals-syntax
+    # (pre-split list, e.g. imagemagick=-blur|0x8) yield the same arg list.
+    try:
+        magick_args = shlex.split(" ".join(params))
+    except ValueError as e:
+        return False, f"imagemagick: could not parse args ({e}). Use: imagemagick(-option value …)"
+
     ext = Path(input_path).suffix.lower()
     is_video = ext in VIDEO_EXTENSIONS
 
@@ -2297,7 +2305,7 @@ def _run_imagemagick(
             for i, frame_file in enumerate(frame_files):
                 proc_frame = os.path.join(tmpdir, f"processed{i:04d}.png")
                 result = subprocess.run(
-                    ["magick", frame_file] + params + [proc_frame],
+                    ["magick", frame_file] + magick_args + [proc_frame],
                     capture_output=True, text=True, timeout=60,
                 )
                 if result.returncode != 0:
@@ -2340,7 +2348,7 @@ def _run_imagemagick(
         else:
             # --- Static image: run magick directly ---
             result = subprocess.run(
-                ["magick", input_path] + params + [output_path],
+                ["magick", input_path] + magick_args + [output_path],
                 capture_output=True, text=True, timeout=60,
             )
             if result.returncode != 0:
@@ -2470,7 +2478,7 @@ def _split_pipe_segments(pipe_str: str) -> list[str]:
     args, not as segment delimiters. Parens inside those blocks are depth-
     tracked so that expressions like ``7*(text_h)`` do not corrupt the split.
     """
-    _FUNC_NAMES = ("ffmpeg", "leftsplit", "rightsplit")
+    _FUNC_NAMES = ("ffmpeg", "leftsplit", "rightsplit", "imagemagick", "im")
     segments: list[str] = []
     in_func = False
     func_depth = 0
@@ -2579,6 +2587,16 @@ def _parse_pipe_effects(pipe_str: str) -> list[tuple[str, list[str]]]:
                 current_name = None
                 current_params = []
             effects.append(("ffmpeg", [ffmpeg_m.group(1).strip()]))
+            continue
+
+        # imagemagick(...) / im(...) — raw ImageMagick args, captured verbatim
+        im_m = re.match(r'^(imagemagick|im)\s*\((.+)\)\s*$', part, re.IGNORECASE | re.DOTALL)
+        if im_m:
+            if current_name is not None:
+                effects.append((current_name, current_params))
+                current_name = None
+                current_params = []
+            effects.append(("imagemagick", [im_m.group(2).strip()]))
             continue
 
         # leftsplit(...) / rightsplit(...) — inner effects in parens
@@ -3180,7 +3198,7 @@ def _apply_pipe_effects(
     # Preprocess effect parameters: expand lerp, replace $fc, collapse constants.
     # Skip for effects whose params are raw FFmpeg/shell command strings
     # (they may contain '=' that is NOT a key=value separator).
-    _RAW_ARG_EFFECTS = {"ffmpeg", "leftsplit", "rightsplit", "gradientmap", "gmap"}
+    _RAW_ARG_EFFECTS = {"ffmpeg", "leftsplit", "rightsplit", "gradientmap", "gmap", "imagemagick", "im"}
     effects = [
         (
             name,
