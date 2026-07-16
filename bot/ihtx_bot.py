@@ -18,6 +18,7 @@ _UPDATELOG (newest first):
 - 2026-07-14: Added `gradientmap` as a TypeScript pipe effect in `artifacts/discord-bot/src/effects.ts` and exposed a `th/pipetest` (alias `th/pt`) one-shot runner that validates the `ProcessorContext` integration.
 - 2026-07-14: Added standalone ESM gradientmap script at `scripts/src/gradient_map.ts` and updated the TypeScript `th/gradientmap` / `th/gm` command to expose the same `ColorStop`/`GradientMapOptions` API and synchronous `applyGradientMap` helper.
 - 2026-07-16: Added `$vd` (duration s), `$sr` (sample rate Hz), `$f` (FPS) as th/ihtx pipe-effect math variables alongside the existing `$fc` (frame count). All four are substituted before lerp/math evaluation.
+- 2026-07-16: Updated `imagemagick`/`im` pipe effect: switched frame format to PPM (faster magick I/O), frames now processed in parallel via ThreadPoolExecutor (in-place), `-r fps` passed to both extraction and reassembly, vf filter changed to `scale=-1:floor(ih/2)*2,setsar=1:1` (only force-even height).
 - 2026-07-16: Added `imagemagick`/`im` pipe effect: applies arbitrary ImageMagick args to a video (frame-by-frame extract→magick→reassemble with audio) or directly to a static image. Usage: `imagemagick=-monochrome`, `im=-blur 0x8|-edge|1`.
 - 2026-07-15: Fixed `th/download` for YouTube/TikTok-style URLs: removed the direct-download fallback that produced HTML `.bin` files when yt-dlp failed; matched the yt-dlp format selector to the TypeScript bot; filtered `.part`/`.ytdl` leftovers; added magic-bytes sniffing and `.bin` renaming for any generic download.
 - 2026-07-14: Re-added Python `gradientmap`/`gmap` pipe effect to the Python bot with the same ColorStop/GradientMapOptions logic as the TypeScript bot, so `th/ihtx gradientmap=...` works on both bots.
@@ -2258,14 +2259,19 @@ def _run_imagemagick(
     """Apply arbitrary ImageMagick arguments to a video (frame-by-frame) or image.
 
     Pipe usage: imagemagick=<magick args>  or  im=<magick args>
-    e.g. imagemagick=-monochrome
+    e.g. imagemagick=-negate
          imagemagick=-colorspace Gray
          imagemagick=-blur 0x8|-edge|1   (params split by pipe/space both work)
 
-    For videos: extracts frames, applies magick to each frame individually,
-    then reassembles with original audio. For images: runs magick directly.
+    For videos:
+      1. Probe framerate with ffprobe.
+      2. Extract frames as PPM (lossless, fast for ImageMagick I/O).
+      3. Extract audio stream to WAV.
+      4. Apply magick to every frame **in parallel** (in-place: same file in/out).
+      5. Reassemble frames + audio into the output container.
+    For images: runs magick directly on the file.
     """
-    import glob as _glob
+    import concurrent.futures
 
     # Normalize params: join and shlex-split so both paren-syntax (single raw
     # string, e.g. imagemagick(-blur 0x8 -edge 1)) and equals-syntax
@@ -2280,78 +2286,76 @@ def _run_imagemagick(
 
     with tempfile.TemporaryDirectory() as tmpdir:
         if is_video:
-            # --- Get video info ---
+            # --- 1. Probe framerate ---
             vinfo = _ffprobe_video_info(input_path)
-            fps_str = vinfo.get("r_frame_rate", "30/1")
-            try:
-                if "/" in fps_str:
-                    _n, _d = fps_str.split("/")
-                    fps_float = float(_n) / float(_d)
-                else:
-                    fps_float = float(fps_str)
-            except (ValueError, ZeroDivisionError):
-                fps_float = 30.0
-            has_audio = (
-                vinfo.get("duration", 0) > 0
-                and ext in AUDIO_VIDEO_EXTS
-            )
+            fps_str = vinfo.get("r_frame_rate", "30")  # raw fraction e.g. "30000/1001"
+            has_audio = vinfo.get("duration", 0) > 0 and ext in AUDIO_VIDEO_EXTS
 
-            # --- Extract frames ---
-            frames_tmpl = os.path.join(tmpdir, "frame%04d.png")
+            # --- 2. Extract frames as PPM ---
+            # -r before -i sets the input/decode framerate for the image sequence.
+            frames_tmpl = os.path.join(tmpdir, "frame_%04d.ppm")
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                "-r", fps_str,
                 "-i", input_path,
                 frames_tmpl,
             ], timeout=120)
             if not ok:
                 return False, f"imagemagick: frame extraction failed: {err}"
 
-            # --- Extract audio (best-effort) ---
+            # --- 3. Extract audio (best-effort) ---
             audio_path = os.path.join(tmpdir, "audio.wav")
             if has_audio:
                 _run_ffmpeg_raw([
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-i", input_path, "-vn", audio_path,
+                    "-i", input_path,
+                    audio_path,
                 ], timeout=60)
 
-            # --- Apply ImageMagick to each frame individually ---
-            frame_files = sorted(_glob.glob(os.path.join(tmpdir, "frame*.png")))
+            # --- 4. Apply ImageMagick to each frame in parallel (in-place) ---
+            frame_files = sorted(
+                os.path.join(tmpdir, f)
+                for f in os.listdir(tmpdir)
+                if f.startswith("frame_") and f.endswith(".ppm")
+            )
             if not frame_files:
                 return False, "imagemagick: no frames extracted"
 
-            for i, frame_file in enumerate(frame_files):
-                proc_frame = os.path.join(tmpdir, f"processed{i:04d}.png")
+            def _process_frame(fp: str) -> str | None:
                 result = subprocess.run(
-                    ["magick", frame_file] + magick_args + [proc_frame],
+                    ["magick", fp] + magick_args + [fp],
                     capture_output=True, text=True, timeout=60,
                 )
-                if result.returncode != 0:
-                    return False, f"imagemagick: frame {i} failed: {result.stderr.strip()}"
+                return result.stderr.strip() if result.returncode != 0 else None
 
-            # --- Reassemble video ---
-            proc_tmpl = os.path.join(tmpdir, "processed%04d.png")
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                frame_errors = list(pool.map(_process_frame, frame_files))
+
+            failed = [(i, e) for i, e in enumerate(frame_errors) if e]
+            if failed:
+                i, e = failed[0]
+                return False, f"imagemagick: frame {i} failed: {e}"
+
+            # --- 5. Reassemble processed frames + audio ---
             if has_audio and os.path.exists(audio_path):
                 reassemble_cmd = [
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-framerate", str(fps_float),
-                    "-i", proc_tmpl,
+                    "-r", fps_str,
+                    "-i", frames_tmpl,
                     "-i", audio_path,
-                    "-vf", "scale=floor(iw/2)*2:floor(ih/2)*2,setsar=1:1",
+                    "-vf", "scale=-1:floor(ih/2)*2,setsar=1:1",
                     "-map", "0:v", "-map", "1:a",
                     "-pix_fmt", "yuv420p",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                    "-c:a", "aac",
                     "-movflags", "+faststart",
                     output_path,
                 ]
             else:
                 reassemble_cmd = [
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                    "-framerate", str(fps_float),
-                    "-i", proc_tmpl,
-                    "-vf", "scale=floor(iw/2)*2:floor(ih/2)*2,setsar=1:1",
+                    "-r", fps_str,
+                    "-i", frames_tmpl,
+                    "-vf", "scale=-1:floor(ih/2)*2,setsar=1:1",
                     "-pix_fmt", "yuv420p",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                     "-movflags", "+faststart",
                     output_path,
                 ]
