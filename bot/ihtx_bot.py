@@ -17,6 +17,7 @@ _UPDATELOG (newest first):
 - 2026-07-15: TS bot: fixed `applyWave` amplitude scaling — displacement is now multiplied by `W/640` so the visual effect is proportional to native resolution (matches old scale-to-640/scale-back behaviour without a dimension probe). Added `th/klaskysource` (alias `th/klasky`) command to TS bot — downloads and re-attaches the Klasky source clip; falls back to Catbox if the file exceeds the guild upload limit.
 - 2026-07-14: Added `gradientmap` as a TypeScript pipe effect in `artifacts/discord-bot/src/effects.ts` and exposed a `th/pipetest` (alias `th/pt`) one-shot runner that validates the `ProcessorContext` integration.
 - 2026-07-14: Added standalone ESM gradientmap script at `scripts/src/gradient_map.ts` and updated the TypeScript `th/gradientmap` / `th/gm` command to expose the same `ColorStop`/`GradientMapOptions` API and synchronous `applyGradientMap` helper.
+- 2026-07-16: Added `$vd` (duration s), `$sr` (sample rate Hz), `$f` (FPS) as th/ihtx pipe-effect math variables alongside the existing `$fc` (frame count). All four are substituted before lerp/math evaluation.
 - 2026-07-16: Added `imagemagick`/`im` pipe effect: applies arbitrary ImageMagick args to a video (frame-by-frame extract→magick→reassemble with audio) or directly to a static image. Usage: `imagemagick=-monochrome`, `im=-blur 0x8|-edge|1`.
 - 2026-07-15: Fixed `th/download` for YouTube/TikTok-style URLs: removed the direct-download fallback that produced HTML `.bin` files when yt-dlp failed; matched the yt-dlp format selector to the TypeScript bot; filtered `.part`/`.ytdl` leftovers; added magic-bytes sniffing and `.bin` renaming for any generic download.
 - 2026-07-14: Re-added Python `gradientmap`/`gmap` pipe effect to the Python bot with the same ColorStop/GradientMapOptions logic as the TypeScript bot, so `th/ihtx gradientmap=...` works on both bots.
@@ -246,14 +247,26 @@ def _expand_lerp(expr: str) -> str:
     return expr
 
 
-def _preprocess_math_expr(expr: str, frame_count: int | None = None) -> str:
-    """Replace $fc, expand lerp, and collapse constant subexpressions.
+def _preprocess_math_expr(
+    expr: str,
+    frame_count: int | None = None,
+    media_vars: dict | None = None,
+) -> str:
+    """Replace $fc/$vd/$sr/$f, expand lerp, and collapse constant subexpressions.
 
+    media_vars may contain: vd (duration s), sr (sample rate Hz), fps (frame rate).
     Preserves key=value forms (e.g. scroll=hpos=0.5) by only preprocessing
     the value half.
     """
     if frame_count is not None:
         expr = expr.replace('$fc', str(frame_count))
+    if media_vars:
+        if 'vd' in media_vars:
+            expr = expr.replace('$vd', f"{media_vars['vd']:.10g}")
+        if 'sr' in media_vars:
+            expr = expr.replace('$sr', str(media_vars['sr']))
+        if 'fps' in media_vars:
+            expr = expr.replace('$f', f"{media_vars['fps']:.10g}")
     expr = _expand_lerp(expr)
     if not _FFMPEG_EXPR_RE.search(expr):
         try:
@@ -266,14 +279,18 @@ def _preprocess_math_expr(expr: str, frame_count: int | None = None) -> str:
     return expr
 
 
-def _preprocess_param(param: str, frame_count: int | None = None) -> str:
+def _preprocess_param(
+    param: str,
+    frame_count: int | None = None,
+    media_vars: dict | None = None,
+) -> str:
     """Preprocess a single effect parameter, preserving key=value syntax."""
     if not param or not param.strip():
         return param
     if "=" in param:
         k, v = param.split("=", 1)
-        return f"{k}={_preprocess_math_expr(v.strip(), frame_count)}"
-    return _preprocess_math_expr(param.strip(), frame_count)
+        return f"{k}={_preprocess_math_expr(v.strip(), frame_count, media_vars)}"
+    return _preprocess_math_expr(param.strip(), frame_count, media_vars)
 
 
 def _expr_param(param: str | None, default: float) -> str:
@@ -3179,8 +3196,9 @@ def _apply_pipe_effects(
         ok, err = _run_ffmpeg_raw(["ffmpeg", "-y", "-i", input_path, "-c", "copy", output_path], timeout=60)
         return ok, err
 
-    # Compute frame count for $fc / N expressions used by math-aware effects.
+    # Probe media properties for $fc/$vd/$sr/$f variable substitution.
     frame_count: int | None = None
+    media_vars: dict = {}
     try:
         vinfo = _ffprobe_video_info(input_path)
         dur = vinfo.get("duration", 0.0)
@@ -3192,17 +3210,23 @@ def _apply_pipe_effects(
             fps = float(fps_str)
         if dur > 0 and fps > 0:
             frame_count = max(1, int(round(dur * fps)))
+        media_vars['vd'] = dur
+        media_vars['fps'] = fps
+    except Exception:
+        pass
+    try:
+        media_vars['sr'] = _ffprobe_sample_rate(input_path)
     except Exception:
         pass
 
-    # Preprocess effect parameters: expand lerp, replace $fc, collapse constants.
+    # Preprocess effect parameters: expand lerp, replace $fc/$vd/$sr/$f, collapse constants.
     # Skip for effects whose params are raw FFmpeg/shell command strings
     # (they may contain '=' that is NOT a key=value separator).
     _RAW_ARG_EFFECTS = {"ffmpeg", "leftsplit", "rightsplit", "gradientmap", "gmap", "imagemagick", "im"}
     effects = [
         (
             name,
-            (params if name in _RAW_ARG_EFFECTS else [_preprocess_param(p, frame_count) for p in params]),
+            (params if name in _RAW_ARG_EFFECTS else [_preprocess_param(p, frame_count, media_vars) for p in params]),
         )
         for name, params in effects
     ]
@@ -4580,7 +4604,7 @@ def _raw_tail_after_n_tokens(s: str, n: int) -> str:
     The returned tail preserves the original characters verbatim — including
     any quotes — so callers can shlex.split it later without information loss.
     """
-    _TOK = re.compile(r'"[^"]*"|'[^']*'|\S+')
+    _TOK = re.compile(r'''"[^"]*"|'[^']*'|\S+''')
     pos = 0
     for _ in range(n):
         m = _TOK.search(s, pos)
