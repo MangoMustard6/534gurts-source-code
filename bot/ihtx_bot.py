@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-16: Both bots: raised `th/ihtxsap` max repetitions from 100 → 1000.
 - 2026-07-16: Both bots: added `th/repeat [n]` (aliases: rep, loop) — repeats a video/GIF/audio N times (default 2, max 10) via FFmpeg concat demuxer. Removed `trim`, `chat`, `ask`, `ai`, `lexg` from HEAVY_COMMANDS (not computationally heavy). Added wave preset support to pipe effects: `wave=largeWave`, `wave=mediumWave`, `wave=smallWave`, `wave=horizontalOnly`, `wave=verticalOnly`, and `wave=custom:<params>`. Fixed `th/pipetest` to route both `wave` and `gradientmap` effects.
 - 2026-07-15: Both bots: wave phase reverted to `(Y/H)*PI` / `(X/W)*PI` (restores half-sine widening shape); added `scale=iw:ih` after geq in both bots to preserve output aspect ratio; removed `setsar=1:1` from TS bot. The `-0.5` centered variant turned the bulge into an S-curve shear and is incompatible with the expected widening look.
 - 2026-07-15: Both bots: wave formula now uses `W/640` amplitude scaling (same visual strength at any resolution). Previously the Python bot used flat `-15*amp` pixels with no size compensation, so bigger videos got a proportionally weaker effect.
@@ -7128,7 +7129,7 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
 
 # ---------- th/ihtxsap — audio-only IHTX, mirrors th/ihtx iterative model ----------
 
-_IHTXSAP_MAX_REPS    = 100
+_IHTXSAP_MAX_REPS    = 1000
 _IHTXSAP_MAX_DUR     = 3600.0
 _IHTXSAP_MAX_PITCHES = 20
 
@@ -7141,7 +7142,7 @@ _IHTXSAP_USAGE = (
     "**th/ihtxsap** — audio-only version of th/ihtx\n\n"
     "**Usage (positional):** `th/ihtxsap <reps> <duration> <pitches> [style] [volume=N]`\n"
     "**Usage (keyword):** `th/ihtxsap <reps> <duration> <pitches>` or any order of:\n"
-    "  `reps=...` / `repetitions=...` — integer 1–100\n"
+    "  `reps=...` / `repetitions=...` — integer 1–1000\n"
     "  `duration=...` / `dur=...`       — seconds of audio to snip\n"
     "  `pitches=...`                    — semicolon-separated semitone shifts: `-7;5;6`\n"
     "  `pitchstyle=...`                 — `Rubberband R2`, `Rubberband R3`, `Soundtouch`, `Bungee`, `Rubberband Custom`\n"
