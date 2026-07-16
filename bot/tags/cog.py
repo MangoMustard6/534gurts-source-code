@@ -283,10 +283,12 @@ class TagCog(commands.Cog, name="Tags"):
         tag_type, tag_engines = _detect_type(tag["content"])
         content_len = len(tag["content"])
 
-        embed = discord.Embed(title=f"Tag: {tag['name']}", color=0x5865F2)
+        embed = discord.Embed(title=f"Tag: {tag['name']} (Global)", color=0x5865F2)
         embed.add_field(name="Owner", value=owner_str, inline=True)
         embed.add_field(name="Uses", value=str(tag.get("uses", 0)), inline=True)
         embed.add_field(name="Type", value=tag_type, inline=True)
+        if tag.get("guild_origin"):
+            embed.add_field(name="Origin Guild", value=f"`{tag['guild_origin']}`", inline=True)
         if tag_engines:
             eng_label = "Engine" if len(tag_engines) == 1 else "Engines"
             embed.add_field(name=eng_label, value="\n".join(tag_engines), inline=True)
@@ -328,11 +330,11 @@ class TagCog(commands.Cog, name="Tags"):
         chunk = tags[(page - 1) * TAGS_PER_PAGE : page * TAGS_PER_PAGE]
 
         embed = discord.Embed(
-            title=f"Tags — {ctx.guild.name}",
+            title="Global Tags",
             description=", ".join(f"`{t['name']}`" for t in chunk),
             color=0x5865F2,
         )
-        embed.set_footer(text=f"Page {page}/{total} · {len(tags)} total tags")
+        embed.set_footer(text=f"Page {page}/{total} · {len(tags)} total tags (all guilds)")
         await ctx.reply(embed=embed)
 
     # ── Random ─────────────────────────────────────────────────────────────
@@ -345,7 +347,7 @@ class TagCog(commands.Cog, name="Tags"):
 
         tags = await storage.list_tags(ctx.guild.id)
         if not tags:
-            return await ctx.reply("No tags in this server yet.")
+            return await ctx.reply("No global tags yet. Create one with `t!tag create <name> <content>`.")
 
         chosen = random.choice(tags)
         name = chosen["name"]
@@ -536,7 +538,7 @@ class TagCog(commands.Cog, name="Tags"):
             return await ctx.reply("Tags can only be used in servers.")
 
         s = await storage.stats(ctx.guild.id)
-        embed = discord.Embed(title=f"Tag Stats — {ctx.guild.name}", color=0x5865F2)
+        embed = discord.Embed(title="Global Tag Stats", color=0x5865F2)
         embed.add_field(name="Tags", value=str(s["total_tags"]), inline=True)
         embed.add_field(name="Aliases", value=str(s["total_aliases"]), inline=True)
         embed.add_field(name="Total uses", value=str(s["total_uses"]), inline=True)
@@ -625,7 +627,7 @@ class TagCog(commands.Cog, name="Tags"):
         embed = discord.Embed(
             title="Tag System Reference",
             description=(
-                "Create and invoke reusable, scriptable tags.\n"
+                "Create and invoke reusable, scriptable tags — **globally shared across all servers**.\n"
                 "Prefix: `t!tag` (alias: `t!tags`) · Shorthand: `t!t <name> [args]`"
             ),
             color=0x5865F2,

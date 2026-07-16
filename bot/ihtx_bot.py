@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-16: Tag system made global — tags are now shared across all servers. Existing per-guild tags in tag_store.json are auto-migrated to a single "global" namespace on first load. Storage layer rewritten; cog UI updated (list/stats/info/random show global counts and guild_origin).
 - 2026-07-16: Both bots: raised `th/ihtxsap` max repetitions from 100 → 1000.
 - 2026-07-16: Both bots: added `th/repeat [n]` (aliases: rep, loop) — repeats a video/GIF/audio N times (default 2, max 10) via FFmpeg concat demuxer. Removed `trim`, `chat`, `ask`, `ai`, `lexg` from HEAVY_COMMANDS (not computationally heavy). Added wave preset support to pipe effects: `wave=largeWave`, `wave=mediumWave`, `wave=smallWave`, `wave=horizontalOnly`, `wave=verticalOnly`, and `wave=custom:<params>`. Fixed `th/pipetest` to route both `wave` and `gradientmap` effects.
 - 2026-07-15: Both bots: wave phase reverted to `(Y/H)*PI` / `(X/W)*PI` (restores half-sine widening shape); added `scale=iw:ih` after geq in both bots to preserve output aspect ratio; removed `setsar=1:1` from TS bot. The `-0.5` centered variant turned the bulge into an S-curve shear and is incompatible with the expected widening look.

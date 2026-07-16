@@ -1,3 +1,21 @@
+"""
+Global tag storage.
+
+All tags live in a single "global" namespace — accessible from every guild.
+Per-guild tags (legacy format keyed by guild ID strings) are migrated into the
+global namespace on first load.  The `guild_id` parameter on every method is
+kept for API compatibility but is ignored.
+
+File: bot/tag_store.json
+Structure (after migration):
+  {
+    "global": {
+      "tags":    { "<name>": { ... tag record ... }, ... },
+      "aliases": { "<alias>": "<name>", ... }
+    }
+  }
+"""
+
 import json
 import asyncio
 from datetime import datetime, timezone
@@ -7,6 +25,7 @@ from typing import Optional
 TAG_STORE_FILE = Path("bot/tag_store.json")
 _lock = asyncio.Lock()
 
+# ── Internal helpers ──────────────────────────────────────────────────────────
 
 def _load_raw() -> dict:
     if TAG_STORE_FILE.exists():
@@ -24,15 +43,60 @@ def _save_raw(data: dict):
     )
 
 
-def _guild_data(data: dict, guild_id: int) -> dict:
-    key = str(guild_id)
-    if key not in data:
-        data[key] = {"tags": {}, "aliases": {}}
-    gd = data[key]
+def _global_data(data: dict) -> dict:
+    """Return (creating if needed) the single global tag namespace."""
+    if "global" not in data:
+        data["global"] = {"tags": {}, "aliases": {}}
+    gd = data["global"]
     gd.setdefault("tags", {})
     gd.setdefault("aliases", {})
     return gd
 
+
+def _migrate_guild_tags(data: dict) -> bool:
+    """
+    Migrate per-guild buckets (keys that are numeric guild ID strings) into the
+    global namespace.  Tags are merged in no particular order; if a name
+    collision occurs the existing global tag wins (first writer wins).
+    Returns True if the data dict was modified.
+    """
+    gd = _global_data(data)
+    changed = False
+
+    for key in list(data.keys()):
+        if key == "global":
+            continue
+        # Only migrate keys that look like Discord snowflakes (all digits)
+        if not key.isdigit():
+            continue
+
+        value = data[key]
+        if not isinstance(value, dict):
+            continue
+
+        guild_tags    = value.get("tags",    {})
+        guild_aliases = value.get("aliases", {})
+
+        for name, tag in guild_tags.items():
+            if name not in gd["tags"]:
+                tag_copy = dict(tag)
+                tag_copy.setdefault("guild_origin", key)  # provenance
+                gd["tags"][name] = tag_copy
+                changed = True
+
+        for alias, target in guild_aliases.items():
+            if alias not in gd["aliases"] and alias not in gd["tags"]:
+                gd["aliases"][alias] = target
+                changed = True
+
+        # Remove the old per-guild bucket
+        del data[key]
+        changed = True
+
+    return changed
+
+
+# ── Public TagStorage class ───────────────────────────────────────────────────
 
 class TagStorage:
     def __init__(self):
@@ -42,29 +106,40 @@ class TagStorage:
     async def _ensure_loaded(self):
         if not self._loaded:
             loop = asyncio.get_running_loop()
-            self._data = await loop.run_in_executor(None, _load_raw)
+            raw = await loop.run_in_executor(None, _load_raw)
+            # Migrate any legacy per-guild data on first load; flush if changed.
+            migrated = _migrate_guild_tags(raw)
+            self._data = raw
             self._loaded = True
+            if migrated:
+                await loop.run_in_executor(None, _save_raw, raw)
 
     async def _flush(self):
         data = self._data
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _save_raw, data)
 
+    # ── Read ─────────────────────────────────────────────────────────────────
+
     async def get(self, guild_id: int, name: str) -> Optional[dict]:
+        """Return a tag by name or alias (guild_id ignored — global lookup)."""
         async with _lock:
             await self._ensure_loaded()
-            gd = _guild_data(self._data, guild_id)
+            gd = _global_data(self._data)
             name = name.lower()
             if name in gd["aliases"]:
                 name = gd["aliases"][name]
             return gd["tags"].get(name)
 
+    # ── Write ─────────────────────────────────────────────────────────────────
+
     async def create(
         self, guild_id: int, name: str, content: str, owner_id: int
     ) -> bool:
+        """Create a new tag globally.  Returns False if the name already exists."""
         async with _lock:
             await self._ensure_loaded()
-            gd = _guild_data(self._data, guild_id)
+            gd = _global_data(self._data)
             name = name.lower()
             if name in gd["tags"] or name in gd["aliases"]:
                 return False
@@ -91,7 +166,7 @@ class TagStorage:
     ) -> str:
         async with _lock:
             await self._ensure_loaded()
-            gd = _guild_data(self._data, guild_id)
+            gd = _global_data(self._data)
             name = name.lower()
             if name in gd["aliases"]:
                 name = gd["aliases"][name]
@@ -114,7 +189,7 @@ class TagStorage:
     ) -> str:
         async with _lock:
             await self._ensure_loaded()
-            gd = _guild_data(self._data, guild_id)
+            gd = _global_data(self._data)
             name = name.lower()
             real_name = gd["aliases"].get(name, name)
             tag = gd["tags"].get(real_name)
@@ -138,7 +213,7 @@ class TagStorage:
     ) -> str:
         async with _lock:
             await self._ensure_loaded()
-            gd = _guild_data(self._data, guild_id)
+            gd = _global_data(self._data)
             name = name.lower()
             alias = alias.lower()
             if name in gd["aliases"]:
@@ -164,7 +239,7 @@ class TagStorage:
     ) -> str:
         async with _lock:
             await self._ensure_loaded()
-            gd = _guild_data(self._data, guild_id)
+            gd = _global_data(self._data)
             alias = alias.lower()
             real_name = gd["aliases"].get(alias)
             if real_name is None:
@@ -184,7 +259,7 @@ class TagStorage:
     async def increment_uses(self, guild_id: int, name: str):
         async with _lock:
             await self._ensure_loaded()
-            gd = _guild_data(self._data, guild_id)
+            gd = _global_data(self._data)
             if name in gd["aliases"]:
                 name = gd["aliases"][name]
             tag = gd["tags"].get(name)
@@ -193,15 +268,17 @@ class TagStorage:
                 await self._flush()
 
     async def list_tags(self, guild_id: int) -> list:
+        """Return all global tags sorted by name."""
         async with _lock:
             await self._ensure_loaded()
-            gd = _guild_data(self._data, guild_id)
+            gd = _global_data(self._data)
             return sorted(gd["tags"].values(), key=lambda t: t["name"])
 
     async def search_tags(self, guild_id: int, query: str) -> list:
+        """Search all global tags by name or content."""
         async with _lock:
             await self._ensure_loaded()
-            gd = _guild_data(self._data, guild_id)
+            gd = _global_data(self._data)
             q = query.lower()
             return [
                 t
@@ -219,7 +296,7 @@ class TagStorage:
     ) -> str:
         async with _lock:
             await self._ensure_loaded()
-            gd = _guild_data(self._data, guild_id)
+            gd = _global_data(self._data)
             name = name.lower()
             if name in gd["aliases"]:
                 name = gd["aliases"][name]
@@ -242,7 +319,7 @@ class TagStorage:
     ) -> str:
         async with _lock:
             await self._ensure_loaded()
-            gd = _guild_data(self._data, guild_id)
+            gd = _global_data(self._data)
             old_key = old_name.lower()
             new_key = new_name.lower()
             if old_key in gd["aliases"]:
@@ -264,9 +341,10 @@ class TagStorage:
             return "ok"
 
     async def stats(self, guild_id: int) -> dict:
+        """Return global tag statistics."""
         async with _lock:
             await self._ensure_loaded()
-            gd = _guild_data(self._data, guild_id)
+            gd = _global_data(self._data)
             tags = list(gd["tags"].values())
             total_uses = sum(t.get("uses", 0) for t in tags)
             top = sorted(tags, key=lambda t: t.get("uses", 0), reverse=True)[:5]
@@ -288,7 +366,7 @@ class TagStorage:
     ) -> str:
         async with _lock:
             await self._ensure_loaded()
-            gd = _guild_data(self._data, guild_id)
+            gd = _global_data(self._data)
             name = name.lower()
             if name in gd["aliases"]:
                 name = gd["aliases"][name]
