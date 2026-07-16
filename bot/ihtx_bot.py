@@ -17,6 +17,7 @@ _UPDATELOG (newest first):
 - 2026-07-15: TS bot: fixed `applyWave` amplitude scaling — displacement is now multiplied by `W/640` so the visual effect is proportional to native resolution (matches old scale-to-640/scale-back behaviour without a dimension probe). Added `th/klaskysource` (alias `th/klasky`) command to TS bot — downloads and re-attaches the Klasky source clip; falls back to Catbox if the file exceeds the guild upload limit.
 - 2026-07-14: Added `gradientmap` as a TypeScript pipe effect in `artifacts/discord-bot/src/effects.ts` and exposed a `th/pipetest` (alias `th/pt`) one-shot runner that validates the `ProcessorContext` integration.
 - 2026-07-14: Added standalone ESM gradientmap script at `scripts/src/gradient_map.ts` and updated the TypeScript `th/gradientmap` / `th/gm` command to expose the same `ColorStop`/`GradientMapOptions` API and synchronous `applyGradientMap` helper.
+- 2026-07-16: Added `imagemagick`/`im` pipe effect: applies arbitrary ImageMagick args to a video (frame-by-frame extract→magick→reassemble with audio) or directly to a static image. Usage: `imagemagick=-monochrome`, `im=-blur 0x8|-edge|1`.
 - 2026-07-15: Fixed `th/download` for YouTube/TikTok-style URLs: removed the direct-download fallback that produced HTML `.bin` files when yt-dlp failed; matched the yt-dlp format selector to the TypeScript bot; filtered `.part`/`.ytdl` leftovers; added magic-bytes sniffing and `.bin` renaming for any generic download.
 - 2026-07-14: Re-added Python `gradientmap`/`gmap` pipe effect to the Python bot with the same ColorStop/GradientMapOptions logic as the TypeScript bot, so `th/ihtx gradientmap=...` works on both bots.
 - 2026-07-14: Hardened `gradientmap`/`gmap` parsing: now accepts double-bracket `[[...]]`, single-bracket `[...]`, colon/space-separated values, bare number groups, and JSON/flat-list gradient files from URLs or attachments. Error messages now report how many points were actually parsed.
@@ -2230,6 +2231,123 @@ def _run_ccshue(
         return True, ""
 
 
+# ---------- ImageMagick pipe effect ----------
+
+def _run_imagemagick(
+    input_path: str,
+    output_path: str,
+    params: list[str],
+) -> tuple[bool, str]:
+    """Apply arbitrary ImageMagick arguments to a video (frame-by-frame) or image.
+
+    Pipe usage: imagemagick=<magick args>  or  im=<magick args>
+    e.g. imagemagick=-monochrome
+         imagemagick=-colorspace Gray
+         imagemagick=-blur 0x8|-edge|1   (params split by pipe/space both work)
+
+    For videos: extracts frames, applies magick to each frame individually,
+    then reassembles with original audio. For images: runs magick directly.
+    """
+    import glob as _glob
+
+    ext = Path(input_path).suffix.lower()
+    is_video = ext in VIDEO_EXTENSIONS
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        if is_video:
+            # --- Get video info ---
+            vinfo = _ffprobe_video_info(input_path)
+            fps_str = vinfo.get("r_frame_rate", "30/1")
+            try:
+                if "/" in fps_str:
+                    _n, _d = fps_str.split("/")
+                    fps_float = float(_n) / float(_d)
+                else:
+                    fps_float = float(fps_str)
+            except (ValueError, ZeroDivisionError):
+                fps_float = 30.0
+            has_audio = (
+                vinfo.get("duration", 0) > 0
+                and ext in AUDIO_VIDEO_EXTS
+            )
+
+            # --- Extract frames ---
+            frames_tmpl = os.path.join(tmpdir, "frame%04d.png")
+            ok, err = _run_ffmpeg_raw([
+                "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                "-i", input_path,
+                frames_tmpl,
+            ], timeout=120)
+            if not ok:
+                return False, f"imagemagick: frame extraction failed: {err}"
+
+            # --- Extract audio (best-effort) ---
+            audio_path = os.path.join(tmpdir, "audio.wav")
+            if has_audio:
+                _run_ffmpeg_raw([
+                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                    "-i", input_path, "-vn", audio_path,
+                ], timeout=60)
+
+            # --- Apply ImageMagick to each frame individually ---
+            frame_files = sorted(_glob.glob(os.path.join(tmpdir, "frame*.png")))
+            if not frame_files:
+                return False, "imagemagick: no frames extracted"
+
+            for i, frame_file in enumerate(frame_files):
+                proc_frame = os.path.join(tmpdir, f"processed{i:04d}.png")
+                result = subprocess.run(
+                    ["magick", frame_file] + params + [proc_frame],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if result.returncode != 0:
+                    return False, f"imagemagick: frame {i} failed: {result.stderr.strip()}"
+
+            # --- Reassemble video ---
+            proc_tmpl = os.path.join(tmpdir, "processed%04d.png")
+            if has_audio and os.path.exists(audio_path):
+                reassemble_cmd = [
+                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                    "-framerate", str(fps_float),
+                    "-i", proc_tmpl,
+                    "-i", audio_path,
+                    "-vf", "scale=floor(iw/2)*2:floor(ih/2)*2,setsar=1:1",
+                    "-map", "0:v", "-map", "1:a",
+                    "-pix_fmt", "yuv420p",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-c:a", "aac",
+                    "-movflags", "+faststart",
+                    output_path,
+                ]
+            else:
+                reassemble_cmd = [
+                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                    "-framerate", str(fps_float),
+                    "-i", proc_tmpl,
+                    "-vf", "scale=floor(iw/2)*2:floor(ih/2)*2,setsar=1:1",
+                    "-pix_fmt", "yuv420p",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-movflags", "+faststart",
+                    output_path,
+                ]
+
+            ok, err = _run_ffmpeg_raw(reassemble_cmd, timeout=300)
+            if not ok:
+                return False, f"imagemagick: reassemble failed: {err}"
+
+            return True, ""
+
+        else:
+            # --- Static image: run magick directly ---
+            result = subprocess.run(
+                ["magick", input_path] + params + [output_path],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode != 0:
+                return False, f"imagemagick: magick failed: {result.stderr.strip()}"
+            return True, ""
+
+
 # ---------- Wave presets ----------
 
 WAVE_PRESETS = {
@@ -2296,6 +2414,7 @@ PIPE_EFFECT_NAMES = {
     "stretch",
     "gradientmap", "gmap",
     "spherize", "sphere", "bulge",
+    "imagemagick", "im",
 }
 
 # ---------- User-submitted named pipe effects ----------
@@ -3104,6 +3223,14 @@ def _apply_pipe_effects(
                     colorspace=params[3].strip() if len(params) > 3 and params[3].strip() else "hsl",
                     betterfully=_bf_raw in _TRUE_VALS,
                 )
+                if not ok:
+                    return False, err
+                current = out
+                continue
+
+            # ImageMagick pipe effect — apply arbitrary magick args frame-by-frame (video) or directly (image)
+            if name in ("imagemagick", "im"):
+                ok, err = _run_imagemagick(current, out, params)
                 if not ok:
                     return False, err
                 current = out
@@ -12374,7 +12501,7 @@ You are the AI assistant of the IHTX Discord bot (I Hate The X). You help users 
 CORE COMMANDS REFERENCE — keep this knowledge accurate and ready to answer questions:
 
 Heavy/effects commands:
-• th/ihtx <effects> — chain video effects. Effects: hflip, vflip, invert, negate, grayscale, sepia, rotate=angle, ccshue=val, brightness=val, contrast=val, saturation=val, swapuv, mirror=right/bottom, zoom=amt, pinch&punch, gm91deform, invertrgb, invlum, volume=val, vibrato, areverse, vreverse, channelblend=b|g|r, huehsv=val, multipitch=semis, mp=semis, lut=url, syncaudio, speed=factor, wave, tvsim, tv, swirl, sierpinskiransomware, preview1280, scale1280, oppositep1280, op1280, earthquake, ssmp, folkvalley, fv, vocoder, alimiter, freakzinga, fzgm156, multipitch2/mp2, multipitch3/mp3, jitter, randomjitter, trim=start|end, leftsplit, rightsplit, ripple, scroll, pan, tile, watermark, orb, chromashift, wave2, wmm3dripple, timecode, radar, fzte/freakzingatesteffect, invlum/il
+• th/ihtx <effects> — chain video effects. Effects: hflip, vflip, invert, negate, grayscale, sepia, rotate=angle, ccshue=val, brightness=val, contrast=val, saturation=val, swapuv, mirror=right/bottom, zoom=amt, pinch&punch, gm91deform, invertrgb, invlum, volume=val, vibrato, areverse, vreverse, channelblend=b|g|r, huehsv=val, multipitch=semis, mp=semis, lut=url, syncaudio, speed=factor, wave, tvsim, tv, swirl, sierpinskiransomware, preview1280, scale1280, oppositep1280, op1280, earthquake, ssmp, folkvalley, fv, vocoder, alimiter, freakzinga, fzgm156, multipitch2/mp2, multipitch3/mp3, jitter, randomjitter, trim=start|end, leftsplit, rightsplit, ripple, scroll, pan, tile, watermark, orb, chromashift, wave2, wmm3dripple, timecode, radar, fzte/freakzingatesteffect, invlum/il, imagemagick/im=<args>
 • th/fzte — full preset effect (invert chain + TV sim + wave + mirror + drawtext + mp3)
 • th/tvsim <line_sync> — CRT simulator
 • th/invlum <powers> [duration] — luma inversion stacker
