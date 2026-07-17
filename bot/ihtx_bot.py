@@ -1905,7 +1905,7 @@ def _run_grid_overlay(
         # sits prominently over the grid rather than being confined to one cell.
         t = trim_duration
         filter_parts = [
-            f"[0:v]reverse,trim=0:{t},reverse[trimmed_base]",
+            f"[0:v]reverse,trim=0:{t},setpts=PTS-STARTPTS,reverse,setpts=PTS-STARTPTS[trimmed_base]",
             f"[trimmed_base]scale={base_w}:{base_h}[scaled_base]",
             f"[1:v]format=rgb24,scale={cell_w}:{cell_h}[ov]",
             f"[scaled_base][ov]overlay={x_pos}:{y_pos}[out_v]",
