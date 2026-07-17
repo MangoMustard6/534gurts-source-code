@@ -1907,7 +1907,7 @@ def _run_grid_overlay(
         filter_parts = [
             f"[0:v]reverse,trim=0:{t},reverse[trimmed_base]",
             f"[trimmed_base]scale={base_w}:{base_h}[scaled_base]",
-            f"[1:v]format=rgb24[ov]",
+            f"[1:v]format=rgb24,scale=w={cell_w}:h={cell_h}:force_original_aspect_ratio=decrease[ov]",
             f"[scaled_base][ov]overlay={x_pos}:{y_pos}[out_v]",
         ]
         filter_complex = ";".join(filter_parts)
