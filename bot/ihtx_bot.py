@@ -1913,7 +1913,7 @@ def _run_grid_overlay(
             f"[scaled_base][ov]overlay={x_pos}:{y_pos}[out_v]",
         ]
         filter_complex = ";".join(filter_parts)
-        map_args = ["-map", "[out_v]", "-an"]
+        map_args = ["-map", "[out_v]", "-map", "1:a?"]
         dur_args: list[str] = []
     else:
         filter_complex = (
