@@ -13698,7 +13698,7 @@ def _make_math_question() -> tuple[str, int]:
     return f"{a} × {b}", a * b
 
 
-@bot.command(name="mathquiz", aliases=["mq", "math"])
+@bot.command(name="mathquiz", aliases=["mq"])
 async def mathquiz(ctx: commands.Context):
     """Answer 5 quick math questions — 10 seconds each!"""
     score = 0
