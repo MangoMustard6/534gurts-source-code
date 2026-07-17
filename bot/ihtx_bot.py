@@ -1899,20 +1899,21 @@ def _run_grid_overlay(
 
     # ── 4. Build FFmpeg filter_complex ─────────────────────────────────────────
     if trim_duration is not None:
-        # End-trim pattern from TS reference:
-        #   reverse→trim→reverse trims the last N seconds of the base video.
-        #   areverse→atrim→areverse does the same for audio.
-        #   Audio always comes from the base track in this mode.
+        # End-trim pattern: reverse→trim→reverse selects the last N seconds.
+        # Audio is dropped (silent output) — base track is muted.
+        # Overlay is scaled to 2× cell size (clamped to frame bounds) so it
+        # sits prominently over the grid rather than being confined to one cell.
         t = trim_duration
+        ov_w = min(cell_w * 2, base_w)
+        ov_h = min(cell_h * 2, base_h)
         filter_parts = [
             f"[0:v]reverse,trim=0:{t},reverse[trimmed_base]",
             f"[trimmed_base]scale={base_w}:{base_h}[scaled_base]",
-            f"[1:v]format=rgb24,scale={cell_w}:{cell_h}[ov]",
+            f"[1:v]format=rgb24,scale={ov_w}:{ov_h}[ov]",
             f"[scaled_base][ov]overlay={x_pos}:{y_pos}[out_v]",
-            f"[0:a]areverse,atrim=0:{t},areverse[out_a]",
         ]
         filter_complex = ";".join(filter_parts)
-        map_args = ["-map", "[out_v]", "-map", "[out_a]"]
+        map_args = ["-map", "[out_v]", "-an"]
         dur_args: list[str] = []
     else:
         filter_complex = (
