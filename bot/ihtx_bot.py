@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-17: Updated `swirl`/`vortex` pipe effect and standalone command — angle formula now matches TypeScript: `amount*(PI²)*(-255/180)` (replaces old `strength/180*PI`); default `is1to1` changed from `true` → `false`; standalone default `amount` changed from 180 → 1; pipe-effect default `is1to1` updated to match.
 - 2026-07-17: Added `(=)` pipe effect: `v360=ball:e → hue=h=450*t/$vd → v360=e:9` (ball-projection with time-varying hue spin). Added `(<>)` pipe effect: `v360=e:9 → earthquake → hue=s=2*t/$vd → v360=9:e` (equirect→ball projection, vidstab destabilize shake, saturation spin, deproject back).
 - 2026-07-17: Fixed `ffmpeg()` pipe step crashing with "unconnected output" when user provides `-filter_complex` with a named video output (e.g. `[out]`) alongside `-map 0:a` — bot now auto-detects final unconnected filter labels (appear exactly once, are not stream specifiers) and injects `-map [label]` before the user's audio map.
 - 2026-07-17: Added `th/uptime` (alias `up`) — shows bot uptime, render count, and servers. Added 4 new games: `th/numguess`/`ng` (number guessing 1–100, 7 tries), `th/scramble`/`ws` (word scramble, 30s), `th/typerace`/`tr` (WPM typing race), `th/mathquiz`/`mq` (5 math questions, 10s each). Bot custom status now tracks render completions — `_renders_completed` increments on each successful Catbox upload and the Playing status updates to "Made N renders in X servers!" (respects activity.json override). `on_guild_join`/`on_guild_remove` updated to use the same presence helper.
@@ -2159,16 +2160,16 @@ def _run_swirl(
     xc: float = 0.5,
     yc: float = 0.5,
     fallout: str = "quad",
-    is1to1: bool = True,
+    is1to1: bool = False,
 ) -> tuple[bool, str]:
     """Apply a swirl/vortex distortion via FFmpeg geq.
 
     Args:
-        strength  — swirl angle in degrees (can be negative to reverse spin)
+        strength  — twist amount multiplier (scaled by PI²×255/180 internally)
         radius    — normalized radius 0–1 of min(W,H) (default 0.5)
         xc / yc  — normalized center 0–1 (default 0.5 = center)
         fallout   — attenuation curve: 'linear' or 'quad' (default quad)
-        is1to1    — scale to square before swirl then restore aspect ratio
+        is1to1    — scale to square before swirl then restore aspect ratio (default False)
     """
     fallout = fallout.lower()
     if fallout not in ("linear", "quad"):
@@ -2186,8 +2187,10 @@ def _run_swirl(
         f"(if(lt(hypot(X-W*{xc},Y-H*{yc})+1e-6,min(W,H)*{radius}),"
         f"1-(hypot(X-W*{xc},Y-H*{yc})+1e-6)/(min(W,H)*{radius}),0){power})"
     )
-    calc_cos = f"cos((atan2(Y-H*{yc},X-W*{xc}))+({strength}/180*PI)*{atten})"
-    calc_sin = f"sin((atan2(Y-H*{yc},X-W*{xc}))+({strength}/180*PI)*{atten})"
+    # Angle formula matches TypeScript: amount * PI² * (-255/180)
+    angle = f"(({strength})*(PI^2)*(-255/180))"
+    calc_cos = f"cos((atan2(Y-H*{yc},X-W*{xc}))+{angle}*{atten})"
+    calc_sin = f"sin((atan2(Y-H*{yc},X-W*{xc}))+{angle}*{atten})"
     geq_core = (
         f"geq='p(W*{xc}+(hypot(X-W*{xc},Y-H*{yc})+1e-6)*{calc_cos},"
         f"H*{yc}+(hypot(X-W*{xc},Y-H*{yc})+1e-6)*{calc_sin})'"
@@ -3908,7 +3911,7 @@ def _apply_pipe_effects(
             # swirl — vortex/swirl distortion via geq
             if name == "swirl":
                 _sp = lambda idx, d: params[idx] if idx < len(params) else d
-                is1to1_val = str(_sp(5, "true")).lower() in ("1", "true", "t", "y", "yes", "+", "on")
+                is1to1_val = str(_sp(5, "false")).lower() in ("1", "true", "t", "y", "yes", "+", "on")
                 ok, err = _run_swirl(
                     current, out,
                     strength=_pfloat(params, 0, 180.0),
@@ -10399,20 +10402,20 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
     """Apply a swirl/vortex distortion to an attached video or image.
 
     Usage:
-      th/swirl <strength> [radius] [xc] [yc] [fallout] [is1to1]
+      th/swirl <amount> [radius] [xc] [yc] [fallout] [is1to1]
 
     Parameters (space- or pipe-separated):
-      strength  — swirl angle in degrees (can be negative). Required.
+      amount    — twist multiplier (scaled by PI²×255/180 internally; negative = reverse). Required.
       radius    — normalized radius 0–1 of min(W,H) (default 0.5)
       xc        — horizontal center 0–1 (default 0.5)
       yc        — vertical center 0–1 (default 0.5)
       fallout   — attenuation curve: 'linear' or 'quad' (default quad)
-      is1to1    — true/false, scale to square before swirl (default true)
+      is1to1    — true/false, scale to square before swirl (default false)
 
     Examples:
-      th/swirl 180
-      th/swirl 360 0.5 0.5 0.5 quad false
-      th/swirl -90 0.3 0.25 0.75 linear
+      th/swirl 1
+      th/swirl 2 0.5 0.5 0.5 quad false
+      th/swirl -1 0.3 0.25 0.75 linear
     """
     tokens = re.split(r"[|\s]+", args.strip()) if args.strip() else []
 
@@ -10428,16 +10431,16 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
     if not tokens:
         await ctx.reply(
             "**th/swirl** — vortex/swirl distortion\n"
-            "Attach a video or image and provide `strength` (degrees).\n\n"
-            "**Usage:** `th/swirl <strength> [radius] [xc] [yc] [fallout] [is1to1]`\n"
-            "**Examples:** `th/swirl 180` · `th/swirl 360 0.5 0.5 0.5 quad` · `th/swirl -90 0.3 0.25 0.75 linear`\n"
-            "**As pipe effect:** `th/ihtx 1 5 - mp4 swirl=180`\n"
-            "Full pipe syntax: `swirl=strength;radius;xc;yc;fallout;is1to1`\n"
+            "Attach a video or image and provide `amount` (twist multiplier).\n\n"
+            "**Usage:** `th/swirl <amount> [radius] [xc] [yc] [fallout] [is1to1]`\n"
+            "**Examples:** `th/swirl 1` · `th/swirl 2 0.5 0.5 0.5 quad` · `th/swirl -1 0.3 0.25 0.75 linear`\n"
+            "**As pipe effect:** `th/ihtx 1 5 - mp4 swirl=1`\n"
+            "Full pipe syntax: `swirl=amount;radius;xc;yc;fallout;is1to1`\n"
             "Alias: `th/vortex`"
         )
         return
 
-    strength = _spf(0, 180.0)
+    strength = _spf(0, 1.0)
     radius   = _spf(1, 0.5)
     xc       = _spf(2, 0.5)
     yc       = _spf(3, 0.5)
@@ -10445,7 +10448,7 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
     if fallout not in ("linear", "quad"):
         await ctx.reply("❌ `fallout` must be `linear` or `quad`.")
         return
-    is1to1_raw = _sps(5, "true")
+    is1to1_raw = _sps(5, "false")
     is1to1 = is1to1_raw.lower() in ("1", "true", "t", "y", "yes", "+", "on")
 
     attachment = None
@@ -10469,7 +10472,7 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
         await ctx.reply(f"❌ Unsupported file type `{suffix}`. Attach a video or image.")
         return
 
-    status_msg = await ctx.reply(f"⏳ Applying swirl (strength={strength}°)…")
+    status_msg = await ctx.reply(f"⏳ Applying swirl (amount={strength})…")
 
     out_suffix = suffix if is_image else ".mp4"
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -10509,7 +10512,7 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
             embed = discord.Embed(
                 title="IHTX Bot — th/swirl",
                 description=(
-                    f"strength={strength}° · radius={radius} · center=({xc},{yc}) · "
+                    f"amount={strength} · radius={radius} · center=({xc},{yc}) · "
                     f"fallout={fallout} · 1:1={is1to1}"
                 ),
                 color=4886754,
