@@ -8,7 +8,8 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-17: Updated `swirl`/`vortex` pipe effect and standalone command — angle formula now matches TypeScript: `amount*(PI²)*(-255/180)` (replaces old `strength/180*PI`); default `is1to1` changed from `true` → `false`; standalone default `amount` changed from 180 → 1; pipe-effect default `is1to1` updated to match.
+- 2026-07-17: `swirl` `is1to1` default restored to `true`. Expanded AI chatbot system prompt (`_CHAT_SYSTEM_PROMPT`) and autoreply2 command ref (`_AR2_COMMAND_REF`) with full `th/ihtx` usage: both preset mode and pipe mode args (`exports`, `duration`, `no_trim`, `format`, `effects`), all pipe effect names, and math variable reference ($fc/$vd/$f/$sr).
+- 2026-07-17: Updated `swirl`/`vortex` pipe effect and standalone command — angle formula now matches TypeScript: `amount*(PI²)*(-255/180)` (replaces old `strength/180*PI`); default `is1to1` was temporarily set to `false` then restored to `true`; standalone default `amount` changed from 180 → 1; pipe-effect default `is1to1` updated to match.
 - 2026-07-17: Added `(=)` pipe effect: `v360=ball:e → hue=h=450*t/$vd → v360=e:9` (ball-projection with time-varying hue spin). Added `(<>)` pipe effect: `v360=e:9 → earthquake → hue=s=2*t/$vd → v360=9:e` (equirect→ball projection, vidstab destabilize shake, saturation spin, deproject back).
 - 2026-07-17: Fixed `ffmpeg()` pipe step crashing with "unconnected output" when user provides `-filter_complex` with a named video output (e.g. `[out]`) alongside `-map 0:a` — bot now auto-detects final unconnected filter labels (appear exactly once, are not stream specifiers) and injects `-map [label]` before the user's audio map.
 - 2026-07-17: Added `th/uptime` (alias `up`) — shows bot uptime, render count, and servers. Added 4 new games: `th/numguess`/`ng` (number guessing 1–100, 7 tries), `th/scramble`/`ws` (word scramble, 30s), `th/typerace`/`tr` (WPM typing race), `th/mathquiz`/`mq` (5 math questions, 10s each). Bot custom status now tracks render completions — `_renders_completed` increments on each successful Catbox upload and the Playing status updates to "Made N renders in X servers!" (respects activity.json override). `on_guild_join`/`on_guild_remove` updated to use the same presence helper.
@@ -2160,7 +2161,7 @@ def _run_swirl(
     xc: float = 0.5,
     yc: float = 0.5,
     fallout: str = "quad",
-    is1to1: bool = False,
+    is1to1: bool = True,
 ) -> tuple[bool, str]:
     """Apply a swirl/vortex distortion via FFmpeg geq.
 
@@ -2169,7 +2170,7 @@ def _run_swirl(
         radius    — normalized radius 0–1 of min(W,H) (default 0.5)
         xc / yc  — normalized center 0–1 (default 0.5 = center)
         fallout   — attenuation curve: 'linear' or 'quad' (default quad)
-        is1to1    — scale to square before swirl then restore aspect ratio (default False)
+        is1to1    — scale to square before swirl then restore aspect ratio (default True)
     """
     fallout = fallout.lower()
     if fallout not in ("linear", "quad"):
@@ -3911,7 +3912,7 @@ def _apply_pipe_effects(
             # swirl — vortex/swirl distortion via geq
             if name == "swirl":
                 _sp = lambda idx, d: params[idx] if idx < len(params) else d
-                is1to1_val = str(_sp(5, "false")).lower() in ("1", "true", "t", "y", "yes", "+", "on")
+                is1to1_val = str(_sp(5, "true")).lower() in ("1", "true", "t", "y", "yes", "+", "on")
                 ok, err = _run_swirl(
                     current, out,
                     strength=_pfloat(params, 0, 180.0),
@@ -10410,11 +10411,11 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
       xc        — horizontal center 0–1 (default 0.5)
       yc        — vertical center 0–1 (default 0.5)
       fallout   — attenuation curve: 'linear' or 'quad' (default quad)
-      is1to1    — true/false, scale to square before swirl (default false)
+      is1to1    — true/false, scale to square before swirl (default true)
 
     Examples:
       th/swirl 1
-      th/swirl 2 0.5 0.5 0.5 quad false
+      th/swirl 2 0.5 0.5 0.5 quad true
       th/swirl -1 0.3 0.25 0.75 linear
     """
     tokens = re.split(r"[|\s]+", args.strip()) if args.strip() else []
@@ -10448,7 +10449,7 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
     if fallout not in ("linear", "quad"):
         await ctx.reply("❌ `fallout` must be `linear` or `quad`.")
         return
-    is1to1_raw = _sps(5, "false")
+    is1to1_raw = _sps(5, "true")
     is1to1 = is1to1_raw.lower() in ("1", "true", "t", "y", "yes", "+", "on")
 
     attachment = None
@@ -12766,7 +12767,38 @@ You are the AI assistant of the IHTX Discord bot (I Hate The X). You help users 
 CORE COMMANDS REFERENCE — keep this knowledge accurate and ready to answer questions:
 
 Heavy/effects commands:
-• th/ihtx <effects> — chain video effects. Effects: hflip, vflip, invert, negate, grayscale, sepia, rotate=angle, ccshue=val, brightness=val, contrast=val, saturation=val, swapuv, mirror=right/bottom, zoom=amt, pinch&punch, gm91deform, invertrgb, invlum, volume=val, vibrato, areverse, vreverse, channelblend=b|g|r, huehsv=val, multipitch=semis, mp=semis, lut=url, syncaudio, speed=factor, wave, tvsim, tv, swirl, sierpinskiransomware, preview1280, scale1280, oppositep1280, op1280, earthquake, ssmp, folkvalley, fv, vocoder, alimiter, freakzinga, fzgm156, multipitch2/mp2, multipitch3/mp3, jitter, randomjitter, trim=start|end, leftsplit, rightsplit, ripple, scroll, pan, tile, watermark, orb, chromashift, wave2, wmm3dripple, timecode, radar, fzte/freakzingatesteffect, invlum/il, imagemagick/im=<args>
+• th/ihtx — main effect engine. Two modes:
+
+  PRESET mode: th/ihtx <preset_name>  (attach media)
+    Presets: chaos, glitch, melt, hell, orb, deorb, fzte, veb, and more. Lists with th/presets.
+
+  PIPE mode: th/ihtx <exports> <duration> <no_trim> <format> <effects>  (attach media)
+    - exports      — how many times to apply the chain (negative = reverse each pass, e.g. -3)
+    - duration     — clip length in seconds or awk expr using `vidlen` (e.g. 0.5, vidlen/2, vidlen*0.75)
+    - no_trim      — `-` to keep full length; any other value trims to duration
+    - format       — output container: mp4, mkv, gif, avi, mov, etc.
+    - effects      — semicolon-separated effect chain (see below)
+
+  Example pipe calls:
+    th/ihtx 1 5 - mp4 negate;hflip
+    th/ihtx 3 0.483 - mp4 huehsv=0.5;negate;multipitch=1|6|7
+    th/ihtx -2 vidlen mp4 wave;tvsim=0.9;mirror=right
+
+  Pipe effects (semicolon-separated, params after = or space):
+    hflip, vflip, invert/negate, grayscale, sepia, rotate=angle, ccshue=val,
+    brightness=val, contrast=val, saturation=val, swapuv, mirror=right/left/top/bottom/deg,
+    zoom=amt, pinch&punch/p&p, gm91deform, invertrgb, invlum/il, volume=val, vibrato,
+    areverse, vreverse, channelblend=b|g|r, huehsv=val, multipitch=semis, mp=semis,
+    lut=url, syncaudio, speed=factor, wave[=preset], tvsim[=params], tv,
+    swirl=amount[;radius;xc;yc;fallout;is1to1], sierpinskiransomware/srw,
+    preview1280/p1280, oppositep1280/op1280, earthquake/nbfx, ssmp, folkvalley/fv,
+    vocoder, alimiter, freakzinga, fzgm156, multipitch2/mp2, multipitch3/mp3,
+    jitter, randomjitter/rj, trim=start|end, leftsplit, rightsplit, ripple, scroll, pan,
+    tile, watermark, ring, miui, reddit, caption, orb, deorb, chromashift,
+    wave2, wmm3dripple/wmm, timecode, radar, fzte/freakzingatesteffect,
+    stretch, gradientmap/gmap=<stops>, spherize/sphere/bulge, imagemagick/im=<args>,
+    ffmpeg(<raw ffmpeg args>), (=), (<>)
+  Math variables in params: $fc (frame count), $vd (duration s), $f (FPS), $sr (sample rate)
 • th/fzte — full preset effect (invert chain + TV sim + wave + mirror + drawtext + mp3)
 • th/tvsim <line_sync> — CRT simulator
 • th/invlum <powers> [duration] — luma inversion stacker
@@ -12918,7 +12950,29 @@ _AR2_COMMAND_REF = """
 COMMANDS YOU KNOW (IHTX Bot — prefix th/):
 
 Heavy (media processing):
-- th/ihtx [preset | <exports> <dur> <no_trim> <fmt> <pipe_effects>] — main effect engine
+- th/ihtx — main effect engine (attach media). Two modes:
+    PRESET:  th/ihtx <preset_name>   (chaos, glitch, melt, hell, orb, deorb, fzte, veb, …)
+    PIPE:    th/ihtx <exports> <duration> <no_trim> <format> <effects>
+      • exports   — repetitions; negative reverses each pass (e.g. -3)
+      • duration  — seconds or awk expr with vidlen (e.g. 0.5, vidlen/2)
+      • no_trim   — `-` keeps full length, else trims to duration
+      • format    — mp4, mkv, gif, avi, mov, …
+      • effects   — semicolon-separated chain, params after = or space
+    Example: th/ihtx 3 0.483 - mp4 huehsv=0.5;negate;multipitch=1|6|7
+    Pipe effects: hflip, vflip, negate/invert, grayscale, sepia, rotate=angle,
+      ccshue=val, brightness=val, contrast=val, saturation=val, swapuv,
+      mirror=right/left/top/bottom/deg, zoom=amt, pinch&punch/p&p, gm91deform,
+      invertrgb, invlum/il, volume=val, vibrato, areverse, vreverse,
+      channelblend=b|g|r, huehsv=val, multipitch/mp=semis, lut=url, syncaudio,
+      speed=factor, wave[=preset], tvsim[=params], swirl=amount[;radius;xc;yc;fallout;is1to1],
+      sierpinskiransomware/srw, preview1280/p1280, oppositep1280/op1280, earthquake/nbfx,
+      ssmp, folkvalley/fv, vocoder, alimiter, freakzinga, fzgm156,
+      multipitch2/mp2, multipitch3/mp3, jitter, randomjitter/rj, trim=start|end,
+      leftsplit, rightsplit, ripple, scroll, pan, tile, watermark, ring, miui,
+      reddit, caption, orb, deorb, chromashift, wave2, wmm3dripple/wmm, timecode,
+      radar, fzte, stretch, gradientmap/gmap=<stops>, spherize/sphere/bulge,
+      imagemagick/im=<args>, ffmpeg(<raw args>), (=), (<>)
+    Math vars in params: $fc (frame count), $vd (duration s), $f (FPS), $sr (sample rate)
 - th/ihtxgen / /ihtxgen — slash + prefix hybrid; same as th/ihtx with attachment/url support
 - th/multipitch <semitones> — multi-voice pitch shift (Rubber Band R3)
 - th/tvsim <line_sync> [...] — CRT/TV simulator effect
