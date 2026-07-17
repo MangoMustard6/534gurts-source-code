@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-17: Fixed `gradientmap`/`gmap` pipe effect dropping audio — added `-map 0:a?` alongside `-map [v]` so the input audio stream is passed through. Fixed `th/addsource` trim mode overlay being longer than N seconds — added `trim=0:{t},setpts=PTS-STARTPTS` to the overlay `[1:v]` filter chain.
 - 2026-07-16: Tag system made global — tags are now shared across all servers. Existing per-guild tags in tag_store.json are auto-migrated to a single "global" namespace on first load. Storage layer rewritten; cog UI updated (list/stats/info/random show global counts and guild_origin).
 - 2026-07-16: Both bots: raised `th/ihtxsap` max repetitions from 100 → 1000.
 - 2026-07-16: Both bots: added `th/repeat [n]` (aliases: rep, loop) — repeats a video/GIF/audio N times (default 2, max 10) via FFmpeg concat demuxer. Removed `trim`, `chat`, `ask`, `ai`, `lexg` from HEAVY_COMMANDS (not computationally heavy). Added wave preset support to pipe effects: `wave=largeWave`, `wave=mediumWave`, `wave=smallWave`, `wave=horizontalOnly`, `wave=verticalOnly`, and `wave=custom:<params>`. Fixed `th/pipetest` to route both `wave` and `gradientmap` effects.
@@ -4604,7 +4605,8 @@ def _apply_pipe_effects(
                 gm_fc = _build_gradientmap_filter(gm_stops)
                 ok, err = _run_ffmpeg_raw(
                     _FF_BASE
-                    + ["-i", current, "-filter_complex", gm_fc, "-map", "[v]"]
+                    + ["-i", current, "-filter_complex", gm_fc,
+                       "-map", "[v]", "-map", "0:a?"]
                     + ["-c:v", "libx264", "-preset", "fast", "-crf", "23",
                        "-pix_fmt", "yuv420p"]
                     + ["-c:a", "copy", out],
