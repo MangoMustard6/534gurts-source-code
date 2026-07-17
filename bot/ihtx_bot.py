@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-17: Added `th/uptime` (alias `up`) — shows bot uptime, render count, and servers. Added 4 new games: `th/numguess`/`ng` (number guessing 1–100, 7 tries), `th/scramble`/`ws` (word scramble, 30s), `th/typerace`/`tr` (WPM typing race), `th/mathquiz`/`mq` (5 math questions, 10s each). Bot custom status now tracks render completions — `_renders_completed` increments on each successful Catbox upload and the Playing status updates to "Made N renders in X servers!" (respects activity.json override). `on_guild_join`/`on_guild_remove` updated to use the same presence helper.
 - 2026-07-17: Fixed `gradientmap`/`gmap` pipe effect dropping audio — added `-map 0:a?` alongside `-map [v]` so the input audio stream is passed through. Fixed `th/addsource` trim mode overlay being longer than N seconds — added `trim=0:{t},setpts=PTS-STARTPTS` to the overlay `[1:v]` filter chain.
 - 2026-07-16: Tag system made global — tags are now shared across all servers. Existing per-guild tags in tag_store.json are auto-migrated to a single "global" namespace on first load. Storage layer rewritten; cog UI updated (list/stats/info/random show global counts and guild_origin).
 - 2026-07-16: Both bots: raised `th/ihtxsap` max repetitions from 100 → 1000.
@@ -863,8 +864,28 @@ async def download_url(url: str, dest: str):
     os.replace(tmp, dest)
 
 
+async def _update_bot_presence() -> None:
+    """Refresh the bot's Playing status with the current render count.
+
+    Skipped if the owner has set a custom activity via ``th/setactivity``
+    (i.e. bot/activity.json exists) so their custom text is not clobbered.
+    """
+    if Path("bot/activity.json").exists():
+        return
+    gc = len(bot.guilds)
+    if _renders_completed > 0:
+        name = f"Made {_renders_completed:,} renders in {gc} servers!"
+    else:
+        name = f"Making Effects in {gc} servers!"
+    try:
+        await bot.change_presence(activity=discord.Game(name=name))
+    except Exception:
+        pass
+
+
 async def _upload_to_catbox(file_path: str) -> str | None:
     """Upload a file to catbox.moe and return the URL, or None on failure."""
+    global _renders_completed
     try:
         with open(file_path, "rb") as fh:
             file_bytes = fh.read()
@@ -880,6 +901,8 @@ async def _upload_to_catbox(file_path: str) -> str | None:
             ) as resp:
                 text = await resp.text()
                 if resp.status == 200 and text.startswith("https://"):
+                    _renders_completed += 1
+                    asyncio.ensure_future(_update_bot_presence())
                     return text.strip()
                 return None
     except Exception:
@@ -6285,8 +6308,6 @@ async def on_ready():
         await bot.add_cog(TagCog(bot))
         print("TagCog loaded")
     _activity_file = Path("bot/activity.json")
-    _guild_count = len(bot.guilds)
-    _default_activity = discord.Game(name=f"Making Effects in {_guild_count} servers!")
     try:
         if _activity_file.exists():
             with _activity_file.open() as _af:
@@ -6307,9 +6328,9 @@ async def on_ready():
                 _restored = discord.Activity(type=discord.ActivityType.watching, name=_aname)
             await bot.change_presence(activity=_restored)
         else:
-            await bot.change_presence(activity=_default_activity)
+            await _update_bot_presence()
     except Exception:
-        await bot.change_presence(activity=_default_activity)
+        await _update_bot_presence()
     if not _process_pending_resets.is_running():
         _process_pending_resets.start()
     # Pre-download multipitch binary in the background so first use is instant
@@ -6356,14 +6377,12 @@ async def on_ready():
 
 @bot.event
 async def on_guild_join(guild):
-    _gc = len(bot.guilds)
-    await bot.change_presence(activity=discord.Game(name=f"Making Effects in {_gc} servers!"))
+    await _update_bot_presence()
 
 
 @bot.event
 async def on_guild_remove(guild):
-    _gc = len(bot.guilds)
-    await bot.change_presence(activity=discord.Game(name=f"Making Effects in {_gc} servers!"))
+    await _update_bot_presence()
 
 
 def _run_ihtxcustom_workflow(
@@ -12444,6 +12463,35 @@ async def removear2mentions(ctx: commands.Context, user: discord.Member):
 
 # ---------- Owner: activity control ----------
 
+@bot.command(name="uptime", aliases=["up"])
+async def uptime_cmd(ctx: commands.Context):
+    """Show how long the bot has been running and how many renders it has completed."""
+    delta = int(time.time() - _bot_start_time)
+    days, rem = divmod(delta, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    parts.append(f"{seconds}s")
+    up_str = " ".join(parts)
+
+    start_struct = time.gmtime(_bot_start_time)
+    start_fmt = time.strftime("%Y-%m-%d %H:%M UTC", start_struct)
+
+    embed = discord.Embed(title="⏱️ Bot Uptime", color=0x40E0D0)
+    embed.add_field(name="Uptime", value=f"**{up_str}**", inline=False)
+    embed.add_field(name="Renders completed", value=f"{_renders_completed:,}", inline=True)
+    embed.add_field(name="Renders in progress", value=str(_renders_in_progress), inline=True)
+    embed.add_field(name="Servers", value=str(len(bot.guilds)), inline=True)
+    embed.set_footer(text=f"Online since {start_fmt}")
+    await ctx.reply(embed=embed)
+
+
 @bot.command(name="setactivity", aliases=["activity", "presence"])
 @commands.check(_is_owner)
 async def setactivity(ctx: commands.Context, activity_type: str, *, text: str):
@@ -12795,11 +12843,24 @@ Economy & Profile:
 - /status — bot status (uptime, guilds, users)
 
 Fun & Utility:
+- th/uptime — bot uptime and render count
 - th/tag <name> [args] — run a custom TagScript tag
 - th/presets — list all IHTX presets (chaos, glitch, melt, etc.)
 - th/ihtxhelp — full IHTX command reference
 - th/klaskycsupo — reveals the Klasky Csupo video
 - th/join [media1] [media2] [-vertical] — join 2 videos side-by-side (default) or stacked (vertical)
+
+Games:
+- th/numguess / th/ng — guess a number 1–100 (7 tries)
+- th/scramble / th/ws — unscramble a word in 30 seconds
+- th/typerace / th/tr — type a phrase as fast as you can (WPM scored)
+- th/mathquiz / th/mq — 5 quick math questions (10 seconds each)
+- th/hangman / th/hm — classic hangman
+- th/blackjack / th/bj — blackjack against the bot
+- th/tictactoe / th/ttt — tic tac toe vs the bot
+- th/slots — spin the slot machine (777 = 200 XP!)
+- th/rps — rock, paper, scissors
+- th/trivia — 10-question music trivia (100 XP per correct answer)
 
 Owner-only:
 - th/autoreply2 / th/ar2 — toggle AI auto-reply in current channel
@@ -13452,6 +13513,234 @@ async def tictactoe(ctx: commands.Context):
             return
 
         await msg.edit(content=board_msg("\n\nYour turn — pick a square (1–9):"))
+
+
+# ---------- Number guessing game ----------
+
+@bot.command(name="numguess", aliases=["ng", "guess"])
+async def numguess(ctx: commands.Context):
+    """Guess the secret number between 1 and 100 — you get 7 tries."""
+    secret = random.randint(1, 100)
+    max_tries = 7
+    tries = 0
+
+    await ctx.reply(
+        "🔢 **Number Guessing Game!**\n"
+        f"I'm thinking of a number between **1** and **100**.\n"
+        f"You have **{max_tries}** guesses. Type a number!"
+    )
+
+    def check(m: discord.Message) -> bool:
+        return (
+            m.author == ctx.author
+            and m.channel == ctx.channel
+            and m.content.strip().lstrip("-").isdigit()
+        )
+
+    while tries < max_tries:
+        try:
+            guess_msg = await bot.wait_for("message", check=check, timeout=30)
+        except asyncio.TimeoutError:
+            await ctx.send(f"⏱️ Time's up! The number was **{secret}**.")
+            return
+
+        guess = int(guess_msg.content.strip())
+        tries += 1
+        remaining = max_tries - tries
+
+        if guess == secret:
+            stars = "⭐" * (max_tries - tries + 1)
+            await ctx.send(
+                f"🎉 **Correct!** The number was **{secret}**!\n"
+                f"You got it in **{tries}** guess{'es' if tries != 1 else ''}! {stars}"
+            )
+            return
+        elif guess < secret:
+            hint = "📈 Too low!"
+        else:
+            hint = "📉 Too high!"
+
+        if remaining > 0:
+            await ctx.send(f"{hint} **{remaining}** guess{'es' if remaining != 1 else ''} left.")
+        else:
+            await ctx.send(f"{hint}\n💀 No more guesses! The number was **{secret}**.")
+
+
+# ---------- Word scramble ----------
+
+_SCRAMBLE_WORDS = [
+    "python", "discord", "ffmpeg", "render", "filter", "codec", "bitrate",
+    "buffer", "kernel", "shader", "pixel", "vector", "matrix", "binary",
+    "server", "latency", "keyframe", "montage", "waveform", "frequency",
+    "amplitude", "distortion", "reverb", "chorus", "flanger", "compressor",
+    "equalizer", "saturation", "contrast", "brightness", "gradient", "overlay",
+    "thumbnail", "resolution", "framerate", "encoding", "decoding", "streaming",
+    "channel", "palette", "texture", "opacity", "blending", "masking",
+]
+
+
+@bot.command(name="scramble", aliases=["ws", "wordscramble"])
+async def scramble(ctx: commands.Context):
+    """Unscramble the hidden word — you have 30 seconds!"""
+    word = random.choice(_SCRAMBLE_WORDS)
+    letters = list(word)
+    shuffled = letters[:]
+    while "".join(shuffled) == word:
+        random.shuffle(shuffled)
+    scrambled = "".join(shuffled)
+
+    msg = await ctx.reply(
+        f"🔀 **Word Scramble!**\n"
+        f"Unscramble this: **`{scrambled}`**\n"
+        f"*(hint: it's related to video/audio editing)*\n\n"
+        f"Type your answer! You have **30 seconds**."
+    )
+
+    def check(m: discord.Message) -> bool:
+        return m.author == ctx.author and m.channel == ctx.channel
+
+    try:
+        answer_msg = await bot.wait_for("message", check=check, timeout=30)
+    except asyncio.TimeoutError:
+        await msg.edit(content=f"⏱️ Time's up! The word was **{word}**.\n{msg.content}")
+        return
+
+    if answer_msg.content.strip().lower() == word:
+        elapsed = (answer_msg.created_at - msg.created_at).total_seconds()
+        await ctx.send(f"🎉 **Correct!** The word was **{word}** — solved in **{elapsed:.1f}s**!")
+    else:
+        await ctx.send(
+            f"❌ Nope! You said `{answer_msg.content.strip()}`, the word was **{word}**."
+        )
+
+
+# ---------- Typing speed race ----------
+
+_TYPERACE_PHRASES = [
+    "the quick brown fox jumps over the lazy dog",
+    "discord bots make everything more fun",
+    "ffmpeg is the swiss army knife of video editing",
+    "every frame tells a story",
+    "rendering takes time but the result is worth it",
+    "filters and effects transform raw footage into art",
+    "bitrate determines the quality of your video stream",
+    "keyframes anchor the animation timeline",
+    "the codec encodes and decodes your media",
+    "latency is the enemy of real time streaming",
+    "audio and video must stay perfectly in sync",
+    "color grading gives your video a cinematic feel",
+    "pixel perfect precision makes the difference",
+    "the waveform shows you the shape of sound",
+    "gradient maps replace luminance with color",
+]
+
+
+@bot.command(name="typerace", aliases=["tr", "type", "typer"])
+async def typerace(ctx: commands.Context):
+    """Race to type a phrase as fast as you can — measures your WPM!"""
+    phrase = random.choice(_TYPERACE_PHRASES)
+    word_count = len(phrase.split())
+
+    prompt = await ctx.reply(
+        f"⌨️ **Typing Race!**\n"
+        f"Type the following phrase **exactly** (case-insensitive):\n\n"
+        f"```{phrase}```\n"
+        f"*Starting now — you have 60 seconds!*"
+    )
+    start_time = time.time()
+
+    def check(m: discord.Message) -> bool:
+        return m.author == ctx.author and m.channel == ctx.channel
+
+    while True:
+        try:
+            answer_msg = await bot.wait_for("message", check=check, timeout=60)
+        except asyncio.TimeoutError:
+            await prompt.edit(content=f"⏱️ Time's up!\n\nThe phrase was:\n```{phrase}```")
+            return
+
+        typed = answer_msg.content.strip()
+        if typed.lower() == phrase.lower():
+            elapsed = time.time() - start_time
+            wpm = (word_count / elapsed) * 60
+            accuracy_bar = "█" * min(10, int(wpm / 10)) + "░" * max(0, 10 - int(wpm / 10))
+            await ctx.send(
+                f"✅ **Correct!**\n"
+                f"⏱️ Time: **{elapsed:.2f}s** · 📝 Words: **{word_count}**\n"
+                f"🚀 Speed: **{wpm:.1f} WPM** {accuracy_bar}"
+            )
+            return
+        else:
+            # Count character differences for a quick diff hint
+            wrong_chars = sum(1 for a, b in zip(typed.lower(), phrase.lower()) if a != b)
+            wrong_chars += abs(len(typed) - len(phrase))
+            await ctx.send(
+                f"❌ Not quite! **{wrong_chars}** character difference(s). Try again!",
+                delete_after=5,
+            )
+
+
+# ---------- Math quiz ----------
+
+def _make_math_question() -> tuple[str, int]:
+    """Generate a random arithmetic question and its answer."""
+    op = random.choice(["+", "-", "*"])
+    if op == "*":
+        a, b = random.randint(2, 12), random.randint(2, 12)
+    else:
+        a, b = random.randint(1, 99), random.randint(1, 99)
+    if op == "+":
+        return f"{a} + {b}", a + b
+    if op == "-":
+        # ensure non-negative result
+        a, b = max(a, b), min(a, b)
+        return f"{a} - {b}", a - b
+    return f"{a} × {b}", a * b
+
+
+@bot.command(name="mathquiz", aliases=["mq", "math"])
+async def mathquiz(ctx: commands.Context):
+    """Answer 5 quick math questions — 10 seconds each!"""
+    score = 0
+    total = 5
+
+    await ctx.reply(
+        "🧮 **Math Quiz — 5 Questions!**\n"
+        "Answer each question within **10 seconds**.\n\nStarting now!"
+    )
+    await asyncio.sleep(1)
+
+    for i in range(1, total + 1):
+        question, answer = _make_math_question()
+        msg = await ctx.send(f"**Question {i}/{total}:** `{question} = ?`  *(10s)*")
+
+        def check(m: discord.Message, _ans=answer) -> bool:
+            return (
+                m.author == ctx.author
+                and m.channel == ctx.channel
+                and m.content.strip().lstrip("-").isdigit()
+            )
+
+        try:
+            ans_msg = await bot.wait_for("message", check=check, timeout=10)
+            given = int(ans_msg.content.strip())
+            if given == answer:
+                score += 1
+                await msg.edit(content=f"✅ **Q{i}:** `{question} = {answer}` — Correct!")
+            else:
+                await msg.edit(content=f"❌ **Q{i}:** `{question} = {answer}` — You said `{given}`")
+        except asyncio.TimeoutError:
+            await msg.edit(content=f"⏱️ **Q{i}:** `{question} = {answer}` — Time's up!")
+        await asyncio.sleep(0.8)
+
+    stars = "⭐" * score + "☆" * (total - score)
+    grade = (
+        "🏆 Perfect!" if score == total
+        else "🎉 Great job!" if score >= 4
+        else "👍 Not bad!" if score >= 3
+        else "📚 Keep practising!"
+    )
+    await ctx.send(f"**Quiz over!** You scored **{score}/{total}** {stars}\n{grade}")
 
 
 # ---------- XP / Leveling system ----------

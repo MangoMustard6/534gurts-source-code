@@ -64,5 +64,13 @@
     "guild_id": "1496091892067209307",
     "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
     "submitted_at": "2026-07-15T12:10:15.628310+00:00"
+  },
+  "invlum_yuv": {
+    "effects": "ffmpeg(-vf lutyuv=y=\"255-val\")",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1514193593697435779",
+    "guild_name": "YellowGreenGMD's Logo Editing Server",
+    "submitted_at": "2026-07-17T05:39:47.240588+00:00"
   }
 }
