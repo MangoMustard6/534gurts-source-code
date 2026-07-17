@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-17: Added `(=)` pipe effect: `v360=ball:e → hue=h=450*t/$vd → v360=e:9` (ball-projection with time-varying hue spin). Added `(<>)` pipe effect: `v360=e:9 → earthquake → hue=s=2*t/$vd → v360=9:e` (equirect→ball projection, vidstab destabilize shake, saturation spin, deproject back).
 - 2026-07-17: Fixed `ffmpeg()` pipe step crashing with "unconnected output" when user provides `-filter_complex` with a named video output (e.g. `[out]`) alongside `-map 0:a` — bot now auto-detects final unconnected filter labels (appear exactly once, are not stream specifiers) and injects `-map [label]` before the user's audio map.
 - 2026-07-17: Added `th/uptime` (alias `up`) — shows bot uptime, render count, and servers. Added 4 new games: `th/numguess`/`ng` (number guessing 1–100, 7 tries), `th/scramble`/`ws` (word scramble, 30s), `th/typerace`/`tr` (WPM typing race), `th/mathquiz`/`mq` (5 math questions, 10s each). Bot custom status now tracks render completions — `_renders_completed` increments on each successful Catbox upload and the Playing status updates to "Made N renders in X servers!" (respects activity.json override). `on_guild_join`/`on_guild_remove` updated to use the same presence helper.
 - 2026-07-17: Fixed `gradientmap`/`gmap` pipe effect dropping audio — added `-map 0:a?` alongside `-map [v]` so the input audio stream is passed through. Fixed `th/addsource` trim mode overlay being longer than N seconds — added `trim=0:{t},setpts=PTS-STARTPTS` to the overlay `[1:v]` filter chain.
@@ -2493,6 +2494,8 @@ PIPE_EFFECT_NAMES = {
     "gradientmap", "gmap",
     "spherize", "sphere", "bulge",
     "imagemagick", "im",
+    "(=)",
+    "(<>)",
 }
 
 # ---------- User-submitted named pipe effects ----------
@@ -3819,6 +3822,77 @@ def _apply_pipe_effects(
                 ok, err = _ff_vf(current, _m_vf, out)
                 if not ok:
                     return False, f"mirror (split-inner) failed: {err}"
+                current = out
+                continue
+
+            # (=) — ball-projection hue-spin (v360=ball:e → hue → v360=e:9)
+            if name == "(=)":
+                _dur = media_vars.get('vd', 1.0) or 1.0
+                vf = f"v360=ball:e,hue=h=450*t/{_dur:.10g},v360=e:9"
+                ok, err = _ff_vf(current, vf, out, timeout=step_timeout)
+                if not ok:
+                    return False, f"(=) failed: {err}"
+                current = out
+                continue
+
+            # (<>) — equirect → earthquake → hue-sat-spin → deproject
+            if name == "(<>)":
+                _dur = media_vars.get('vd', 1.0) or 1.0
+                # Step 1: v360=e:9
+                _s1 = os.path.join(tmpdir, f"diamond_s1_{i}.mp4")
+                ok, err = _ff_vf(current, "v360=e:9", _s1, timeout=step_timeout)
+                if not ok:
+                    return False, f"(<>) step 1 (v360=e:9) failed: {err}"
+                # Step 2: earthquake (2-pass vidstab destabilize)
+                _EARTHQUAKE_SAMPLE_DIA = "https://file.garden/aTXso15ukD3mnuPI/nbfx_earthquake.mp4"
+                _eq_dur, _eq_fps = _probe_video_info(_s1)
+                _eq_dur = min(_eq_dur, 30.0)
+                _eq_fr = str(round(_eq_fps)) if _eq_fps else "30"
+                try:
+                    _dim_r2 = subprocess.run(
+                        ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+                         "-show_entries", "stream=width,height",
+                         "-of", "csv=s=x:p=0", _s1],
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    _dims2 = _dim_r2.stdout.strip().split("x")
+                    _eq_w2, _eq_h2 = int(_dims2[0]), int(_dims2[1])
+                except Exception:
+                    _eq_w2, _eq_h2 = 1920, 1080
+                _trf2 = os.path.join(tmpdir, f"diamond_eq_{i}.trf")
+                ok, err = _run_ffmpeg_raw([
+                    "ffmpeg", "-y", "-stream_loop", "-1",
+                    "-i", _EARTHQUAKE_SAMPLE_DIA,
+                    "-vf", (
+                        f"fps={_eq_fr},scale={_eq_w2}:{_eq_h2},setsar=1:1,"
+                        f"vidstabdetect=shakiness=10:accuracy=1:mincontrast=0:show=0:result={_trf2}"
+                    ),
+                    "-c:v", "libx264", "-preset", "ultrafast",
+                    "-t", str(_eq_dur), "-f", "null", "-",
+                ], timeout=180)
+                if not ok:
+                    return False, f"(<>) earthquake pass 1 failed: {err}"
+                _s2 = os.path.join(tmpdir, f"diamond_s2_{i}.mp4")
+                ok, err = _run_ffmpeg_raw(
+                    _FF_BASE + ["-i", _s1, "-vf",
+                                f"format=yuv444p,"
+                                f"vidstabtransform=input={_trf2}:optalgo=avg:optzoom=0:zoom=15:invert=1,"
+                                f"scale=iw:ih,format=yuv420p",
+                                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                                "-c:a", "copy", _s2],
+                    timeout=180,
+                )
+                if not ok:
+                    return False, f"(<>) earthquake pass 2 failed: {err}"
+                # Step 3: hue=s=2*t/$vd
+                _s3 = os.path.join(tmpdir, f"diamond_s3_{i}.mp4")
+                ok, err = _ff_vf(_s2, f"hue=s=2*t/{_dur:.10g}", _s3, timeout=step_timeout)
+                if not ok:
+                    return False, f"(<>) step 3 (hue=s) failed: {err}"
+                # Step 4: v360=9:e
+                ok, err = _ff_vf(_s3, "v360=9:e", out, timeout=step_timeout)
+                if not ok:
+                    return False, f"(<>) step 4 (v360=9:e) failed: {err}"
                 current = out
                 continue
 
