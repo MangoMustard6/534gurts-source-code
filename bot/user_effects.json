@@ -72,5 +72,13 @@
     "guild_id": "1514193593697435779",
     "guild_name": "YellowGreenGMD's Logo Editing Server",
     "submitted_at": "2026-07-17T05:39:47.240588+00:00"
+  },
+  "lumagmajor8": {
+    "effects": "tvsim=0.75,ffmpeg(-vf scale=640:640),wave=custom:0|3.2|2|0.0419|0|3.2|2|0.0419,ffmpeg(-vf scale=640:360),channelblend=r|b|g,ccshue=260,mp=0.25|3.75,ffmpeg(-f mp4 -filter_complex \"[0]volume=1.4[a1];[a1]amix=1,highpass=20[a]\" -map 0:v -map \"[a]\" -c:a flac)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
+    "submitted_at": "2026-07-17T10:10:29.056171+00:00"
   }
 }
