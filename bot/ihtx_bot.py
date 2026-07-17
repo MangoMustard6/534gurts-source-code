@@ -1904,12 +1904,10 @@ def _run_grid_overlay(
         # Overlay is scaled to 2× cell size (clamped to frame bounds) so it
         # sits prominently over the grid rather than being confined to one cell.
         t = trim_duration
-        ov_w = min(cell_w * 2, base_w)
-        ov_h = min(cell_h * 2, base_h)
         filter_parts = [
             f"[0:v]reverse,trim=0:{t},reverse[trimmed_base]",
             f"[trimmed_base]scale={base_w}:{base_h}[scaled_base]",
-            f"[1:v]format=rgb24,scale={ov_w}:{ov_h}[ov]",
+            f"[1:v]format=rgb24[ov]",
             f"[scaled_base][ov]overlay={x_pos}:{y_pos}[out_v]",
         ]
         filter_complex = ";".join(filter_parts)
