@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-18: Added `reverse=true` option to `th/ihtxsap` (Python) and `/ihtxsap` + `th/ihtxsap` (TypeScript) — reverses the extracted audio clip via `areverse` before pitch processing; keyword arg in both prefix and slash modes.
 - 2026-07-17: `swirl` `is1to1` default restored to `true`. Expanded AI chatbot system prompt (`_CHAT_SYSTEM_PROMPT`) and autoreply2 command ref (`_AR2_COMMAND_REF`) with full `th/ihtx` usage: both preset mode and pipe mode args (`exports`, `duration`, `no_trim`, `format`, `effects`), all pipe effect names, and math variable reference ($fc/$vd/$f/$sr).
 - 2026-07-17: Updated `swirl`/`vortex` pipe effect and standalone command — angle formula now matches TypeScript: `amount*(PI²)*(-255/180)` (replaces old `strength/180*PI`); default `is1to1` was temporarily set to `false` then restored to `true`; standalone default `amount` changed from 180 → 1; pipe-effect default `is1to1` updated to match.
 - 2026-07-17: Added `(=)` pipe effect: `v360=ball:e → hue=h=450*t/$vd → v360=e:9` (ball-projection with time-varying hue spin). Added `(<>)` pipe effect: `v360=e:9 → earthquake → hue=s=2*t/$vd → v360=9:e` (equirect→ball projection, vidstab destabilize shake, saturation spin, deproject back).
@@ -7487,16 +7488,18 @@ _IHTXSAP_AUDIO_EXTS = {
 
 _IHTXSAP_USAGE = (
     "**th/ihtxsap** — audio-only version of th/ihtx\n\n"
-    "**Usage (positional):** `th/ihtxsap <reps> <duration> <pitches> [style] [volume=N]`\n"
+    "**Usage (positional):** `th/ihtxsap <reps> <duration> <pitches> [style] [volume=N] [reverse=true]`\n"
     "**Usage (keyword):** `th/ihtxsap <reps> <duration> <pitches>` or any order of:\n"
     "  `reps=...` / `repetitions=...` — integer 1–1000\n"
     "  `duration=...` / `dur=...`       — seconds of audio to snip\n"
     "  `pitches=...`                    — semicolon-separated semitone shifts: `-7;5;6`\n"
     "  `pitchstyle=...`                 — `Rubberband R2`, `Rubberband R3`, `Soundtouch`, `Bungee`, `Rubberband Custom`\n"
     "  `volume=...` / `vol=...`         — float volume multiplier (e.g. `volume=8`)\n"
+    "  `reverse=true`                   — reverse the audio before pitch processing\n"
     "  `rubberbandcustom=...`           — extra flags for `Rubberband Custom` (e.g. `-2 -window=long`)\n\n"
     "**Examples:**\n"
     "`th/ihtxsap 5 0.7 -7;5;6 \"Rubberband R3\" volume=4`\n"
+    "`th/ihtxsap 3 2 -7;5;6 reverse=true`\n"
     "`th/ihtxsap pitchstyle=\"Rubberband Custom\" pitches=-7;8;-4 repetitions=20 duration=0.4 volume=1.3 rubberbandcustom=\"-2 -window=long\"`\n"
     "Attach a video/audio file, reply to one, or have one in recent channel history."
 )
@@ -7593,6 +7596,7 @@ def _ihtxsap_parse_args(raw: str):
     style = "rubberband_r2"
     volume = 1.0
     rb_custom = ""
+    reverse = False
 
     keyword_only = False
     positional_idx = 0
@@ -7636,6 +7640,8 @@ def _ihtxsap_parse_args(raw: str):
                     return None, f"❌ `volume` must be a positive float ≤ 100 (got `{value}`)."
             elif key in ("rubberbandcustom", "rbcustom"):
                 rb_custom = value.strip()
+            elif key in ("reverse", "rev"):
+                reverse = value.lower() in ("1", "true", "t", "y", "yes", "+", "on")
             else:
                 return None, f"❌ Unknown argument `{tok}`.\n\n{_IHTXSAP_USAGE}"
         else:
@@ -7696,6 +7702,7 @@ def _ihtxsap_parse_args(raw: str):
         "style": style,
         "volume": volume,
         "rubberband_custom": rb_custom,
+        "reverse": reverse,
     }, None
 
 
@@ -7726,6 +7733,7 @@ def _run_ihtxsap(
     style: str,
     volume: float,
     rubberband_custom: str = "",
+    reverse: bool = False,
 ) -> tuple[bool, str]:
     """
     Audio IHTX pipeline — mirrors th/ihtx's iterative repetition model exactly.
@@ -7760,6 +7768,19 @@ def _run_ihtxsap(
         ], timeout=120)
         if not ok:
             return False, f"Audio extraction failed: {err}"
+
+        # ── 1b. Optional: reverse the extracted clip before pitch processing ──
+        if reverse:
+            rev_wav = os.path.join(tmpdir, "base_rev.wav")
+            ok, err = _run_ffmpeg_raw([
+                "ffmpeg", "-y", "-i", base_wav,
+                "-af", "areverse",
+                "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+                rev_wav,
+            ], timeout=120)
+            if not ok:
+                return False, f"Audio reversal failed: {err}"
+            base_wav = rev_wav
 
         # ── 2. apply_pitch: one iteration (src → dst WAV) ─────────────────────
         # Tier 1 (R2/R3/Bungee): fileaa binary — all pitches in one call.
@@ -8105,7 +8126,8 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
             while not _done_evt.is_set():
                 elapsed = int(time.monotonic() - _start_time)
                 await _update(
-                    f"🔧 Running IHTX-Sap — `{opts['reps']}×` · pitch `{pitch_str}` · {style_label}…\n"
+                    f"🔧 Running IHTX-Sap — `{opts['reps']}×` · pitch `{pitch_str}` · {style_label}"
+                    f"{' · reversed' if opts.get('reverse') else ''}…\n"
                     f"⏱️ **{elapsed}s elapsed**"
                 )
                 try:
@@ -8121,6 +8143,7 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
                 opts["reps"], opts["duration"],
                 opts["pitches"], opts["style"], opts["volume"],
                 opts.get("rubberband_custom", ""),
+                opts.get("reverse", False),
             )
         finally:
             _done_evt.set()

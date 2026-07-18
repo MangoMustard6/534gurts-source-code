@@ -88,6 +88,9 @@ const SLASH_COMMANDS = [
     .addNumberOption((opt) =>
       opt.setName('volume').setDescription('Output volume multiplier after mix, e.g. 8 (default: 1)').setRequired(false),
     )
+    .addBooleanOption((opt) =>
+      opt.setName('reverse').setDescription('Reverse the audio clip before pitch processing (default: false)').setRequired(false),
+    )
     .toJSON(),
 
   new SlashCommandBuilder()
