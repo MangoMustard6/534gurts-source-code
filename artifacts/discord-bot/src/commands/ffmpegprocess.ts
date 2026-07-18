@@ -7,6 +7,39 @@ import { getUploadLimitBytes, formatBytes } from '../utils/limits.js';
 import { PROCESS_TIMEOUTS } from '../config.js';
 import { _upload_to_catbox } from '../utils/catbox.js';
 
+/**
+ * Shell-style argument tokenizer — strips surrounding single/double quotes
+ * from each token so that `geq='p(X,Y)'` becomes `geq=p(X,Y)` when passed
+ * directly to FFmpeg (no shell involved, quotes would be literal otherwise).
+ */
+function shellSplit(s: string): string[] {
+  const args: string[] = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inSingle) {
+      if (ch === "'") inSingle = false;
+      else current += ch;
+    } else if (inDouble) {
+      if (ch === '"') inDouble = false;
+      else if (ch === '\\' && i + 1 < s.length) { i++; current += s[i]; }
+      else current += ch;
+    } else if (ch === "'") {
+      inSingle = true;
+    } else if (ch === '"') {
+      inDouble = true;
+    } else if (/\s/.test(ch)) {
+      if (current) { args.push(current); current = ''; }
+    } else {
+      current += ch;
+    }
+  }
+  if (current) args.push(current);
+  return args;
+}
+
 const USAGE =
   '**Usage:** `th/ffmpegprocess <ffmpeg args>` *(alias: fmp)*  — attach or reply-to a file\n' +
   '**Example:** `th/ffmpegprocess -vf scale=1280:-1 -c:v libx264 -crf 23`\n' +
@@ -89,7 +122,7 @@ export async function handleFfmpegProcess(message: Message, rawArgs: string): Pr
 
     const meta = await gatherMetadata(inputPath);
 
-    const userArgList = rawArgs.trim().split(/\s+/);
+    const userArgList = shellSplit(rawArgs.trim());
 
     const ffResult = await spawnAsync(
       'ffmpeg',
