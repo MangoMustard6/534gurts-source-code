@@ -7769,19 +7769,6 @@ def _run_ihtxsap(
         if not ok:
             return False, f"Audio extraction failed: {err}"
 
-        # ── 1b. Optional: reverse the extracted clip before pitch processing ──
-        if reverse:
-            rev_wav = os.path.join(tmpdir, "base_rev.wav")
-            ok, err = _run_ffmpeg_raw([
-                "ffmpeg", "-y", "-i", base_wav,
-                "-af", "areverse",
-                "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-                rev_wav,
-            ], timeout=120)
-            if not ok:
-                return False, f"Audio reversal failed: {err}"
-            base_wav = rev_wav
-
         # ── 2. apply_pitch: one iteration (src → dst WAV) ─────────────────────
         # Tier 1 (R2/R3/Bungee): fileaa binary — all pitches in one call.
         #   R2:     fileaa input output pitches --rubberband-args "-2"
@@ -7950,11 +7937,29 @@ def _run_ihtxsap(
 
         # ── 3. Iterate reps times — each output feeds into the next ───────────
         #    Mirrors: input → 1.ts → 2.ts → … → N.ts in th/ihtx
+        #    With reverse=True: before each pitch step, reverse the previous
+        #    output; odd reps use areverse, even reps add dynaudnorm so the
+        #    signal "bounces" back to the forward direction.
         segments: list[str] = []
         prev = base_wav
         for i in range(1, reps + 1):
             seg = wav(i)
-            ok, err = apply_pitch(prev, seg)
+            pitch_input = prev
+            if reverse:
+                # Odd: areverse only; even: areverse + dynaudnorm (normalize
+                # after the double-reversal brings audio back to forward).
+                af = "areverse,dynaudnorm" if i % 2 == 0 else "areverse"
+                rev_in = os.path.join(tmpdir, f"rev_in_{i}.wav")
+                ok2, err2 = _run_ffmpeg_raw([
+                    "ffmpeg", "-y", "-i", prev,
+                    "-af", af,
+                    "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+                    rev_in,
+                ], timeout=120)
+                if not ok2:
+                    return False, f"Rep {i} pre-reversal failed: {err2}"
+                pitch_input = rev_in
+            ok, err = apply_pitch(pitch_input, seg)
             if not ok:
                 return False, f"Rep {i}/{reps} failed: {err}"
             segments.append(seg)
