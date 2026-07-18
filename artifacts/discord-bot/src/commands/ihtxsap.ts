@@ -324,23 +324,6 @@ async function runSap(
     return null;
   }
 
-  // 2b. Optional: reverse the extracted clip before pitch processing
-  if (opts.reverse) {
-    await setStatus('⏳ Reversing audio…');
-    const revWav = path.join(tmpDir, 'input_rev.wav');
-    const rev = await spawnAsync('ffmpeg', [
-      '-y', '-i', inputWav,
-      '-af', 'areverse',
-      '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2',
-      revWav,
-    ], { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
-    if (rev.code !== 0) {
-      await setStatus(`❌ Audio reversal failed.\n\`\`\`\n${rev.stderr.slice(-400)}\n\`\`\``);
-      return null;
-    }
-    fs.renameSync(revWav, inputWav);
-  }
-
   // 3. Binary / soundtouch availability check
   if (opts.style === 'soundtouch') {
     const ssOk = await isSoundtouchAvailable();
@@ -455,15 +438,50 @@ async function runSap(
   }
 
   // 6. Repeat (concat) N times
+  // With reverse=true: odd reps = areverse(mixedWav), even reps = dynaudnorm(mixedWav)
+  // (= reverse-of-reverse back to forward, normalized), alternating for each segment.
   let finalWav = mixedWav;
-  if (opts.repetitions > 1) {
-    await setStatus(`⏳ Repeating mix ${opts.repetitions}× end-to-end…`);
+  if (opts.repetitions > 1 || opts.reverse) {
+    await setStatus(`⏳ Building ${opts.repetitions} repetition${opts.repetitions > 1 ? 's' : ''}…`);
     finalWav = path.join(tmpDir, 'repeated.wav');
     const listFile = path.join(tmpDir, 'concat.txt');
-    fs.writeFileSync(
-      listFile,
-      Array.from({ length: opts.repetitions }, () => `file '${mixedWav}'`).join('\n'),
-    );
+
+    if (opts.reverse) {
+      // Pre-build the two alternating variants of mixedWav
+      const revWav  = path.join(tmpDir, 'mixed_rev.wav');   // odd reps
+      const normWav = path.join(tmpDir, 'mixed_norm.wav');  // even reps
+
+      const rvr = await spawnAsync('ffmpeg', [
+        '-y', '-i', mixedWav, '-af', 'areverse',
+        '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2', revWav,
+      ], { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
+      if (rvr.code !== 0) {
+        await setStatus(`❌ Reverse pass failed.\n\`\`\`\n${rvr.stderr.slice(-400)}\n\`\`\``);
+        return null;
+      }
+
+      const nvr = await spawnAsync('ffmpeg', [
+        '-y', '-i', mixedWav, '-af', 'dynaudnorm',
+        '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2', normWav,
+      ], { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
+      if (nvr.code !== 0) {
+        await setStatus(`❌ Normalize pass failed.\n\`\`\`\n${nvr.stderr.slice(-400)}\n\`\`\``);
+        return null;
+      }
+
+      const lines: string[] = [];
+      for (let r = 0; r < opts.repetitions; r++) {
+        // rep index 0 (1st) → odd → reversed; rep index 1 (2nd) → even → normalized
+        lines.push(`file '${r % 2 === 0 ? revWav : normWav}'`);
+      }
+      fs.writeFileSync(listFile, lines.join('\n'));
+    } else {
+      fs.writeFileSync(
+        listFile,
+        Array.from({ length: opts.repetitions }, () => `file '${mixedWav}'`).join('\n'),
+      );
+    }
+
     const cat = await spawnAsync('ffmpeg', [
       '-y', '-f', 'concat', '-safe', '0', '-i', listFile,
       '-c', 'copy', finalWav,
