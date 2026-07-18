@@ -58,18 +58,21 @@ interface SapOpts {
   pitches:     number[];   // semitone shifts per parallel layer
   style:       StyleValue;
   volume:      number;     // output volume multiplier applied after mix (default 1)
+  reverse:     boolean;    // reverse the extracted clip before pitch processing
 }
 
 const PREFIX_USAGE = [
-  '**Usage:** `th/ihtxsap <repetitions> <duration> <pitches> [style] [volume=<n>]`',
+  '**Usage:** `th/ihtxsap <repetitions> <duration> <pitches> [style] [volume=<n>] [reverse=true]`',
   '',
-  '  `repetitions` — integer 1–1000, how many times the mix is looped (default: `5`)',
-  '  `duration`    — seconds to snip from the start of the audio (e.g. `5` = first 5 s)',
-  '  `pitches`     — semicolon-separated semitone shifts: `-7;5;6`',
-  '  `style`       — optional, in quotes: `"Rubberband R2"` (default), `"Rubberband R3"`, `"Soundtouch"`, `"Bungee"`',
-  '  `volume=<n>`  — optional float, output volume multiplier after mix (e.g. `volume=8`)',
+  '  `repetitions`  — integer 1–1000, how many times the mix is looped (default: `5`)',
+  '  `duration`     — seconds to snip from the start of the audio (e.g. `5` = first 5 s)',
+  '  `pitches`      — semicolon-separated semitone shifts: `-7;5;6`',
+  '  `style`        — optional, in quotes: `"Rubberband R2"` (default), `"Rubberband R3"`, `"Soundtouch"`, `"Bungee"`',
+  '  `volume=<n>`   — optional float, output volume multiplier after mix (e.g. `volume=8`)',
+  '  `reverse=true` — reverse the audio clip before pitch processing',
   '',
   '**Example:** `th/ihtxsap 5 3 -7;5;6 "Rubberband R3" volume=8`',
+  '**Example:** `th/ihtxsap 3 2 -7;5;6 reverse=true`',
   'Attach a video or audio file, reply to one, or have one in recent channel history.',
 ].join('\n');
 
@@ -166,9 +169,10 @@ function parsePrefixArgs(raw: string): SapOpts | string {
   if (pitches.some((p) => Math.abs(p) > 120))
     return `❌ Pitch shifts must be within ±120 semitones.`;
 
-  // Remaining tokens (index ≥ 3): pull out volume=N first, rest is style
+  // Remaining tokens (index ≥ 3): pull out volume=N and reverse= first, rest is style
   let style: StyleValue = 'rubberband_r2';
   let volume = 1;
+  let reverse = false;
   const extraTokens = tokens.slice(3);
   const styleTokens: string[] = [];
 
@@ -179,6 +183,9 @@ function parsePrefixArgs(raw: string): SapOpts | string {
       if (isNaN(v) || v <= 0 || v > 100)
         return `❌ \`volume\` must be a positive float ≤ 100 (got \`${tok.slice(7)}\`).`;
       volume = v;
+    } else if (lower.startsWith('reverse=')) {
+      const val = tok.slice(8).toLowerCase();
+      reverse = ['1', 'true', 't', 'y', 'yes', 'on'].includes(val);
     } else {
       styleTokens.push(tok);
     }
@@ -193,7 +200,7 @@ function parsePrefixArgs(raw: string): SapOpts | string {
     else return `❌ Unknown style "${styleTokens.join(' ')}". Options: Rubberband R2, Rubberband R3, Soundtouch, Bungee.`;
   }
 
-  return { duration: dur, repetitions: reps, pitches, style, volume };
+  return { duration: dur, repetitions: reps, pitches, style, volume, reverse };
 }
 
 // ── Per-layer processors ─────────────────────────────────────────────────────
@@ -315,6 +322,23 @@ async function runSap(
   if (extract.code !== 0) {
     await setStatus(`❌ Audio extraction failed.\n\`\`\`\n${extract.stderr.slice(-400)}\n\`\`\``);
     return null;
+  }
+
+  // 2b. Optional: reverse the extracted clip before pitch processing
+  if (opts.reverse) {
+    await setStatus('⏳ Reversing audio…');
+    const revWav = path.join(tmpDir, 'input_rev.wav');
+    const rev = await spawnAsync('ffmpeg', [
+      '-y', '-i', inputWav,
+      '-af', 'areverse',
+      '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2',
+      revWav,
+    ], { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
+    if (rev.code !== 0) {
+      await setStatus(`❌ Audio reversal failed.\n\`\`\`\n${rev.stderr.slice(-400)}\n\`\`\``);
+      return null;
+    }
+    fs.renameSync(revWav, inputWav);
   }
 
   // 3. Binary / soundtouch availability check
@@ -467,9 +491,10 @@ async function runSap(
 }
 
 function summaryLine(opts: SapOpts): string {
-  const pitchStr = opts.pitches.map((p) => (p >= 0 ? '+' : '') + p).join(', ');
-  const volPart  = opts.volume !== 1 ? ` · vol ×${opts.volume}` : '';
-  return `Pitches: **${pitchStr}** · snip **${opts.duration}s** · ${opts.repetitions}× · ${styleLabel(opts.style)}${volPart}`;
+  const pitchStr  = opts.pitches.map((p) => (p >= 0 ? '+' : '') + p).join(', ');
+  const volPart   = opts.volume !== 1 ? ` · vol ×${opts.volume}` : '';
+  const revPart   = opts.reverse ? ' · reversed' : '';
+  return `Pitches: **${pitchStr}** · snip **${opts.duration}s** · ${opts.repetitions}× · ${styleLabel(opts.style)}${volPart}${revPart}`;
 }
 
 // ── Prefix entry point ───────────────────────────────────────────────────────
@@ -588,7 +613,9 @@ export async function handleIhtxSapInteraction(slash: ChatInputCommandInteractio
     return;
   }
 
-  const opts: SapOpts = { duration, repetitions: reps, pitches, style: styleRaw, volume: volumeRaw };
+  const reverseRaw = slash.options.getBoolean('reverse') ?? false;
+
+  const opts: SapOpts = { duration, repetitions: reps, pitches, style: styleRaw, volume: volumeRaw, reverse: reverseRaw };
 
   const setStatus = async (s: string) => {
     try { await slash.editReply(s); } catch { /* ignore */ }
