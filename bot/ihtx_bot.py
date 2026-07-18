@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-18: Added `magix` vocoder mode (window_size=2048, bandwidth=256, alimiter=0.5) — mirrors the exe's `-w 2048 -v 10 -N` flags; available as `th/vocoder magix <url>`, `magix=url` pipe shortcut, and `vocoder=magix;url`.
 - 2026-07-18: Added `geq` as a direct pipe effect (`geq='expr'`, auto-wraps in `format=yuv444p/scale=iw:ih/format=yuv420p`); fixed `_split_pipe_segments` to track quote context so commas/parens inside `'...'`/`"..."` are never treated as delimiters (fixes `ffmpeg(-vf geq='p(X,Y)')` depth miscounting and `geq='expr'` direct pipe step); fixed `th/ffmpeg` (`ffmpegprocess.ts`) to use shell-style arg tokenization that strips surrounding quotes so `geq='p(X,Y)'` reaches FFmpeg correctly.
 - 2026-07-18: Added `reverse=true` option to `th/ihtxsap` (Python) and `/ihtxsap` + `th/ihtxsap` (TypeScript) — reverses the extracted audio clip via `areverse` before pitch processing; keyword arg in both prefix and slash modes.
 - 2026-07-17: `swirl` `is1to1` default restored to `true`. Expanded AI chatbot system prompt (`_CHAT_SYSTEM_PROMPT`) and autoreply2 command ref (`_AR2_COMMAND_REF`) with full `th/ihtx` usage: both preset mode and pipe mode args (`exports`, `duration`, `no_trim`, `format`, `effects`), all pipe effect names, and math variable reference ($fc/$vd/$f/$sr).
@@ -1973,6 +1974,9 @@ _VOCODER_PROFILES: dict[str, dict] = {
     "orangevocoder": {"bandwidth": 256, "window_size": 1024, "mod_phases": 0,  "post_highpass": 200, "bass_g": -10, "alimiter": 0.2, "post_phases": 0},
     "4ormulator":    {"bandwidth": 128, "window_size": 256,  "mod_phases": 0,  "post_highpass": 100, "bass_g": -10, "alimiter": 0.2, "post_phases": 0},
     "audacity":      {"bandwidth": 64,  "window_size": 512,  "mod_phases": 0,  "post_highpass": 200, "bass_g": -10, "alimiter": 0.5, "post_phases": 12},
+    # magix: large 2048-point window → higher frequency resolution; default 256 bands.
+    # Mirrors the -w 2048 -v 10 -N exe flags; alimiter 0.5 keeps output at a safe level.
+    "magix":         {"bandwidth": 256, "window_size": 2048, "mod_phases": 0,  "post_highpass": 200, "bass_g": -10, "alimiter": 0.5, "post_phases": 0},
 }
 
 
@@ -2466,7 +2470,7 @@ PIPE_EFFECT_NAMES = {
     "earthquake", "nbfx",
     "ssmp", "soundstretchmultipitch",
     "folkvalley", "fv",
-    "vocoder", "ilvocodex", "orangevocoder", "4ormulator", "audacity",
+    "vocoder", "ilvocodex", "orangevocoder", "4ormulator", "audacity", "magix",
     "alimiter",
     "freakzinga", "fzgm156", "freakzingagm156", "fgm156",
     "multipitch2", "mp2",
@@ -4053,7 +4057,7 @@ def _apply_pipe_effects(
                 continue
 
             # vocoder — FFT phase vocoder (shape carrier with voice envelope)
-            if name in ("vocoder", "ilvocodex", "orangevocoder", "4ormulator", "audacity"):
+            if name in ("vocoder", "ilvocodex", "orangevocoder", "4ormulator", "audacity", "magix"):
                 # If the effect name IS a mode, use it as the default mode
                 _default_mode = name if name != "vocoder" else "ilvocodex"
                 # Syntax variants:
@@ -10892,10 +10896,10 @@ async def vocoder_command(ctx: commands.Context, *, args: str = ""):
       th/vocoder <mode> <carrier_url>                 — specify mode
       th/vocoder <mode> <bandwidth> <carrier_url>     — mode + custom band count
 
-    Modes: ilvocodex | orangevocoder | 4ormulator | audacity
+    Modes: ilvocodex | orangevocoder | 4ormulator | audacity | magix
     carrier_url: direct link to any audio file (mp3, wav, ogg…)
 
-    Pipe effects: vocoder=mode;url  |  ilvocodex=url  |  4ormulator=url
+    Pipe effects: vocoder=mode;url  |  ilvocodex=url  |  4ormulator=url  |  magix=url
     """
     parts = args.strip().split() if args.strip() else []
 
@@ -10912,7 +10916,7 @@ async def vocoder_command(ctx: commands.Context, *, args: str = ""):
             f"**Modes:** `{'` · `'.join(_VOCODER_PROFILES)}`",
             "**Alias:** `th/vocode`",
             "**As pipe effect:** `th/ihtx 1 5 - mp4 vocoder=ilvocodex;https://url`",
-            "Mode shortcuts: `ilvocodex=url` `orangevocoder=url` `4ormulator=url` `audacity=url`",
+            "Mode shortcuts: `ilvocodex=url` `orangevocoder=url` `4ormulator=url` `audacity=url` `magix=url`",
         ]
         await ctx.reply("\n".join(lines))
         return
