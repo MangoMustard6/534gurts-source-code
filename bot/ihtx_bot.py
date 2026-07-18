@@ -882,7 +882,7 @@ async def _update_bot_presence() -> None:
     else:
         name = f"Making Effects in {gc} servers!"
     try:
-        await bot.change_presence(activity=discord.Game(name=name))
+        await bot.change_presence(status=discord.Status.online, activity=discord.Game(name=name))
     except Exception:
         pass
 
@@ -6433,7 +6433,7 @@ async def on_ready():
                 _restored = discord.Activity(type=discord.ActivityType.listening, name=_aname)
             else:
                 _restored = discord.Activity(type=discord.ActivityType.watching, name=_aname)
-            await bot.change_presence(activity=_restored)
+            await bot.change_presence(status=discord.Status.online, activity=_restored)
         else:
             await _update_bot_presence()
     except Exception:
