@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-18: [TS] Added `th/videolength` (aliases: vidlen, videolen) — runs ffprobe on a URL and returns the duration formatted as H:MM:SS.ss plus raw seconds.
 - 2026-07-18: Added `magix` vocoder mode (window_size=2048, bandwidth=256, alimiter=0.5) — mirrors the exe's `-w 2048 -v 10 -N` flags; available as `th/vocoder magix <url>`, `magix=url` pipe shortcut, and `vocoder=magix;url`.
 - 2026-07-18: Added `geq` as a direct pipe effect (`geq='expr'`, auto-wraps in `format=yuv444p/scale=iw:ih/format=yuv420p`); fixed `_split_pipe_segments` to track quote context so commas/parens inside `'...'`/`"..."` are never treated as delimiters (fixes `ffmpeg(-vf geq='p(X,Y)')` depth miscounting and `geq='expr'` direct pipe step); fixed `th/ffmpeg` (`ffmpegprocess.ts`) to use shell-style arg tokenization that strips surrounding quotes so `geq='p(X,Y)'` reaches FFmpeg correctly.
 - 2026-07-18: Added `reverse=true` option to `th/ihtxsap` (Python) and `/ihtxsap` + `th/ihtxsap` (TypeScript) — reverses the extracted audio clip via `areverse` before pitch processing; keyword arg in both prefix and slash modes.

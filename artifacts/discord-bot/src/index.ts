@@ -38,6 +38,7 @@ import { handleRepeat } from './commands/repeat.js';
 import { handleBlockuserCommand, handleUnblockuserCommand, isBlocked as isUserBlocked } from './commands/blockuser.js';
 import { handleBlockchannelCommand, handleUnblockchannelCommand, isBlockedInChannel } from './commands/blockchannel.js';
 import { handleKlaskysource } from './commands/klaskysource.js';
+import { handleVideolength } from './commands/videolength.js';
 
 if (!BOT_TOKEN) {
   console.error('ERROR: DISCORD_TOKEN environment variable is not set.');
@@ -337,6 +338,12 @@ client.on('messageCreate', async (message: Message) => {
       case 'klaskysource':
       case 'klasky':
         await handleKlaskysource(message);
+        break;
+
+      case 'videolength':
+      case 'vidlen':
+      case 'videolen':
+        await handleVideolength(message, args);
         break;
 
       default:
