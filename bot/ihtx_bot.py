@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-18: Added `geq` as a direct pipe effect (`geq='expr'`, auto-wraps in `format=yuv444p/scale=iw:ih/format=yuv420p`); fixed `_split_pipe_segments` to track quote context so commas/parens inside `'...'`/`"..."` are never treated as delimiters (fixes `ffmpeg(-vf geq='p(X,Y)')` depth miscounting and `geq='expr'` direct pipe step); fixed `th/ffmpeg` (`ffmpegprocess.ts`) to use shell-style arg tokenization that strips surrounding quotes so `geq='p(X,Y)'` reaches FFmpeg correctly.
 - 2026-07-18: Added `reverse=true` option to `th/ihtxsap` (Python) and `/ihtxsap` + `th/ihtxsap` (TypeScript) — reverses the extracted audio clip via `areverse` before pitch processing; keyword arg in both prefix and slash modes.
 - 2026-07-17: `swirl` `is1to1` default restored to `true`. Expanded AI chatbot system prompt (`_CHAT_SYSTEM_PROMPT`) and autoreply2 command ref (`_AR2_COMMAND_REF`) with full `th/ihtx` usage: both preset mode and pipe mode args (`exports`, `duration`, `no_trim`, `format`, `effects`), all pipe effect names, and math variable reference ($fc/$vd/$f/$sr).
 - 2026-07-17: Updated `swirl`/`vortex` pipe effect and standalone command — angle formula now matches TypeScript: `amount*(PI²)*(-255/180)` (replaces old `strength/180*PI`); default `is1to1` was temporarily set to `false` then restored to `true`; standalone default `amount` changed from 180 → 1; pipe-effect default `is1to1` updated to match.
@@ -2501,6 +2502,7 @@ PIPE_EFFECT_NAMES = {
     "imagemagick", "im",
     "(=)",
     "(<>)",
+    "geq",
 }
 
 # ---------- User-submitted named pipe effects ----------
@@ -2561,10 +2563,24 @@ def _split_pipe_segments(pipe_str: str) -> list[str]:
     in_func = False
     func_depth = 0
     array_depth = 0
+    in_quote: str | None = None   # current open quote char: "'" or '"'
     current: list[str] = []
     i = 0
     while i < len(pipe_str):
         ch = pipe_str[i]
+        # ── Quote context: inside '...' or "...", nothing is a delimiter ──
+        if in_quote is not None:
+            if ch == in_quote:
+                in_quote = None
+            current.append(ch)
+            i += 1
+            continue
+        if ch in ('"', "'"):
+            in_quote = ch
+            current.append(ch)
+            i += 1
+            continue
+        # ── Normal (unquoted) character processing ─────────────────────────
         if ch == "(":
             prefix = "".join(current).strip()
             if prefix.rstrip().endswith(_FUNC_NAMES):
@@ -3283,7 +3299,7 @@ def _apply_pipe_effects(
     # Preprocess effect parameters: expand lerp, replace $fc/$vd/$sr/$f, collapse constants.
     # Skip for effects whose params are raw FFmpeg/shell command strings
     # (they may contain '=' that is NOT a key=value separator).
-    _RAW_ARG_EFFECTS = {"ffmpeg", "leftsplit", "rightsplit", "gradientmap", "gmap", "imagemagick", "im"}
+    _RAW_ARG_EFFECTS = {"ffmpeg", "leftsplit", "rightsplit", "gradientmap", "gmap", "imagemagick", "im", "geq"}
     effects = [
         (
             name,
@@ -3466,6 +3482,23 @@ def _apply_pipe_effects(
                 )
                 if not ok:
                     return False, f"speed failed: {err}"
+                current = out
+                continue
+
+            # geq — raw FFmpeg geq filter expression applied directly in the vf chain
+            # Syntax: geq='p(X,Y)'  or  geq=lum='expr':cb=128:cr=128
+            # Quotes around the expression (e.g. geq='p(X,Y)') are passed through
+            # verbatim — FFmpeg's filter option parser strips them automatically.
+            # Prepends format=yuv444p so geq can read per-component values, then
+            # restores yuv420p and preserves original dimensions via scale=iw:ih.
+            if name == "geq":
+                expr = params[0] if params else ""
+                if not expr:
+                    return False, "geq pipe step requires an expression (e.g. geq='p(X,Y)*0.5')."
+                vf = f"format=yuv444p,geq={expr},scale=iw:ih,format=yuv420p"
+                ok, err = _ff_vf(current, vf, out, timeout=step_timeout)
+                if not ok:
+                    return False, f"geq failed: {err}"
                 current = out
                 continue
 
