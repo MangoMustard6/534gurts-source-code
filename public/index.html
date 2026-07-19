@@ -3,334 +3,623 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>t!multipitchihtx — Pipeline Visualizer</title>
+<title>th/ihtx — Effect Builder</title>
 <style>
-  :root {
-    --bg: #0e0e12;
-    --panel: #16161d;
-    --border: #2a2a35;
-    --accent: #7c5cbf;
-    --accent2: #3a86ff;
-    --green: #2ecc71;
-    --red: #e74c3c;
-    --text: #e8e8f0;
-    --muted: #7a7a90;
-    --layer-h: 36px;
-    --gap: 12px;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; padding: 32px 20px 60px; }
+:root {
+  --bg: #0a0a0f;
+  --panel: #13131a;
+  --panel2: #1a1a24;
+  --border: #252532;
+  --border2: #2e2e3e;
+  --accent: #7c5cbf;
+  --accent-dim: rgba(124,92,191,.18);
+  --accent2: #3a86ff;
+  --accent2-dim: rgba(58,134,255,.15);
+  --green: #2ecc71;
+  --red: #e74c3c;
+  --orange: #f39c12;
+  --text: #e8e8f2;
+  --muted: #6a6a85;
+  --muted2: #9090b0;
+  --tag-color: #1abc9c;
+  --tag-motion: #e67e22;
+  --tag-distort: #9b59b6;
+  --tag-audio: #3498db;
+  --tag-time: #e74c3c;
+  --tag-complex: #f39c12;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 14px; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  min-height: 100vh; display: flex; flex-direction: column;
+  padding-bottom: 90px;
+}
 
-  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
-  h1 span { color: var(--accent); }
-  .subtitle { color: var(--muted); font-size: .9rem; margin-bottom: 28px; }
+/* ── HEADER ─────────────────────────────────────────────────────── */
+header {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(10,10,15,.92); backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 24px; display: flex; align-items: center; gap: 16px;
+}
+.logo { font-size: 1.2rem; font-weight: 800; letter-spacing: -.02em; }
+.logo .cmd { color: var(--accent); }
+.logo .slash { color: var(--muted); }
+.logo .cmd2 { color: var(--accent2); }
+header p { color: var(--muted2); font-size: .82rem; margin-left: auto; }
+.header-badge {
+  background: var(--accent-dim); border: 1px solid var(--accent);
+  color: var(--accent); border-radius: 20px; padding: 3px 10px;
+  font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+}
 
-  /* Controls */
-  .controls {
-    display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 32px;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px;
-  }
-  .ctrl-group { display: flex; flex-direction: column; gap: 4px; }
-  .ctrl-group label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
-  .ctrl-group input[type=range] { width: 140px; accent-color: var(--accent); }
-  .ctrl-group input[type=number] { width: 80px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 4px 8px; font-size: .9rem; }
-  .val-display { font-size: .85rem; color: var(--accent); font-weight: 600; }
+/* ── LAYOUT ──────────────────────────────────────────────────────── */
+main { flex: 1; display: flex; flex-direction: column; gap: 0; }
+.section { padding: 20px 24px; border-bottom: 1px solid var(--border); }
+.section-title {
+  font-size: .72rem; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 14px;
+  display: flex; align-items: center; gap: 10px;
+}
+.section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 
-  /* Pipeline */
-  .pipeline { display: flex; flex-direction: column; gap: 20px; }
+/* ── PRESETS ─────────────────────────────────────────────────────── */
+.preset-grid {
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.preset-card {
+  background: var(--panel); border: 1px solid var(--border2);
+  border-radius: 10px; padding: 10px 14px; cursor: pointer;
+  transition: all .15s; display: flex; flex-direction: column; gap: 4px;
+  min-width: 120px; position: relative; overflow: hidden;
+  user-select: none;
+}
+.preset-card::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--c, var(--accent));
+}
+.preset-card:hover { border-color: var(--c, var(--accent)); background: var(--panel2); transform: translateY(-1px); }
+.preset-card.active { border-color: var(--c, var(--accent)); background: var(--panel2); box-shadow: 0 0 0 1px var(--c, var(--accent)); }
+.preset-name { font-weight: 700; font-size: .88rem; }
+.preset-desc { font-size: .72rem; color: var(--muted2); line-height: 1.3; }
+.preset-tag {
+  font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--c, var(--accent)); margin-bottom: 2px;
+}
 
-  .stage-row { display: flex; align-items: flex-start; gap: 16px; }
+/* ── BUILDER BODY ────────────────────────────────────────────────── */
+.builder-wrap {
+  display: grid; grid-template-columns: 300px 1fr; min-height: 340px;
+}
+.palette-panel {
+  border-right: 1px solid var(--border); padding: 18px 16px;
+  overflow-y: auto; max-height: calc(100vh - 300px);
+}
+.pipeline-panel { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
 
-  /* segment card */
-  .segment-card {
-    flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
-    transition: box-shadow .3s;
-  }
-  .segment-card:hover { box-shadow: 0 0 0 1px var(--accent); }
-  .seg-header {
-    background: rgba(124,92,191,.18); border-bottom: 1px solid var(--border);
-    padding: 10px 16px; font-weight: 600; font-size: .85rem; display: flex; align-items: center; gap: 8px;
-  }
-  .seg-num { background: var(--accent); color: #fff; border-radius: 6px; padding: 2px 8px; font-size: .75rem; }
+/* ── PALETTE ─────────────────────────────────────────────────────── */
+.palette-group { margin-bottom: 14px; }
+.palette-group-title {
+  font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--muted); margin-bottom: 7px; display: flex; align-items: center; gap: 8px;
+  cursor: pointer;
+}
+.palette-group-title .cat-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--cat-color);
+  flex-shrink: 0;
+}
+.palette-group-title .toggle { margin-left: auto; font-size: .75rem; color: var(--muted); transition: transform .2s; }
+.palette-group-title.collapsed .toggle { transform: rotate(-90deg); }
+.palette-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.palette-chips.hidden { display: none; }
+.eff-chip {
+  background: var(--panel2); border: 1px solid var(--border2);
+  border-radius: 6px; padding: 4px 9px; font-size: .77rem;
+  cursor: pointer; transition: all .12s; white-space: nowrap;
+  display: flex; align-items: center; gap: 5px; color: var(--text);
+}
+.eff-chip:hover { border-color: var(--cat-color); color: var(--cat-color); background: rgba(255,255,255,.04); }
+.eff-chip .plus { font-size: .9rem; color: var(--muted); }
+.eff-chip[title]:hover::after {
+  content: attr(title); position: absolute; z-index: 99;
+  background: #222; border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 8px; font-size: .72rem; color: var(--muted2);
+  white-space: nowrap; pointer-events: none; margin-top: 28px;
+}
 
-  .seg-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+/* ── PIPELINE ────────────────────────────────────────────────────── */
+.pipeline-label {
+  font-size: .72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .1em; color: var(--muted); display: flex; align-items: center; gap: 10px;
+}
+.pipeline-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.pipeline-empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: var(--muted); gap: 8px; padding: 40px 0; font-size: .9rem;
+}
+.pipeline-empty .hint { font-size: .78rem; color: var(--muted); opacity: .6; }
+.pipeline-list { display: flex; flex-direction: column; gap: 6px; flex: 1; }
 
-  /* pitch layers */
-  .layers-wrap { display: flex; flex-direction: column; gap: 5px; }
-  .layer-row {
-    height: var(--layer-h); background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-    display: flex; align-items: center; padding: 0 10px; font-size: .78rem; gap: 8px; position: relative; overflow: hidden;
-  }
-  .layer-fill {
-    position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px;
-    background: linear-gradient(90deg, rgba(58,134,255,.25), rgba(124,92,191,.15));
-    animation: fillIn .5s ease forwards;
-    transform-origin: left;
-  }
-  @keyframes fillIn { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-  .layer-tag { position: relative; z-index: 1; background: rgba(58,134,255,.2); border: 1px solid rgba(58,134,255,.4); border-radius: 4px; padding: 1px 6px; font-size: .72rem; color: var(--accent2); white-space: nowrap; }
-  .layer-label { position: relative; z-index: 1; color: var(--muted); font-size: .75rem; }
-  .layer-tool { position: relative; z-index: 1; margin-left: auto; color: var(--muted); font-size: .7rem; }
+.pipe-item {
+  background: var(--panel); border: 1px solid var(--border2); border-radius: 8px;
+  padding: 8px 12px; display: flex; align-items: center; gap: 10px;
+  transition: border-color .15s;
+}
+.pipe-item:hover { border-color: var(--border); }
+.pipe-item.dragging { opacity: .4; border-style: dashed; }
+.pipe-item.drag-over { border-color: var(--accent); background: var(--accent-dim); }
+.pipe-num {
+  width: 20px; text-align: center; font-size: .72rem; color: var(--muted);
+  font-weight: 700; flex-shrink: 0;
+}
+.pipe-name {
+  font-weight: 700; font-size: .85rem; color: var(--accent2); min-width: 90px; flex-shrink: 0;
+}
+.pipe-sep { color: var(--muted); font-size: .8rem; flex-shrink: 0; }
+.pipe-params {
+  flex: 1; background: transparent; border: none; outline: none;
+  border-bottom: 1px solid var(--border2); color: var(--text);
+  font-size: .82rem; padding: 1px 4px; min-width: 60px;
+  font-family: 'Consolas', 'Fira Code', monospace;
+  transition: border-color .15s;
+}
+.pipe-params:focus { border-color: var(--accent2); }
+.pipe-params::placeholder { color: var(--muted); }
+.pipe-hint { font-size: .7rem; color: var(--muted); white-space: nowrap; flex-shrink: 0; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+.pipe-actions { display: flex; gap: 3px; flex-shrink: 0; margin-left: auto; }
+.pipe-btn {
+  background: none; border: 1px solid transparent; border-radius: 5px;
+  color: var(--muted); cursor: pointer; width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center; font-size: .8rem;
+  transition: all .12s;
+}
+.pipe-btn:hover { border-color: var(--border2); color: var(--text); background: var(--panel2); }
+.pipe-btn.del:hover { border-color: var(--red); color: var(--red); background: rgba(231,76,60,.1); }
+.drag-handle { cursor: grab; color: var(--muted); font-size: .75rem; flex-shrink: 0; }
+.drag-handle:active { cursor: grabbing; }
 
-  /* arrow */
-  .arrow { display: flex; justify-content: center; color: var(--muted); font-size: 1.2rem; }
+/* ── COMMAND OUTPUT ──────────────────────────────────────────────── */
+.cmd-bar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+  background: rgba(10,10,15,.95); backdrop-filter: blur(12px);
+  border-top: 1px solid var(--border2); padding: 12px 24px;
+  display: flex; align-items: center; gap: 14px;
+}
+.cmd-label { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); flex-shrink: 0; }
+.cmd-output {
+  flex: 1; background: var(--panel); border: 1px solid var(--border2);
+  border-radius: 8px; padding: 9px 14px;
+  font-family: 'Consolas', 'Fira Code', monospace; font-size: .85rem;
+  color: var(--text); overflow-x: auto; white-space: nowrap;
+  display: flex; align-items: center; gap: 0;
+}
+.cmd-prefix { color: var(--muted); }
+.cmd-effect { color: var(--accent2); font-weight: 600; }
+.cmd-empty { color: var(--muted); font-style: italic; font-size: .8rem; }
+.copy-btn {
+  background: var(--accent); border: none; border-radius: 8px; color: #fff;
+  padding: 8px 16px; font-size: .82rem; font-weight: 700; cursor: pointer;
+  transition: all .15s; flex-shrink: 0; letter-spacing: .02em;
+}
+.copy-btn:hover { background: #6a4daa; transform: translateY(-1px); }
+.copy-btn.copied { background: var(--green); }
+.slash-copy {
+  background: none; border: 1px solid var(--border2); border-radius: 8px;
+  color: var(--muted2); padding: 7px 12px; font-size: .78rem; cursor: pointer;
+  transition: all .15s; flex-shrink: 0; white-space: nowrap;
+}
+.slash-copy:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.slash-copy.copied { border-color: var(--green); color: var(--green); }
+.clear-btn {
+  background: none; border: 1px solid var(--border2); border-radius: 8px;
+  color: var(--muted); padding: 7px 12px; font-size: .78rem; cursor: pointer;
+  transition: all .12s; flex-shrink: 0;
+}
+.clear-btn:hover { border-color: var(--red); color: var(--red); background: rgba(231,76,60,.08); }
 
-  /* mix box */
-  .mix-box {
-    background: rgba(46,204,113,.08); border: 1px solid rgba(46,204,113,.25); border-radius: 8px;
-    padding: 10px 14px; font-size: .82rem; display: flex; align-items: center; gap: 10px;
-  }
-  .mix-badge { background: var(--green); color: #000; font-weight: 700; border-radius: 5px; padding: 2px 8px; font-size: .72rem; }
+/* ── TABS ─────────────────────────────────────────────────────────── */
+.info-strip {
+  padding: 8px 24px; background: rgba(58,134,255,.06);
+  border-bottom: 1px solid rgba(58,134,255,.12);
+  font-size: .78rem; color: var(--muted2); display: flex; align-items: center; gap: 8px;
+}
+.info-strip code {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 6px; font-family: monospace;
+  color: var(--accent2);
+}
 
-  /* export box */
-  .export-box {
-    background: rgba(231,76,60,.08); border: 1px solid rgba(231,76,60,.3); border-radius: 8px;
-    padding: 8px 14px; font-size: .82rem; display: flex; align-items: center; gap: 8px; color: var(--red);
-  }
-  .export-badge { background: var(--red); color: #fff; font-weight: 700; border-radius: 5px; padding: 2px 8px; font-size: .72rem; }
+/* ── SCROLLBAR ───────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
 
-  /* concat section */
-  .concat-section {
-    background: var(--panel); border: 2px solid var(--accent); border-radius: 12px; padding: 18px 20px;
-  }
-  .concat-header { font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 10px; font-size: .95rem; }
-  .concat-badge { background: var(--accent); color: #fff; border-radius: 6px; padding: 2px 10px; font-size: .8rem; }
-  .segments-strip { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
-  .seg-chip {
-    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-    padding: 8px 14px; font-size: .8rem; display: flex; flex-direction: column; gap: 3px; min-width: 90px;
-  }
-  .seg-chip-label { color: var(--muted); font-size: .7rem; }
-  .seg-chip-val { color: var(--accent2); font-weight: 600; }
-  .concat-arrow { text-align: center; color: var(--muted); font-size: 1.5rem; margin: 4px 0; }
-
-  /* final output */
-  .final-box {
-    background: linear-gradient(135deg, rgba(124,92,191,.2), rgba(58,134,255,.1));
-    border: 2px solid var(--accent); border-radius: 10px;
-    padding: 14px 18px; display: flex; align-items: center; gap: 14px;
-  }
-  .final-icon { font-size: 2rem; }
-  .final-info { display: flex; flex-direction: column; gap: 3px; }
-  .final-name { font-weight: 700; font-size: 1rem; }
-  .final-meta { color: var(--muted); font-size: .8rem; }
-
-  /* between-segment connector */
-  .seg-connector { display: flex; justify-content: center; align-items: center; color: var(--muted); font-size: .8rem; gap: 6px; }
-  .seg-connector::before, .seg-connector::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-
-  /* responsive */
-  @media (max-width: 600px) { .controls { flex-direction: column; } }
+@media (max-width: 700px) {
+  .builder-wrap { grid-template-columns: 1fr; }
+  .palette-panel { border-right: none; border-bottom: 1px solid var(--border); max-height: 220px; }
+  .cmd-bar { flex-wrap: wrap; }
+  header p { display: none; }
+}
 </style>
 </head>
 <body>
 
-<h1><span>t!multipitchihtx</span> — Pipeline Visualizer</h1>
-<p class="subtitle">Visualizes how pitch layers are rendered, mixed, and concatenated per segment.</p>
+<header>
+  <div class="logo">
+    <span class="cmd">th/</span><span class="slash">ihtx</span>
+    <span style="margin-left:6px;color:var(--muted)">·</span>
+    <span class="cmd2" style="margin-left:6px">Effect Builder</span>
+  </div>
+  <span class="header-badge">IHTX Bot</span>
+  <p>Build a pipe effects string, then copy the command to Discord</p>
+</header>
 
-<div class="controls">
-  <div class="ctrl-group">
-    <label>Pitch Layers (repetitions)</label>
-    <input type="range" id="reps" min="1" max="12" value="4">
-    <span class="val-display" id="reps-val">4</span>
-  </div>
-  <div class="ctrl-group">
-    <label>Spread (semitones)</label>
-    <input type="range" id="spread" min="1" max="20" value="4" step="1">
-    <span class="val-display" id="spread-val">0.4 st</span>
-  </div>
-  <div class="ctrl-group">
-    <label>Concat segments</label>
-    <input type="range" id="concat" min="1" max="6" value="2">
-    <span class="val-display" id="concat-val">2</span>
-  </div>
-  <div class="ctrl-group">
-    <label>Engine</label>
-    <select id="engine" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:.9rem;">
-      <option value="r3">r3 (fine, default)</option>
-      <option value="r2">r2 (fast)</option>
-      <option value="r4">r4 (= r3)</option>
-    </select>
-  </div>
-  <div class="ctrl-group">
-    <label>Duration per layer (s)</label>
-    <input type="number" id="duration" placeholder="none" min="1" max="3600" style="width:90px">
-  </div>
+<div class="info-strip">
+  <span>💡</span>
+  <span>Click a preset to add it, or pick effects below. Effects run left→right. Use <code>th/ihtx &lt;pipe&gt;</code> or slash <code>/ihtxgen effect:&lt;pipe&gt;</code></span>
 </div>
 
-<div class="pipeline" id="pipeline"></div>
+<main>
+  <!-- PRESETS -->
+  <div class="section">
+    <div class="section-title">Presets</div>
+    <div class="preset-grid" id="presetGrid"></div>
+  </div>
+
+  <!-- BUILDER -->
+  <div class="builder-wrap">
+    <!-- PALETTE -->
+    <div class="palette-panel">
+      <div class="section-title" style="margin-bottom:12px">Add Effects</div>
+      <div id="palette"></div>
+    </div>
+
+    <!-- PIPELINE -->
+    <div class="pipeline-panel">
+      <div class="pipeline-label">Pipeline</div>
+      <div id="pipelineEmpty" class="pipeline-empty">
+        <span>🎬</span>
+        <span>No effects yet</span>
+        <span class="hint">Click a preset or add effects from the palette →</span>
+      </div>
+      <div class="pipeline-list" id="pipelineList"></div>
+    </div>
+  </div>
+</main>
+
+<!-- COMMAND BAR -->
+<div class="cmd-bar">
+  <span class="cmd-label">Command</span>
+  <div class="cmd-output" id="cmdOutput">
+    <span class="cmd-empty">— add an effect or preset to generate a command —</span>
+  </div>
+  <button class="slash-copy" id="slashCopyBtn" onclick="copySlash()">Copy /ihtxgen</button>
+  <button class="copy-btn" id="copyBtn" onclick="copyCmd()">Copy th/ihtx</button>
+  <button class="clear-btn" onclick="clearPipeline()">Clear</button>
+</div>
 
 <script>
-const repsEl = document.getElementById('reps');
-const spreadEl = document.getElementById('spread');
-const concatEl = document.getElementById('concat');
-const engineEl = document.getElementById('engine');
-const durationEl = document.getElementById('duration');
-const repsVal = document.getElementById('reps-val');
-const spreadVal = document.getElementById('spread-val');
-const concatVal = document.getElementById('concat-val');
+// ─── DATA ────────────────────────────────────────────────────────────────────
 
-function linspace(from, to, n) {
-  if (n === 1) return [0];
-  return Array.from({ length: n }, (_, i) => from + (to - from) / (n - 1) * i);
-}
+const PRESETS = [
+  { id:'chaos',    name:'chaos',    tag:'distort', c:'#e74c3c', desc:'Shake + noise, rainbow hue, high contrast' },
+  { id:'glitch',   name:'glitch',   tag:'color',   c:'#9b59b6', desc:'RGB channel shift, noise, monochrome' },
+  { id:'shake',    name:'shake',    tag:'motion',  c:'#e67e22', desc:'Camera shake + noise, warm contrast' },
+  { id:'rainbow',  name:'rainbow',  tag:'color',   c:'#3498db', desc:'RGB channel-split prismatic blend' },
+  { id:'static',   name:'static',   tag:'color',   c:'#7f8c8d', desc:'Film noise + vintage curves' },
+  { id:'melt',     name:'melt',     tag:'distort', c:'#1abc9c', desc:'Perspective warp oscillating with sin(t)' },
+  { id:'corrupt',  name:'corrupt',  tag:'distort', c:'#e74c3c', desc:'Grid lines, noise, desaturated + high gamma' },
+  { id:'srw',      name:'srw',      tag:'complex', c:'#f39c12', desc:'4-way: negate / reverse / 0.5× / 2× + pitch' },
+  { id:'wave=large',       name:'largeWave',  tag:'distort', c:'#2980b9', desc:'Large sinusoidal wave warp' },
+  { id:'wave=medium',      name:'mediumWave', tag:'distort', c:'#2980b9', desc:'Medium wave displacement' },
+  { id:'wave=small',       name:'smallWave',  tag:'distort', c:'#2980b9', desc:'Small wave displacement' },
+  { id:'wave=horizontalOnly', name:'horizWave', tag:'distort', c:'#2980b9', desc:'Horizontal-only wave' },
+  { id:'wave=verticalOnly',   name:'vertWave',  tag:'distort', c:'#2980b9', desc:'Vertical-only wave' },
+  { id:'tvsim',    name:'tvsim',    tag:'complex', c:'#8e44ad', desc:'TV simulator: displacement + scanlines' },
+  { id:'earthquake', name:'earthquake', tag:'distort', c:'#c0392b', desc:'vidstab-based earthquake shake' },
+  { id:'freakzinga', name:'freakzinga', tag:'complex', c:'#d35400', desc:'Freakzinga composite glitch effect' },
+];
 
-function pitchColor(val, spread) {
-  const t = (val + spread / 2) / spread;
-  const h = Math.round(200 + t * 100);
-  return `hsl(${h}, 70%, 55%)`;
-}
+const CAT_COLORS = {
+  color: '#1abc9c', transform: '#e67e22', distort: '#9b59b6',
+  audio: '#3498db', time: '#e74c3c', complex: '#f39c12',
+};
 
-function build() {
-  const reps = +repsEl.value;
-  const spreadRaw = +spreadEl.value;
-  const spread = spreadRaw / 10;
-  const concatN = +concatEl.value;
-  const engine = engineEl.value;
-  const duration = durationEl.value ? +durationEl.value : null;
+const EFFECTS = {
+  color: {
+    label: 'Color',
+    items: [
+      { n:'invert',     d:'Invert all colors',         p:'',       ph:'' },
+      { n:'grayscale',  d:'Remove color',              p:'',       ph:'' },
+      { n:'sepia',      d:'Sepia tone',                p:'',       ph:'' },
+      { n:'brightness', d:'Adjust brightness',         p:'0.2',    ph:'-1.0 to 1.0' },
+      { n:'contrast',   d:'Adjust contrast',           p:'1.5',    ph:'0.0 – 3.0' },
+      { n:'saturation', d:'Adjust saturation',         p:'2',      ph:'0.0 – 3.0' },
+      { n:'huehsv',     d:'Hue shift (HSV)',           p:'0.5',    ph:'0.0 – 1.0 hue rotation' },
+      { n:'ccshue',     d:'Hue shift (ImageMagick)',   p:'90',     ph:'degrees 0 – 360' },
+      { n:'swapuv',     d:'Swap U/V chroma channels', p:'',       ph:'' },
+      { n:'invertrgb',  d:'Invert RGB only',           p:'',       ph:'' },
+      { n:'invlum',     d:'Invert luminosity (LUT)',   p:'',       ph:'' },
+      { n:'lut',        d:'Apply color LUT file',      p:'file.cube', ph:'LUT filename' },
+    ],
+  },
+  transform: {
+    label: 'Transform',
+    items: [
+      { n:'hflip',     d:'Flip horizontally',    p:'',    ph:'' },
+      { n:'vflip',     d:'Flip vertically',      p:'',    ph:'' },
+      { n:'rotate',    d:'Rotate by degrees',    p:'90',  ph:'degrees' },
+      { n:'mirror',    d:'Mirror: left → right', p:'',    ph:'' },
+      { n:'zoom',      d:'Zoom in/out',          p:'1.5', ph:'scale factor' },
+      { n:'swirl',     d:'Swirl distortion',     p:'90',  ph:'degrees of swirl' },
+      { n:'spherize',  d:'Barrel/spherize',      p:'',    ph:'' },
+      { n:'bulge',     d:'Bulge distortion',     p:'',    ph:'' },
+      { n:'ripple',    d:'Ripple wave distort',  p:'',    ph:'' },
+      { n:'scroll',    d:'Scroll/pan video',     p:'0.02',ph:'speed' },
+      { n:'pan',       d:'Pan across the video', p:'',    ph:'' },
+      { n:'stretch',   d:'Stretch to length',    p:'5',   ph:'seconds' },
+      { n:'tile',      d:'Tile in a grid',       p:'2x2', ph:'NxM' },
+    ],
+  },
+  distort: {
+    label: 'Distort',
+    items: [
+      { n:'wave',         d:'Sinusoidal warp',          p:'large',   ph:'large/medium/small/horizontalOnly/verticalOnly' },
+      { n:'wave2',        d:'Wave variant 2',           p:'',        ph:'' },
+      { n:'jitter',       d:'Frame jitter/stutter',     p:'',        ph:'' },
+      { n:'randomjitter', d:'Random jitter',            p:'',        ph:'' },
+      { n:'gradientmap',  d:'Map luma to gradient',     p:'#000,#fff', ph:'comma-separated hex colors' },
+      { n:'geq',          d:'Custom pixel math (geq)',  p:'',        ph:'ffmpeg geq expression' },
+    ],
+  },
+  audio: {
+    label: 'Audio',
+    items: [
+      { n:'volume',        d:'Adjust audio volume',    p:'2',     ph:'multiplier' },
+      { n:'vibrato',       d:'Vibrato modulation',     p:'5:0.5', ph:'freq:depth' },
+      { n:'areverse',      d:'Reverse audio',          p:'',      ph:'' },
+      { n:'acontrast',     d:'Audio contrast',         p:'33',    ph:'0 – 100' },
+      { n:'alimiter',      d:'Audio limiter',          p:'',      ph:'' },
+      { n:'audioequalizer',d:'Parametric EQ',          p:'',      ph:'' },
+      { n:'vocoder',       d:'Vocoder effect',         p:'',      ph:'' },
+      { n:'multipitch',    d:'Multi-voice pitch shift', p:'3:0.5', ph:'voices:spread' },
+      { n:'multipitch2',   d:'Multipitch v2',          p:'3',     ph:'voices' },
+    ],
+  },
+  time: {
+    label: 'Time / Speed',
+    items: [
+      { n:'speed',    d:'Change playback speed', p:'0.5', ph:'multiplier (0.25 – 4.0)' },
+      { n:'trim',     d:'Trim clip duration',    p:'0:5', ph:'start:end (seconds)' },
+      { n:'vreverse', d:'Reverse video',         p:'',   ph:'' },
+    ],
+  },
+  complex: {
+    label: 'Complex / Raw',
+    items: [
+      { n:'tvsim',      d:'TV simulator (displacement)',  p:'',        ph:'' },
+      { n:'earthquake', d:'Earthquake shake (vidstab)',   p:'',        ph:'' },
+      { n:'freakzinga', d:'Freakzinga composite effect',  p:'',        ph:'' },
+      { n:'frei0r',     d:'Apply a frei0r plugin',        p:'plugin',  ph:'plugin name' },
+      { n:'imagemagick',d:'ImageMagick operation',        p:'-fx',     ph:'magick args' },
+      { n:'ffmpeg',     d:'Raw ffmpeg filter',            p:'filter',  ph:'vf filter string' },
+      { n:'watermark',  d:'Add watermark text',           p:'text',    ph:'watermark text' },
+      { n:'caption',    d:'Add caption text',             p:'text',    ph:'caption' },
+      { n:'timecode',   d:'Overlay timecode',             p:'',        ph:'' },
+      { n:'radar',      d:'Radar scan overlay',           p:'',        ph:'' },
+      { n:'nepeta',     d:'Nepeta effect',                p:'',        ph:'' },
+      { n:'gm4',        d:'GM4 effect',                   p:'',        ph:'' },
+      { n:'realgm4',    d:'Real GM4 effect',              p:'',        ph:'' },
+    ],
+  },
+};
 
-  repsVal.textContent = reps;
-  spreadVal.textContent = spread.toFixed(1) + ' st';
-  concatVal.textContent = concatN;
+// ─── STATE ───────────────────────────────────────────────────────────────────
 
-  const offsets = linspace(-spread / 2, spread / 2, reps);
-  const pipeline = document.getElementById('pipeline');
-  pipeline.innerHTML = '';
+let pipeline = []; // [{ name, params, hint }]
+let dragSrcIdx = null;
 
-  // ── Input source ────────────────────────────────────────────────────────────
-  const srcRow = document.createElement('div');
-  srcRow.style.cssText = 'background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 18px;display:flex;align-items:center;gap:12px;font-size:.88rem;';
-  srcRow.innerHTML = `<span style="font-size:1.4rem">🎵</span><div><div style="font-weight:600">Original attachment</div><div style="color:var(--muted);font-size:.78rem">Extracted to 44100 Hz PCM WAV (shared input for all segments)</div></div>`;
-  pipeline.appendChild(srcRow);
+// ─── PRESETS ─────────────────────────────────────────────────────────────────
 
-  // ── Segments ─────────────────────────────────────────────────────────────
-  const segmentChips = [];
-
-  for (let seg = 0; seg < concatN; seg++) {
-    // Connector between segments
-    if (seg > 0) {
-      const conn = document.createElement('div');
-      conn.className = 'seg-connector';
-      conn.innerHTML = `↓ segment ${seg + 1} rendered from same original ↓`;
-      pipeline.appendChild(conn);
-    } else {
-      const arr = document.createElement('div');
-      arr.className = 'arrow';
-      arr.innerHTML = seg === 0 ? (concatN > 1 ? '↓ render segment 1 of ' + concatN : '↓') : '';
-      if (arr.innerHTML) pipeline.appendChild(arr);
-    }
-
+function renderPresets() {
+  const grid = document.getElementById('presetGrid');
+  grid.innerHTML = '';
+  PRESETS.forEach(p => {
     const card = document.createElement('div');
-    card.className = 'segment-card';
+    card.className = 'preset-card';
+    card.style.setProperty('--c', p.c);
+    card.innerHTML = `
+      <div class="preset-tag">${p.tag}</div>
+      <div class="preset-name">${p.name}</div>
+      <div class="preset-desc">${p.desc}</div>`;
+    card.addEventListener('click', () => addPreset(p));
+    grid.appendChild(card);
+  });
+}
 
-    const header = document.createElement('div');
-    header.className = 'seg-header';
-    header.innerHTML = `<span class="seg-num">Segment ${seg + 1}</span> ${reps} pitch layers → amix → export WAV`;
-    card.appendChild(header);
+function addPreset(p) {
+  // Extract name and params from preset id (e.g. "wave=large" → name=wave, params=large)
+  let name = p.id, params = '';
+  if (p.id.includes('=')) {
+    const eq = p.id.indexOf('=');
+    name = p.id.slice(0, eq);
+    params = p.id.slice(eq + 1);
+  }
+  addEffect(name, params, p.desc);
+}
 
-    const body = document.createElement('div');
-    body.className = 'seg-body';
+// ─── PALETTE ─────────────────────────────────────────────────────────────────
 
-    // Layers
-    const layersWrap = document.createElement('div');
-    layersWrap.className = 'layers-wrap';
-
-    offsets.forEach((offset, i) => {
-      const row = document.createElement('div');
-      row.className = 'layer-row';
-      const col = pitchColor(offset, spread);
-      const sign = offset >= 0 ? '+' : '';
-      const durLabel = duration ? `, ${duration}s` : '';
-      row.innerHTML = `
-        <div class="layer-fill" style="animation-delay:${i * 0.04}s"></div>
-        <span class="layer-tag" style="color:${col};border-color:${col}40;background:${col}18">${sign}${offset.toFixed(3)} st</span>
-        <span class="layer-label">Layer ${i + 1}${durLabel}</span>
-        <span class="layer-tool">rubberband ${engine === 'r2' ? '-2' : '-3'} --pitch ${sign}${offset.toFixed(3)}</span>
-      `;
-      layersWrap.appendChild(row);
+function renderPalette() {
+  const pal = document.getElementById('palette');
+  pal.innerHTML = '';
+  Object.entries(EFFECTS).forEach(([cat, group]) => {
+    const cc = CAT_COLORS[cat];
+    const wrap = document.createElement('div');
+    wrap.className = 'palette-group';
+    const title = document.createElement('div');
+    title.className = 'palette-group-title';
+    title.style.setProperty('--cat-color', cc);
+    title.innerHTML = `<span class="cat-dot"></span>${group.label}<span class="toggle">▾</span>`;
+    title.addEventListener('click', () => {
+      title.classList.toggle('collapsed');
+      chips.classList.toggle('hidden');
     });
 
-    body.appendChild(layersWrap);
+    const chips = document.createElement('div');
+    chips.className = 'palette-chips';
+    chips.style.setProperty('--cat-color', cc);
 
-    // Arrow + amix
-    const arrowEl = document.createElement('div');
-    arrowEl.className = 'arrow';
-    arrowEl.textContent = '↓';
-    body.appendChild(arrowEl);
+    group.items.forEach(eff => {
+      const chip = document.createElement('div');
+      chip.className = 'eff-chip';
+      chip.style.setProperty('--cat-color', cc);
+      chip.title = eff.d;
+      chip.innerHTML = `<span class="plus">+</span>${eff.n}`;
+      chip.addEventListener('click', () => addEffect(eff.n, eff.p, eff.ph || eff.d));
+      chips.appendChild(chip);
+    });
 
-    const mixBox = document.createElement('div');
-    mixBox.className = 'mix-box';
-    mixBox.innerHTML = `<span class="mix-badge">amix</span> Combine all ${reps} layers — <code style="font-size:.78rem">normalize=0, alimiter=0.99</code>`;
-    body.appendChild(mixBox);
-
-    // Arrow + export
-    const arrowEl2 = document.createElement('div');
-    arrowEl2.className = 'arrow';
-    arrowEl2.textContent = '↓';
-    body.appendChild(arrowEl2);
-
-    const exportBox = document.createElement('div');
-    exportBox.className = 'export-box';
-    exportBox.innerHTML = `<span class="export-badge">WAV</span> segment_${seg}.wav exported`;
-    body.appendChild(exportBox);
-
-    segmentChips.push(`segment_${seg}.wav`);
-    card.appendChild(body);
-    pipeline.appendChild(card);
-  }
-
-  // ── Concat section ──────────────────────────────────────────────────────────
-  if (concatN > 1) {
-    const arrowEl = document.createElement('div');
-    arrowEl.className = 'arrow';
-    arrowEl.textContent = '↓';
-    pipeline.appendChild(arrowEl);
-
-    const concatSec = document.createElement('div');
-    concatSec.className = 'concat-section';
-    concatSec.innerHTML = `
-      <div class="concat-header">
-        <span class="concat-badge">ffmpeg concat</span>
-        Join ${concatN} segments end-to-end using concat demuxer (-f concat)
-      </div>
-      <div class="segments-strip">
-        ${segmentChips.map((f, i) => `
-          <div class="seg-chip">
-            <span class="seg-chip-label">Segment ${i + 1}</span>
-            <span class="seg-chip-val">${f}</span>
-          </div>
-          ${i < segmentChips.length - 1 ? '<div style="display:flex;align-items:center;color:var(--muted)">→</div>' : ''}
-        `).join('')}
-      </div>
-    `;
-    pipeline.appendChild(concatSec);
-  }
-
-  // ── Final output ────────────────────────────────────────────────────────────
-  const arrowFinal = document.createElement('div');
-  arrowFinal.className = 'arrow';
-  arrowFinal.textContent = '↓';
-  pipeline.appendChild(arrowFinal);
-
-  const finalBox = document.createElement('div');
-  finalBox.className = 'final-box';
-  const totalDesc = concatN > 1
-    ? `${concatN} × (${reps}-layer amix)` : `${reps}-layer amix`;
-  finalBox.innerHTML = `
-    <span class="final-icon">🎧</span>
-    <div class="final-info">
-      <span class="final-name">multipitchihtx.wav</span>
-      <span class="final-meta">${totalDesc} · engine: ${engine} · spread: ±${(spread/2).toFixed(2)} st${duration ? ' · ' + duration + 's/layer' : ''}</span>
-    </div>
-    <div style="margin-left:auto;background:rgba(46,204,113,.15);border:1px solid var(--green);border-radius:8px;padding:6px 14px;font-size:.8rem;color:var(--green)">
-      ✅ Upload to Discord
-    </div>
-  `;
-  pipeline.appendChild(finalBox);
+    wrap.appendChild(title);
+    wrap.appendChild(chips);
+    pal.appendChild(wrap);
+  });
 }
 
-[repsEl, spreadEl, concatEl, engineEl, durationEl].forEach(el => el.addEventListener('input', build));
-build();
+// ─── PIPELINE ────────────────────────────────────────────────────────────────
+
+function addEffect(name, params, hint) {
+  pipeline.push({ name, params, hint: hint || '' });
+  renderPipeline();
+  updateCmd();
+}
+
+function removeEffect(idx) {
+  pipeline.splice(idx, 1);
+  renderPipeline();
+  updateCmd();
+}
+
+function moveEffect(idx, dir) {
+  const to = idx + dir;
+  if (to < 0 || to >= pipeline.length) return;
+  [pipeline[idx], pipeline[to]] = [pipeline[to], pipeline[idx]];
+  renderPipeline();
+  updateCmd();
+}
+
+function clearPipeline() {
+  pipeline = [];
+  renderPipeline();
+  updateCmd();
+}
+
+function renderPipeline() {
+  const list = document.getElementById('pipelineList');
+  const empty = document.getElementById('pipelineEmpty');
+  list.innerHTML = '';
+
+  if (pipeline.length === 0) {
+    empty.style.display = 'flex';
+    return;
+  }
+  empty.style.display = 'none';
+
+  pipeline.forEach((eff, i) => {
+    const row = document.createElement('div');
+    row.className = 'pipe-item';
+    row.draggable = true;
+    row.dataset.idx = i;
+
+    row.innerHTML = `
+      <span class="drag-handle" title="Drag to reorder">⠿</span>
+      <span class="pipe-num">${i + 1}</span>
+      <span class="pipe-name">${escHtml(eff.name)}</span>
+      ${eff.params !== '' ? `<span class="pipe-sep">=</span>
+        <input class="pipe-params" value="${escHtml(eff.params)}" placeholder="${escHtml(eff.hint)}" data-idx="${i}" />` :
+        `<span class="pipe-hint">${escHtml(eff.hint)}</span>`}
+      <div class="pipe-actions">
+        <button class="pipe-btn" title="Move up" onclick="moveEffect(${i},-1)">↑</button>
+        <button class="pipe-btn" title="Move down" onclick="moveEffect(${i},1)">↓</button>
+        <button class="pipe-btn del" title="Remove" onclick="removeEffect(${i})">✕</button>
+      </div>`;
+
+    // params input live update
+    const inp = row.querySelector('.pipe-params');
+    if (inp) inp.addEventListener('input', e => { pipeline[i].params = e.target.value; updateCmd(); });
+
+    // drag & drop
+    row.addEventListener('dragstart', e => { dragSrcIdx = i; setTimeout(() => row.classList.add('dragging'), 0); });
+    row.addEventListener('dragend',   () => { row.classList.remove('dragging'); dragSrcIdx = null; clearDragOver(); });
+    row.addEventListener('dragover',  e => { e.preventDefault(); clearDragOver(); row.classList.add('drag-over'); });
+    row.addEventListener('drop',      e => {
+      e.preventDefault();
+      if (dragSrcIdx !== null && dragSrcIdx !== i) {
+        const moved = pipeline.splice(dragSrcIdx, 1)[0];
+        pipeline.splice(i, 0, moved);
+        renderPipeline(); updateCmd();
+      }
+    });
+
+    list.appendChild(row);
+  });
+}
+
+function clearDragOver() {
+  document.querySelectorAll('.pipe-item.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+// ─── COMMAND ─────────────────────────────────────────────────────────────────
+
+function buildPipeStr() {
+  return pipeline.map(eff => {
+    const p = eff.params.trim();
+    return p ? `${eff.name}=${p}` : eff.name;
+  }).join(',');
+}
+
+function updateCmd() {
+  const out = document.getElementById('cmdOutput');
+  const pipe = buildPipeStr();
+  if (!pipe) {
+    out.innerHTML = '<span class="cmd-empty">— add an effect or preset to generate a command —</span>';
+    return;
+  }
+  out.innerHTML = `<span class="cmd-prefix">th/ihtx&nbsp;</span><span class="cmd-effect">${escHtml(pipe)}</span>`;
+}
+
+function copyCmd() {
+  const pipe = buildPipeStr();
+  if (!pipe) return;
+  navigator.clipboard.writeText(`th/ihtx ${pipe}`);
+  const btn = document.getElementById('copyBtn');
+  btn.textContent = '✓ Copied!'; btn.classList.add('copied');
+  setTimeout(() => { btn.textContent = 'Copy th/ihtx'; btn.classList.remove('copied'); }, 1800);
+}
+
+function copySlash() {
+  const pipe = buildPipeStr();
+  if (!pipe) return;
+  navigator.clipboard.writeText(pipe);
+  const btn = document.getElementById('slashCopyBtn');
+  btn.textContent = '✓ Copied effect!'; btn.classList.add('copied');
+  setTimeout(() => { btn.textContent = 'Copy /ihtxgen'; btn.classList.remove('copied'); }, 1800);
+}
+
+// ─── UTILS ───────────────────────────────────────────────────────────────────
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── INIT ────────────────────────────────────────────────────────────────────
+
+renderPresets();
+renderPalette();
+renderPipeline();
+updateCmd();
 </script>
 </body>
 </html>
