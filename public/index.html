@@ -21,12 +21,6 @@
   --text: #e8e8f2;
   --muted: #6a6a85;
   --muted2: #9090b0;
-  --tag-color: #1abc9c;
-  --tag-motion: #e67e22;
-  --tag-distort: #9b59b6;
-  --tag-audio: #3498db;
-  --tag-time: #e74c3c;
-  --tag-complex: #f39c12;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { font-size: 14px; }
@@ -34,213 +28,286 @@ body {
   background: var(--bg); color: var(--text);
   font-family: 'Segoe UI', system-ui, sans-serif;
   min-height: 100vh; display: flex; flex-direction: column;
-  padding-bottom: 90px;
+  padding-bottom: 88px;
 }
 
 /* ── HEADER ─────────────────────────────────────────────────────── */
 header {
   position: sticky; top: 0; z-index: 100;
-  background: rgba(10,10,15,.92); backdrop-filter: blur(12px);
+  background: rgba(10,10,15,.95); backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
-  padding: 14px 24px; display: flex; align-items: center; gap: 16px;
+  padding: 12px 24px; display: flex; align-items: center; gap: 14px;
 }
-.logo { font-size: 1.2rem; font-weight: 800; letter-spacing: -.02em; }
-.logo .cmd { color: var(--accent); }
-.logo .slash { color: var(--muted); }
+.logo { font-size: 1.15rem; font-weight: 800; letter-spacing: -.02em; }
+.logo .cmd  { color: var(--accent); }
 .logo .cmd2 { color: var(--accent2); }
-header p { color: var(--muted2); font-size: .82rem; margin-left: auto; }
-.header-badge {
+.logo .sep  { color: var(--muted); margin: 0 6px; }
+.hbadge {
   background: var(--accent-dim); border: 1px solid var(--accent);
-  color: var(--accent); border-radius: 20px; padding: 3px 10px;
-  font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--accent); border-radius: 20px; padding: 2px 9px;
+  font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+}
+header .tagline { color: var(--muted2); font-size: .8rem; margin-left: auto; }
+
+/* ── INFO STRIP ──────────────────────────────────────────────────── */
+.info-strip {
+  padding: 7px 24px; background: rgba(58,134,255,.05);
+  border-bottom: 1px solid rgba(58,134,255,.1);
+  font-size: .77rem; color: var(--muted2); display: flex; align-items: center; gap: 8px;
+}
+.info-strip code {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 5px; color: var(--accent2); font-family: monospace;
 }
 
-/* ── LAYOUT ──────────────────────────────────────────────────────── */
-main { flex: 1; display: flex; flex-direction: column; gap: 0; }
-.section { padding: 20px 24px; border-bottom: 1px solid var(--border); }
-.section-title {
-  font-size: .72rem; font-weight: 700; letter-spacing: .12em;
-  text-transform: uppercase; color: var(--muted); margin-bottom: 14px;
-  display: flex; align-items: center; gap: 10px;
+/* ── SECTION ─────────────────────────────────────────────────────── */
+.section { padding: 18px 24px; border-bottom: 1px solid var(--border); }
+.sec-title {
+  font-size: .68rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 12px; display: flex; align-items: center; gap: 10px;
 }
-.section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.sec-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+/* ── DROP ZONE ───────────────────────────────────────────────────── */
+#dropzone {
+  border: 2px dashed var(--border2); border-radius: 12px;
+  padding: 28px 20px; text-align: center; cursor: pointer;
+  transition: all .18s; position: relative; background: var(--panel);
+}
+#dropzone:hover, #dropzone.drag-over {
+  border-color: var(--accent); background: var(--accent-dim);
+}
+#dropzone.has-file { border-style: solid; border-color: var(--accent2); background: var(--accent2-dim); }
+.dz-icon { font-size: 2rem; margin-bottom: 8px; }
+.dz-label { font-size: .95rem; font-weight: 600; margin-bottom: 4px; }
+.dz-sub   { font-size: .78rem; color: var(--muted2); }
+#fileInput { display: none; }
+#dropzone input[type=file] { display: none; }
+
+/* ── FILE PREVIEW ────────────────────────────────────────────────── */
+#filePreview {
+  display: none; align-items: center; gap: 16px;
+  background: var(--panel); border: 1px solid var(--accent2);
+  border-radius: 10px; padding: 12px 16px; margin-top: 12px;
+}
+#filePreview.show { display: flex; }
+.fp-thumb {
+  width: 72px; height: 52px; border-radius: 6px; object-fit: cover;
+  background: var(--panel2); flex-shrink: 0; border: 1px solid var(--border2);
+}
+.fp-thumb video { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; }
+.fp-info { flex: 1; min-width: 0; }
+.fp-name { font-weight: 600; font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fp-meta { font-size: .74rem; color: var(--muted2); margin-top: 2px; }
+.fp-remove {
+  background: none; border: 1px solid var(--border2); border-radius: 6px;
+  color: var(--muted); cursor: pointer; padding: 5px 10px; font-size: .78rem;
+  transition: all .12s; flex-shrink: 0;
+}
+.fp-remove:hover { border-color: var(--red); color: var(--red); background: rgba(231,76,60,.08); }
+
+/* ── PROCESS BUTTON ──────────────────────────────────────────────── */
+#processWrap {
+  margin-top: 12px; display: none; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+#processWrap.show { display: flex; }
+#processBtn {
+  background: var(--accent); border: none; border-radius: 9px; color: #fff;
+  padding: 10px 22px; font-size: .9rem; font-weight: 700; cursor: pointer;
+  transition: all .15s; display: flex; align-items: center; gap: 8px;
+}
+#processBtn:hover:not(:disabled) { background: #6a4daa; transform: translateY(-1px); }
+#processBtn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+.process-note { font-size: .78rem; color: var(--muted2); }
+.unsupported-warn {
+  font-size: .75rem; color: var(--orange); background: rgba(243,156,18,.1);
+  border: 1px solid rgba(243,156,18,.3); border-radius: 6px; padding: 4px 10px;
+}
+
+/* ── SPINNER ─────────────────────────────────────────────────────── */
+.spinner {
+  width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.25);
+  border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite;
+  display: none;
+}
+#processBtn.loading .spinner { display: block; }
+#processBtn.loading .btn-text { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── RESULT ──────────────────────────────────────────────────────── */
+#resultBox {
+  display: none; margin-top: 12px;
+  background: var(--panel); border: 1px solid var(--green);
+  border-radius: 10px; padding: 14px 16px;
+}
+#resultBox.show { display: block; }
+.result-header {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.result-badge {
+  background: rgba(46,204,113,.15); border: 1px solid var(--green);
+  color: var(--green); border-radius: 6px; padding: 2px 9px; font-size: .72rem; font-weight: 700;
+}
+.result-header span { color: var(--muted2); font-size: .8rem; }
+#resultMedia { width: 100%; max-height: 360px; border-radius: 8px; display: block; object-fit: contain; background: #000; }
+.result-actions { margin-top: 10px; display: flex; gap: 8px; }
+.dl-btn {
+  background: var(--green); border: none; border-radius: 7px;
+  color: #000; font-weight: 700; padding: 8px 18px; font-size: .84rem;
+  cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+  transition: all .12s;
+}
+.dl-btn:hover { background: #27ae60; }
+.result-unsupported {
+  margin-top: 8px; font-size: .74rem; color: var(--orange);
+  background: rgba(243,156,18,.08); border: 1px solid rgba(243,156,18,.2);
+  border-radius: 6px; padding: 6px 10px;
+}
+
+/* ── ERROR BOX ───────────────────────────────────────────────────── */
+#errorBox {
+  display: none; margin-top: 10px;
+  background: rgba(231,76,60,.1); border: 1px solid rgba(231,76,60,.4);
+  border-radius: 8px; padding: 10px 14px; font-size: .82rem; color: #f08080;
+}
+#errorBox.show { display: block; }
 
 /* ── PRESETS ─────────────────────────────────────────────────────── */
-.preset-grid {
-  display: flex; flex-wrap: wrap; gap: 8px;
-}
+.preset-grid { display: flex; flex-wrap: wrap; gap: 7px; }
 .preset-card {
   background: var(--panel); border: 1px solid var(--border2);
-  border-radius: 10px; padding: 10px 14px; cursor: pointer;
-  transition: all .15s; display: flex; flex-direction: column; gap: 4px;
-  min-width: 120px; position: relative; overflow: hidden;
-  user-select: none;
+  border-radius: 9px; padding: 9px 13px; cursor: pointer;
+  transition: all .14s; display: flex; flex-direction: column; gap: 3px;
+  min-width: 110px; position: relative; overflow: hidden; user-select: none;
 }
 .preset-card::before {
   content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
   background: var(--c, var(--accent));
 }
-.preset-card:hover { border-color: var(--c, var(--accent)); background: var(--panel2); transform: translateY(-1px); }
-.preset-card.active { border-color: var(--c, var(--accent)); background: var(--panel2); box-shadow: 0 0 0 1px var(--c, var(--accent)); }
-.preset-name { font-weight: 700; font-size: .88rem; }
-.preset-desc { font-size: .72rem; color: var(--muted2); line-height: 1.3; }
-.preset-tag {
-  font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
-  color: var(--c, var(--accent)); margin-bottom: 2px;
-}
+.preset-card:hover  { border-color: var(--c,var(--accent)); background: var(--panel2); transform: translateY(-1px); }
+.preset-card.active { border-color: var(--c,var(--accent)); background: var(--panel2); box-shadow: 0 0 0 1px var(--c,var(--accent)); }
+.preset-name { font-weight: 700; font-size: .85rem; }
+.preset-desc { font-size: .7rem; color: var(--muted2); line-height: 1.3; }
+.preset-tag  { font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--c,var(--accent)); margin-bottom: 1px; }
 
-/* ── BUILDER BODY ────────────────────────────────────────────────── */
-.builder-wrap {
-  display: grid; grid-template-columns: 300px 1fr; min-height: 340px;
-}
+/* ── BUILDER ─────────────────────────────────────────────────────── */
+.builder-wrap { display: grid; grid-template-columns: 290px 1fr; min-height: 300px; }
 .palette-panel {
-  border-right: 1px solid var(--border); padding: 18px 16px;
-  overflow-y: auto; max-height: calc(100vh - 300px);
+  border-right: 1px solid var(--border); padding: 16px 14px;
+  overflow-y: auto; max-height: calc(100vh - 320px);
 }
-.pipeline-panel { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
+.pipeline-panel { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
 
-/* ── PALETTE ─────────────────────────────────────────────────────── */
-.palette-group { margin-bottom: 14px; }
-.palette-group-title {
-  font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em;
-  color: var(--muted); margin-bottom: 7px; display: flex; align-items: center; gap: 8px;
-  cursor: pointer;
+/* palette */
+.palette-group { margin-bottom: 12px; }
+.pg-title {
+  font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--muted); margin-bottom: 6px; display: flex; align-items: center; gap: 7px; cursor: pointer;
 }
-.palette-group-title .cat-dot {
-  width: 7px; height: 7px; border-radius: 50%; background: var(--cat-color);
-  flex-shrink: 0;
-}
-.palette-group-title .toggle { margin-left: auto; font-size: .75rem; color: var(--muted); transition: transform .2s; }
-.palette-group-title.collapsed .toggle { transform: rotate(-90deg); }
-.palette-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.pg-title .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--cc); flex-shrink: 0; }
+.pg-title .arr { margin-left: auto; font-size: .7rem; color: var(--muted); transition: transform .18s; }
+.pg-title.collapsed .arr { transform: rotate(-90deg); }
+.palette-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .palette-chips.hidden { display: none; }
 .eff-chip {
   background: var(--panel2); border: 1px solid var(--border2);
-  border-radius: 6px; padding: 4px 9px; font-size: .77rem;
-  cursor: pointer; transition: all .12s; white-space: nowrap;
-  display: flex; align-items: center; gap: 5px; color: var(--text);
+  border-radius: 5px; padding: 3px 8px; font-size: .74rem;
+  cursor: pointer; transition: all .11s; user-select: none;
+  display: flex; align-items: center; gap: 4px; color: var(--text);
 }
-.eff-chip:hover { border-color: var(--cat-color); color: var(--cat-color); background: rgba(255,255,255,.04); }
-.eff-chip .plus { font-size: .9rem; color: var(--muted); }
-.eff-chip[title]:hover::after {
-  content: attr(title); position: absolute; z-index: 99;
-  background: #222; border: 1px solid var(--border); border-radius: 6px;
-  padding: 4px 8px; font-size: .72rem; color: var(--muted2);
-  white-space: nowrap; pointer-events: none; margin-top: 28px;
-}
+.eff-chip:hover { border-color: var(--cc); color: var(--cc); background: rgba(255,255,255,.03); }
 
-/* ── PIPELINE ────────────────────────────────────────────────────── */
-.pipeline-label {
-  font-size: .72rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .1em; color: var(--muted); display: flex; align-items: center; gap: 10px;
+/* pipeline */
+.pl-label {
+  font-size: .67rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--muted); display: flex; align-items: center; gap: 9px;
 }
-.pipeline-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-.pipeline-empty {
+.pl-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.pl-empty {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  color: var(--muted); gap: 8px; padding: 40px 0; font-size: .9rem;
+  color: var(--muted); gap: 6px; padding: 32px 0; font-size: .88rem;
 }
-.pipeline-empty .hint { font-size: .78rem; color: var(--muted); opacity: .6; }
-.pipeline-list { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.pl-empty small { font-size: .74rem; opacity: .6; }
+.pipe-list { display: flex; flex-direction: column; gap: 5px; flex: 1; }
 
 .pipe-item {
-  background: var(--panel); border: 1px solid var(--border2); border-radius: 8px;
-  padding: 8px 12px; display: flex; align-items: center; gap: 10px;
-  transition: border-color .15s;
+  background: var(--panel); border: 1px solid var(--border2); border-radius: 7px;
+  padding: 7px 10px; display: flex; align-items: center; gap: 8px; transition: border-color .14s;
 }
 .pipe-item:hover { border-color: var(--border); }
-.pipe-item.dragging { opacity: .4; border-style: dashed; }
+.pipe-item.dragging  { opacity: .35; border-style: dashed; }
 .pipe-item.drag-over { border-color: var(--accent); background: var(--accent-dim); }
-.pipe-num {
-  width: 20px; text-align: center; font-size: .72rem; color: var(--muted);
-  font-weight: 700; flex-shrink: 0;
-}
-.pipe-name {
-  font-weight: 700; font-size: .85rem; color: var(--accent2); min-width: 90px; flex-shrink: 0;
-}
-.pipe-sep { color: var(--muted); font-size: .8rem; flex-shrink: 0; }
+.drag-handle { cursor: grab; color: var(--muted); font-size: .72rem; flex-shrink: 0; }
+.drag-handle:active { cursor: grabbing; }
+.pipe-num  { width: 18px; text-align: center; font-size: .68rem; color: var(--muted); font-weight: 700; flex-shrink: 0; }
+.pipe-name { font-weight: 700; font-size: .82rem; color: var(--accent2); min-width: 86px; flex-shrink: 0; }
+.pipe-sep  { color: var(--muted); font-size: .78rem; flex-shrink: 0; }
 .pipe-params {
   flex: 1; background: transparent; border: none; outline: none;
   border-bottom: 1px solid var(--border2); color: var(--text);
-  font-size: .82rem; padding: 1px 4px; min-width: 60px;
-  font-family: 'Consolas', 'Fira Code', monospace;
-  transition: border-color .15s;
+  font-size: .8rem; padding: 1px 4px; min-width: 50px;
+  font-family: 'Consolas','Fira Code',monospace; transition: border-color .14s;
 }
 .pipe-params:focus { border-color: var(--accent2); }
 .pipe-params::placeholder { color: var(--muted); }
-.pipe-hint { font-size: .7rem; color: var(--muted); white-space: nowrap; flex-shrink: 0; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
-.pipe-actions { display: flex; gap: 3px; flex-shrink: 0; margin-left: auto; }
-.pipe-btn {
-  background: none; border: 1px solid transparent; border-radius: 5px;
-  color: var(--muted); cursor: pointer; width: 24px; height: 24px;
-  display: flex; align-items: center; justify-content: center; font-size: .8rem;
-  transition: all .12s;
+.pipe-hint { font-size: .68rem; color: var(--muted); flex-shrink: 0; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pipe-acts { display: flex; gap: 2px; flex-shrink: 0; margin-left: auto; }
+.pbtn {
+  background: none; border: 1px solid transparent; border-radius: 4px;
+  color: var(--muted); cursor: pointer; width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center; font-size: .76rem;
+  transition: all .11s;
 }
-.pipe-btn:hover { border-color: var(--border2); color: var(--text); background: var(--panel2); }
-.pipe-btn.del:hover { border-color: var(--red); color: var(--red); background: rgba(231,76,60,.1); }
-.drag-handle { cursor: grab; color: var(--muted); font-size: .75rem; flex-shrink: 0; }
-.drag-handle:active { cursor: grabbing; }
+.pbtn:hover { border-color: var(--border2); color: var(--text); background: var(--panel2); }
+.pbtn.del:hover { border-color: var(--red); color: var(--red); background: rgba(231,76,60,.1); }
 
-/* ── COMMAND OUTPUT ──────────────────────────────────────────────── */
+/* ── COMMAND BAR ─────────────────────────────────────────────────── */
 .cmd-bar {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
-  background: rgba(10,10,15,.95); backdrop-filter: blur(12px);
-  border-top: 1px solid var(--border2); padding: 12px 24px;
-  display: flex; align-items: center; gap: 14px;
+  background: rgba(10,10,15,.96); backdrop-filter: blur(14px);
+  border-top: 1px solid var(--border2); padding: 10px 24px;
+  display: flex; align-items: center; gap: 12px;
 }
-.cmd-label { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); flex-shrink: 0; }
-.cmd-output {
+.cmd-lbl { font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); flex-shrink: 0; }
+.cmd-out {
   flex: 1; background: var(--panel); border: 1px solid var(--border2);
-  border-radius: 8px; padding: 9px 14px;
-  font-family: 'Consolas', 'Fira Code', monospace; font-size: .85rem;
-  color: var(--text); overflow-x: auto; white-space: nowrap;
-  display: flex; align-items: center; gap: 0;
+  border-radius: 7px; padding: 8px 13px;
+  font-family: 'Consolas','Fira Code',monospace; font-size: .83rem;
+  overflow-x: auto; white-space: nowrap; display: flex; align-items: center;
 }
 .cmd-prefix { color: var(--muted); }
 .cmd-effect { color: var(--accent2); font-weight: 600; }
-.cmd-empty { color: var(--muted); font-style: italic; font-size: .8rem; }
+.cmd-empty  { color: var(--muted); font-style: italic; font-size: .78rem; }
 .copy-btn {
-  background: var(--accent); border: none; border-radius: 8px; color: #fff;
-  padding: 8px 16px; font-size: .82rem; font-weight: 700; cursor: pointer;
-  transition: all .15s; flex-shrink: 0; letter-spacing: .02em;
+  background: var(--accent); border: none; border-radius: 7px; color: #fff;
+  padding: 7px 15px; font-size: .8rem; font-weight: 700; cursor: pointer;
+  transition: all .14s; flex-shrink: 0;
 }
-.copy-btn:hover { background: #6a4daa; transform: translateY(-1px); }
+.copy-btn:hover { background: #6a4daa; }
 .copy-btn.copied { background: var(--green); }
-.slash-copy {
-  background: none; border: 1px solid var(--border2); border-radius: 8px;
-  color: var(--muted2); padding: 7px 12px; font-size: .78rem; cursor: pointer;
-  transition: all .15s; flex-shrink: 0; white-space: nowrap;
+.slash-btn {
+  background: none; border: 1px solid var(--border2); border-radius: 7px;
+  color: var(--muted2); padding: 6px 11px; font-size: .76rem; cursor: pointer;
+  transition: all .14s; flex-shrink: 0; white-space: nowrap;
 }
-.slash-copy:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
-.slash-copy.copied { border-color: var(--green); color: var(--green); }
+.slash-btn:hover  { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.slash-btn.copied { border-color: var(--green); color: var(--green); }
 .clear-btn {
-  background: none; border: 1px solid var(--border2); border-radius: 8px;
-  color: var(--muted); padding: 7px 12px; font-size: .78rem; cursor: pointer;
-  transition: all .12s; flex-shrink: 0;
+  background: none; border: 1px solid var(--border2); border-radius: 7px;
+  color: var(--muted); padding: 6px 11px; font-size: .76rem; cursor: pointer; flex-shrink: 0;
+  transition: all .11s;
 }
-.clear-btn:hover { border-color: var(--red); color: var(--red); background: rgba(231,76,60,.08); }
+.clear-btn:hover { border-color: var(--red); color: var(--red); background: rgba(231,76,60,.07); }
 
-/* ── TABS ─────────────────────────────────────────────────────────── */
-.info-strip {
-  padding: 8px 24px; background: rgba(58,134,255,.06);
-  border-bottom: 1px solid rgba(58,134,255,.12);
-  font-size: .78rem; color: var(--muted2); display: flex; align-items: center; gap: 8px;
-}
-.info-strip code {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 4px; padding: 1px 6px; font-family: monospace;
-  color: var(--accent2);
-}
-
-/* ── SCROLLBAR ───────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
 
-@media (max-width: 700px) {
+@media (max-width: 680px) {
   .builder-wrap { grid-template-columns: 1fr; }
-  .palette-panel { border-right: none; border-bottom: 1px solid var(--border); max-height: 220px; }
-  .cmd-bar { flex-wrap: wrap; }
-  header p { display: none; }
+  .palette-panel { border-right: none; border-bottom: 1px solid var(--border); max-height: 200px; }
+  header .tagline { display: none; }
+  .cmd-bar { flex-wrap: wrap; gap: 8px; }
 }
 </style>
 </head>
@@ -248,221 +315,371 @@ main { flex: 1; display: flex; flex-direction: column; gap: 0; }
 
 <header>
   <div class="logo">
-    <span class="cmd">th/</span><span class="slash">ihtx</span>
-    <span style="margin-left:6px;color:var(--muted)">·</span>
-    <span class="cmd2" style="margin-left:6px">Effect Builder</span>
+    <span class="cmd">th/</span><span style="color:var(--muted2)">ihtx</span>
+    <span class="sep">·</span>
+    <span class="cmd2">Effect Builder</span>
   </div>
-  <span class="header-badge">IHTX Bot</span>
-  <p>Build a pipe effects string, then copy the command to Discord</p>
+  <span class="hbadge">IHTX Bot</span>
+  <span class="tagline">Build a pipe effects string · attach media · process with FFmpeg</span>
 </header>
 
 <div class="info-strip">
   <span>💡</span>
-  <span>Click a preset to add it, or pick effects below. Effects run left→right. Use <code>th/ihtx &lt;pipe&gt;</code> or slash <code>/ihtxgen effect:&lt;pipe&gt;</code></span>
+  <span>Pick a preset or add effects, attach a file to process it here, or copy the command to run in Discord via <code>th/ihtx</code> or <code>/ihtxgen effect:…</code></span>
 </div>
 
 <main>
-  <!-- PRESETS -->
+
+  <!-- ── ATTACHMENT ──────────────────────────────────────────────── -->
   <div class="section">
-    <div class="section-title">Presets</div>
+    <div class="sec-title">Attach Media</div>
+
+    <div id="dropzone" onclick="document.getElementById('fileInput').click()">
+      <input type="file" id="fileInput" accept="video/*,image/*,.mp4,.mov,.webm,.mkv,.gif,.jpg,.jpeg,.png,.webp">
+      <div class="dz-icon">📎</div>
+      <div class="dz-label">Drop a video or image here</div>
+      <div class="dz-sub">or click to browse · MP4, MOV, WEBM, MKV, GIF, JPG, PNG, WEBP · up to 150 MB</div>
+    </div>
+
+    <div id="filePreview">
+      <div id="fpThumbWrap"></div>
+      <div class="fp-info">
+        <div class="fp-name" id="fpName"></div>
+        <div class="fp-meta" id="fpMeta"></div>
+      </div>
+      <button class="fp-remove" onclick="clearFile()">✕ Remove</button>
+    </div>
+
+    <div id="processWrap">
+      <button id="processBtn" onclick="processFile()">
+        <div class="spinner"></div>
+        <span class="btn-text">⚡ Process with FFmpeg</span>
+      </button>
+      <span class="process-note" id="processNote"></span>
+      <span class="unsupported-warn" id="warnBox" style="display:none"></span>
+    </div>
+
+    <div id="resultBox">
+      <div class="result-header">
+        <span class="result-badge">✅ Done</span>
+        <span id="resultMeta"></span>
+      </div>
+      <video id="resultVideo" class="result-media" controls style="display:none;width:100%;max-height:360px;border-radius:8px;background:#000"></video>
+      <img   id="resultImage" class="result-media" style="display:none;width:100%;max-height:360px;border-radius:8px;object-fit:contain;background:#000">
+      <div class="result-actions">
+        <a id="dlLink" class="dl-btn" download>⬇ Download</a>
+      </div>
+      <div id="resultUnsupported" class="result-unsupported" style="display:none"></div>
+    </div>
+
+    <div id="errorBox"></div>
+  </div>
+
+  <!-- ── PRESETS ──────────────────────────────────────────────────── -->
+  <div class="section">
+    <div class="sec-title">Presets</div>
     <div class="preset-grid" id="presetGrid"></div>
   </div>
 
-  <!-- BUILDER -->
+  <!-- ── BUILDER ──────────────────────────────────────────────────── -->
   <div class="builder-wrap">
-    <!-- PALETTE -->
     <div class="palette-panel">
-      <div class="section-title" style="margin-bottom:12px">Add Effects</div>
+      <div class="sec-title" style="margin-bottom:10px">Add Effects</div>
       <div id="palette"></div>
     </div>
-
-    <!-- PIPELINE -->
     <div class="pipeline-panel">
-      <div class="pipeline-label">Pipeline</div>
-      <div id="pipelineEmpty" class="pipeline-empty">
+      <div class="pl-label">Pipeline</div>
+      <div id="plEmpty" class="pl-empty">
         <span>🎬</span>
         <span>No effects yet</span>
-        <span class="hint">Click a preset or add effects from the palette →</span>
+        <small>Click a preset or add effects from the left panel</small>
       </div>
-      <div class="pipeline-list" id="pipelineList"></div>
+      <div class="pipe-list" id="pipeList"></div>
     </div>
   </div>
+
 </main>
 
-<!-- COMMAND BAR -->
+<!-- ── COMMAND BAR ──────────────────────────────────────────────── -->
 <div class="cmd-bar">
-  <span class="cmd-label">Command</span>
-  <div class="cmd-output" id="cmdOutput">
-    <span class="cmd-empty">— add an effect or preset to generate a command —</span>
+  <span class="cmd-lbl">Command</span>
+  <div class="cmd-out" id="cmdOut">
+    <span class="cmd-empty">— add effects to generate a command —</span>
   </div>
-  <button class="slash-copy" id="slashCopyBtn" onclick="copySlash()">Copy /ihtxgen</button>
-  <button class="copy-btn" id="copyBtn" onclick="copyCmd()">Copy th/ihtx</button>
+  <button class="slash-btn" id="slashBtn" onclick="copySlash()">Copy /ihtxgen</button>
+  <button class="copy-btn"  id="copyBtn"  onclick="copyCmd()">Copy th/ihtx</button>
   <button class="clear-btn" onclick="clearPipeline()">Clear</button>
 </div>
 
 <script>
-// ─── DATA ────────────────────────────────────────────────────────────────────
+// ─── DATA ─────────────────────────────────────────────────────────────────────
 
 const PRESETS = [
-  { id:'chaos',    name:'chaos',    tag:'distort', c:'#e74c3c', desc:'Shake + noise, rainbow hue, high contrast' },
-  { id:'glitch',   name:'glitch',   tag:'color',   c:'#9b59b6', desc:'RGB channel shift, noise, monochrome' },
-  { id:'shake',    name:'shake',    tag:'motion',  c:'#e67e22', desc:'Camera shake + noise, warm contrast' },
-  { id:'rainbow',  name:'rainbow',  tag:'color',   c:'#3498db', desc:'RGB channel-split prismatic blend' },
-  { id:'static',   name:'static',   tag:'color',   c:'#7f8c8d', desc:'Film noise + vintage curves' },
-  { id:'melt',     name:'melt',     tag:'distort', c:'#1abc9c', desc:'Perspective warp oscillating with sin(t)' },
-  { id:'corrupt',  name:'corrupt',  tag:'distort', c:'#e74c3c', desc:'Grid lines, noise, desaturated + high gamma' },
-  { id:'srw',      name:'srw',      tag:'complex', c:'#f39c12', desc:'4-way: negate / reverse / 0.5× / 2× + pitch' },
-  { id:'wave=large',       name:'largeWave',  tag:'distort', c:'#2980b9', desc:'Large sinusoidal wave warp' },
-  { id:'wave=medium',      name:'mediumWave', tag:'distort', c:'#2980b9', desc:'Medium wave displacement' },
-  { id:'wave=small',       name:'smallWave',  tag:'distort', c:'#2980b9', desc:'Small wave displacement' },
+  { id:'chaos',           name:'chaos',       tag:'distort', c:'#e74c3c', desc:'Shake + noise, rainbow hue, high contrast' },
+  { id:'glitch',          name:'glitch',      tag:'color',   c:'#9b59b6', desc:'RGB channel shift, noise, monochrome' },
+  { id:'shake',           name:'shake',       tag:'motion',  c:'#e67e22', desc:'Camera shake + noise, warm contrast' },
+  { id:'rainbow',         name:'rainbow',     tag:'color',   c:'#3498db', desc:'RGB prism channel-split blend' },
+  { id:'static',          name:'static',      tag:'color',   c:'#7f8c8d', desc:'Film noise + vintage curves' },
+  { id:'melt',            name:'melt',        tag:'distort', c:'#1abc9c', desc:'Perspective warp with sin(t) oscillation' },
+  { id:'corrupt',         name:'corrupt',     tag:'distort', c:'#e74c3c', desc:'Grid lines, noise, desaturated high gamma' },
+  { id:'srw',             name:'srw',         tag:'complex', c:'#f39c12', desc:'4-way: negate / reverse / 0.5× / 2× + pitch' },
+  { id:'wave=large',      name:'largeWave',   tag:'distort', c:'#2980b9', desc:'Large sinusoidal wave warp' },
+  { id:'wave=medium',     name:'medWave',     tag:'distort', c:'#2980b9', desc:'Medium wave displacement' },
+  { id:'wave=small',      name:'smallWave',   tag:'distort', c:'#2980b9', desc:'Small wave displacement' },
   { id:'wave=horizontalOnly', name:'horizWave', tag:'distort', c:'#2980b9', desc:'Horizontal-only wave' },
   { id:'wave=verticalOnly',   name:'vertWave',  tag:'distort', c:'#2980b9', desc:'Vertical-only wave' },
-  { id:'tvsim',    name:'tvsim',    tag:'complex', c:'#8e44ad', desc:'TV simulator: displacement + scanlines' },
-  { id:'earthquake', name:'earthquake', tag:'distort', c:'#c0392b', desc:'vidstab-based earthquake shake' },
-  { id:'freakzinga', name:'freakzinga', tag:'complex', c:'#d35400', desc:'Freakzinga composite glitch effect' },
+  { id:'tvsim',           name:'tvsim',       tag:'complex', c:'#8e44ad', desc:'TV simulator: displacement + scanlines' },
+  { id:'earthquake',      name:'earthquake',  tag:'distort', c:'#c0392b', desc:'vidstab earthquake shake' },
+  { id:'freakzinga',      name:'freakzinga',  tag:'complex', c:'#d35400', desc:'Freakzinga composite glitch' },
 ];
 
-const CAT_COLORS = {
-  color: '#1abc9c', transform: '#e67e22', distort: '#9b59b6',
-  audio: '#3498db', time: '#e74c3c', complex: '#f39c12',
+const CAT = {
+  color:     { label:'Color',        cc:'#1abc9c' },
+  transform: { label:'Transform',    cc:'#e67e22' },
+  distort:   { label:'Distort',      cc:'#9b59b6' },
+  audio:     { label:'Audio',        cc:'#3498db' },
+  time:      { label:'Time / Speed', cc:'#e74c3c' },
+  complex:   { label:'Complex / Raw',cc:'#f39c12' },
 };
 
 const EFFECTS = {
-  color: {
-    label: 'Color',
-    items: [
-      { n:'invert',     d:'Invert all colors',         p:'',       ph:'' },
-      { n:'grayscale',  d:'Remove color',              p:'',       ph:'' },
-      { n:'sepia',      d:'Sepia tone',                p:'',       ph:'' },
-      { n:'brightness', d:'Adjust brightness',         p:'0.2',    ph:'-1.0 to 1.0' },
-      { n:'contrast',   d:'Adjust contrast',           p:'1.5',    ph:'0.0 – 3.0' },
-      { n:'saturation', d:'Adjust saturation',         p:'2',      ph:'0.0 – 3.0' },
-      { n:'huehsv',     d:'Hue shift (HSV)',           p:'0.5',    ph:'0.0 – 1.0 hue rotation' },
-      { n:'ccshue',     d:'Hue shift (ImageMagick)',   p:'90',     ph:'degrees 0 – 360' },
-      { n:'swapuv',     d:'Swap U/V chroma channels', p:'',       ph:'' },
-      { n:'invertrgb',  d:'Invert RGB only',           p:'',       ph:'' },
-      { n:'invlum',     d:'Invert luminosity (LUT)',   p:'',       ph:'' },
-      { n:'lut',        d:'Apply color LUT file',      p:'file.cube', ph:'LUT filename' },
-    ],
-  },
-  transform: {
-    label: 'Transform',
-    items: [
-      { n:'hflip',     d:'Flip horizontally',    p:'',    ph:'' },
-      { n:'vflip',     d:'Flip vertically',      p:'',    ph:'' },
-      { n:'rotate',    d:'Rotate by degrees',    p:'90',  ph:'degrees' },
-      { n:'mirror',    d:'Mirror: left → right', p:'',    ph:'' },
-      { n:'zoom',      d:'Zoom in/out',          p:'1.5', ph:'scale factor' },
-      { n:'swirl',     d:'Swirl distortion',     p:'90',  ph:'degrees of swirl' },
-      { n:'spherize',  d:'Barrel/spherize',      p:'',    ph:'' },
-      { n:'bulge',     d:'Bulge distortion',     p:'',    ph:'' },
-      { n:'ripple',    d:'Ripple wave distort',  p:'',    ph:'' },
-      { n:'scroll',    d:'Scroll/pan video',     p:'0.02',ph:'speed' },
-      { n:'pan',       d:'Pan across the video', p:'',    ph:'' },
-      { n:'stretch',   d:'Stretch to length',    p:'5',   ph:'seconds' },
-      { n:'tile',      d:'Tile in a grid',       p:'2x2', ph:'NxM' },
-    ],
-  },
-  distort: {
-    label: 'Distort',
-    items: [
-      { n:'wave',         d:'Sinusoidal warp',          p:'large',   ph:'large/medium/small/horizontalOnly/verticalOnly' },
-      { n:'wave2',        d:'Wave variant 2',           p:'',        ph:'' },
-      { n:'jitter',       d:'Frame jitter/stutter',     p:'',        ph:'' },
-      { n:'randomjitter', d:'Random jitter',            p:'',        ph:'' },
-      { n:'gradientmap',  d:'Map luma to gradient',     p:'#000,#fff', ph:'comma-separated hex colors' },
-      { n:'geq',          d:'Custom pixel math (geq)',  p:'',        ph:'ffmpeg geq expression' },
-    ],
-  },
-  audio: {
-    label: 'Audio',
-    items: [
-      { n:'volume',        d:'Adjust audio volume',    p:'2',     ph:'multiplier' },
-      { n:'vibrato',       d:'Vibrato modulation',     p:'5:0.5', ph:'freq:depth' },
-      { n:'areverse',      d:'Reverse audio',          p:'',      ph:'' },
-      { n:'acontrast',     d:'Audio contrast',         p:'33',    ph:'0 – 100' },
-      { n:'alimiter',      d:'Audio limiter',          p:'',      ph:'' },
-      { n:'audioequalizer',d:'Parametric EQ',          p:'',      ph:'' },
-      { n:'vocoder',       d:'Vocoder effect',         p:'',      ph:'' },
-      { n:'multipitch',    d:'Multi-voice pitch shift', p:'3:0.5', ph:'voices:spread' },
-      { n:'multipitch2',   d:'Multipitch v2',          p:'3',     ph:'voices' },
-    ],
-  },
-  time: {
-    label: 'Time / Speed',
-    items: [
-      { n:'speed',    d:'Change playback speed', p:'0.5', ph:'multiplier (0.25 – 4.0)' },
-      { n:'trim',     d:'Trim clip duration',    p:'0:5', ph:'start:end (seconds)' },
-      { n:'vreverse', d:'Reverse video',         p:'',   ph:'' },
-    ],
-  },
-  complex: {
-    label: 'Complex / Raw',
-    items: [
-      { n:'tvsim',      d:'TV simulator (displacement)',  p:'',        ph:'' },
-      { n:'earthquake', d:'Earthquake shake (vidstab)',   p:'',        ph:'' },
-      { n:'freakzinga', d:'Freakzinga composite effect',  p:'',        ph:'' },
-      { n:'frei0r',     d:'Apply a frei0r plugin',        p:'plugin',  ph:'plugin name' },
-      { n:'imagemagick',d:'ImageMagick operation',        p:'-fx',     ph:'magick args' },
-      { n:'ffmpeg',     d:'Raw ffmpeg filter',            p:'filter',  ph:'vf filter string' },
-      { n:'watermark',  d:'Add watermark text',           p:'text',    ph:'watermark text' },
-      { n:'caption',    d:'Add caption text',             p:'text',    ph:'caption' },
-      { n:'timecode',   d:'Overlay timecode',             p:'',        ph:'' },
-      { n:'radar',      d:'Radar scan overlay',           p:'',        ph:'' },
-      { n:'nepeta',     d:'Nepeta effect',                p:'',        ph:'' },
-      { n:'gm4',        d:'GM4 effect',                   p:'',        ph:'' },
-      { n:'realgm4',    d:'Real GM4 effect',              p:'',        ph:'' },
-    ],
-  },
+  color: [
+    { n:'invert',      d:'Invert all colors',          p:'',          ph:'' },
+    { n:'grayscale',   d:'Remove color',               p:'',          ph:'' },
+    { n:'sepia',       d:'Sepia tone',                 p:'',          ph:'' },
+    { n:'brightness',  d:'Adjust brightness',          p:'0.2',       ph:'-1.0 to 1.0' },
+    { n:'contrast',    d:'Adjust contrast',            p:'1.5',       ph:'0.0 – 3.0' },
+    { n:'saturation',  d:'Adjust saturation',          p:'2',         ph:'0.0 – 3.0' },
+    { n:'huehsv',      d:'Hue shift (0.0 – 1.0)',      p:'0.5',       ph:'0.0 – 1.0 hue rotation' },
+    { n:'swapuv',      d:'Swap U/V chroma channels',   p:'',          ph:'' },
+    { n:'invertrgb',   d:'Invert RGB channels only',   p:'',          ph:'' },
+    { n:'invlum',      d:'Invert luminosity',          p:'',          ph:'' },
+  ],
+  transform: [
+    { n:'hflip',    d:'Flip horizontally',  p:'',    ph:'' },
+    { n:'vflip',    d:'Flip vertically',    p:'',    ph:'' },
+    { n:'rotate',   d:'Rotate by degrees',  p:'90',  ph:'degrees' },
+    { n:'zoom',     d:'Zoom in/out',        p:'1.5', ph:'scale factor' },
+    { n:'spherize', d:'Barrel/spherize',    p:'',    ph:'' },
+    { n:'bulge',    d:'Bulge distortion',   p:'',    ph:'' },
+    { n:'ripple',   d:'Ripple distortion',  p:'',    ph:'' },
+    { n:'scroll',   d:'Scroll/pan video',   p:'0.02',ph:'speed' },
+    { n:'tile',     d:'Tile in a grid',     p:'2x2', ph:'NxM' },
+    { n:'stretch',  d:'Stretch to length',  p:'5',   ph:'seconds' },
+  ],
+  distort: [
+    { n:'wave',          d:'Sinusoidal warp',       p:'large', ph:'large/medium/small/horizontalOnly/verticalOnly' },
+    { n:'wave2',         d:'Wave variant 2',        p:'',      ph:'' },
+    { n:'jitter',        d:'Frame jitter/stutter',  p:'',      ph:'' },
+    { n:'randomjitter',  d:'Random frame jitter',   p:'',      ph:'' },
+    { n:'timecode',      d:'Overlay timecode',      p:'',      ph:'' },
+  ],
+  audio: [
+    { n:'volume',        d:'Adjust volume',         p:'2',     ph:'multiplier' },
+    { n:'vibrato',       d:'Vibrato modulation',    p:'5:0.5', ph:'freq:depth' },
+    { n:'areverse',      d:'Reverse audio',         p:'',      ph:'' },
+    { n:'acontrast',     d:'Audio contrast',        p:'33',    ph:'0 – 100' },
+    { n:'alimiter',      d:'Audio limiter',         p:'',      ph:'' },
+    { n:'multipitch',    d:'Multi-voice pitch',     p:'3:0.5', ph:'voices:spread' },
+    { n:'multipitch2',   d:'Multipitch v2',         p:'3',     ph:'voices' },
+  ],
+  time: [
+    { n:'speed',    d:'Change playback speed', p:'0.5', ph:'multiplier (0.25 – 4.0)' },
+    { n:'trim',     d:'Trim clip duration',    p:'0:5', ph:'start:end seconds' },
+    { n:'vreverse', d:'Reverse video + audio', p:'',   ph:'' },
+  ],
+  complex: [
+    { n:'tvsim',       d:'TV simulator',             p:'',        ph:'' },
+    { n:'earthquake',  d:'Earthquake shake',         p:'',        ph:'' },
+    { n:'freakzinga',  d:'Freakzinga composite',     p:'',        ph:'' },
+    { n:'frei0r',      d:'frei0r plugin',            p:'plugin',  ph:'plugin name' },
+    { n:'imagemagick', d:'ImageMagick operation',    p:'-fx',     ph:'magick args' },
+    { n:'ffmpeg',      d:'Raw ffmpeg vf filter',     p:'negate',  ph:'filter string' },
+    { n:'gradientmap', d:'Gradient map (luma→color)',p:'#000,#fff', ph:'hex colors comma-sep' },
+    { n:'watermark',   d:'Watermark text',           p:'text',    ph:'watermark text' },
+    { n:'caption',     d:'Caption text',             p:'text',    ph:'caption' },
+    { n:'radar',       d:'Radar scan overlay',       p:'',        ph:'' },
+    { n:'nepeta',      d:'Nepeta effect',            p:'',        ph:'' },
+    { n:'realgm4',     d:'RealGM4 effect',           p:'',        ph:'' },
+  ],
 };
 
-// ─── STATE ───────────────────────────────────────────────────────────────────
+// ─── STATE ────────────────────────────────────────────────────────────────────
 
-let pipeline = []; // [{ name, params, hint }]
-let dragSrcIdx = null;
+let pipeline = [];
+let currentFile = null;
+let dragSrcIdx  = null;
 
-// ─── PRESETS ─────────────────────────────────────────────────────────────────
+// ─── FILE HANDLING ────────────────────────────────────────────────────────────
+
+const dropzone   = document.getElementById('dropzone');
+const fileInput  = document.getElementById('fileInput');
+const filePreview= document.getElementById('filePreview');
+const processWrap= document.getElementById('processWrap');
+
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave',()=> dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault(); dropzone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) setFile(f);
+});
+fileInput.addEventListener('change', e => { if (e.target.files[0]) setFile(e.target.files[0]); });
+
+function setFile(f) {
+  currentFile = f;
+  const url = URL.createObjectURL(f);
+  const isVideo = f.type.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi)$/i.test(f.name);
+  const isImage = f.type.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(f.name);
+
+  // Thumb
+  const wrap = document.getElementById('fpThumbWrap');
+  wrap.innerHTML = '';
+  if (isVideo) {
+    const v = document.createElement('video');
+    v.src = url; v.muted = true; v.className = 'fp-thumb'; v.preload = 'metadata';
+    v.style.cssText = 'width:72px;height:52px;object-fit:cover;border-radius:6px;border:1px solid var(--border2)';
+    wrap.appendChild(v);
+  } else if (isImage) {
+    const img = document.createElement('img');
+    img.src = url; img.className = 'fp-thumb';
+    img.style.cssText = 'width:72px;height:52px;object-fit:cover;border-radius:6px;border:1px solid var(--border2)';
+    wrap.appendChild(img);
+  } else {
+    wrap.innerHTML = '<div class="fp-thumb" style="display:flex;align-items:center;justify-content:center;font-size:1.5rem">📄</div>';
+  }
+
+  document.getElementById('fpName').textContent = f.name;
+  document.getElementById('fpMeta').textContent = `${(f.size/1024/1024).toFixed(2)} MB · ${f.type || 'unknown type'}`;
+
+  dropzone.classList.add('has-file');
+  filePreview.classList.add('show');
+  processWrap.classList.add('show');
+  hideResult(); hideError();
+  updateProcessNote();
+}
+
+function clearFile() {
+  currentFile = null;
+  fileInput.value = '';
+  dropzone.classList.remove('has-file');
+  filePreview.classList.remove('show');
+  processWrap.classList.remove('show');
+  hideResult(); hideError();
+}
+
+function updateProcessNote() {
+  const note = document.getElementById('processNote');
+  const pipe = buildPipeStr();
+  if (!pipe) {
+    note.textContent = 'Add effects to the pipeline first';
+  } else {
+    note.textContent = `Will apply: ${pipe}`;
+  }
+  document.getElementById('processBtn').disabled = !pipe || !currentFile;
+}
+
+// ─── PROCESS ──────────────────────────────────────────────────────────────────
+
+async function processFile() {
+  const pipe = buildPipeStr();
+  if (!pipe || !currentFile) return;
+
+  const btn = document.getElementById('processBtn');
+  btn.disabled = true; btn.classList.add('loading');
+  hideResult(); hideError();
+
+  try {
+    const fd = new FormData();
+    fd.append('file', currentFile, currentFile.name);
+    fd.append('pipe', pipe);
+
+    const resp = await fetch('/process', { method: 'POST', body: fd });
+    const json = await resp.json();
+
+    if (!json.ok) throw new Error(json.error || 'FFmpeg error');
+
+    // Show result
+    const mime = json.mime;
+    const b64  = json.data;
+    const blob = b64ToBlob(b64, mime);
+    const url  = URL.createObjectURL(blob);
+
+    document.getElementById('resultMeta').textContent = `${json.filename}`;
+    const dlLink = document.getElementById('dlLink');
+    dlLink.href = url;
+    dlLink.download = json.filename;
+
+    const vid = document.getElementById('resultVideo');
+    const img = document.getElementById('resultImage');
+    if (mime.startsWith('video/')) {
+      vid.src = url; vid.style.display = 'block'; img.style.display = 'none';
+    } else {
+      img.src = url; img.style.display = 'block'; vid.style.display = 'none';
+    }
+
+    const unsupDiv = document.getElementById('resultUnsupported');
+    if (json.unsupported && json.unsupported.length) {
+      unsupDiv.style.display = 'block';
+      unsupDiv.textContent = `⚠️ Skipped (Discord-only effects): ${json.unsupported.join(', ')}`;
+    } else {
+      unsupDiv.style.display = 'none';
+    }
+
+    document.getElementById('resultBox').classList.add('show');
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    btn.disabled = false; btn.classList.remove('loading');
+  }
+}
+
+function b64ToBlob(b64, mime) {
+  const bin = atob(b64);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return new Blob([buf], { type: mime });
+}
+
+function hideResult() { document.getElementById('resultBox').classList.remove('show'); }
+function hideError()  { const e = document.getElementById('errorBox'); e.classList.remove('show'); e.textContent = ''; }
+function showError(msg) {
+  const e = document.getElementById('errorBox');
+  e.textContent = '❌ ' + msg; e.classList.add('show');
+}
+
+// ─── PRESETS ──────────────────────────────────────────────────────────────────
 
 function renderPresets() {
   const grid = document.getElementById('presetGrid');
-  grid.innerHTML = '';
   PRESETS.forEach(p => {
     const card = document.createElement('div');
     card.className = 'preset-card';
     card.style.setProperty('--c', p.c);
-    card.innerHTML = `
-      <div class="preset-tag">${p.tag}</div>
-      <div class="preset-name">${p.name}</div>
-      <div class="preset-desc">${p.desc}</div>`;
-    card.addEventListener('click', () => addPreset(p));
+    card.innerHTML = `<div class="preset-tag">${p.tag}</div><div class="preset-name">${p.name}</div><div class="preset-desc">${p.desc}</div>`;
+    card.addEventListener('click', () => {
+      const eq = p.id.indexOf('=');
+      const name   = eq === -1 ? p.id : p.id.slice(0, eq);
+      const params = eq === -1 ? '' : p.id.slice(eq + 1);
+      addEffect(name, params, p.desc);
+    });
     grid.appendChild(card);
   });
 }
 
-function addPreset(p) {
-  // Extract name and params from preset id (e.g. "wave=large" → name=wave, params=large)
-  let name = p.id, params = '';
-  if (p.id.includes('=')) {
-    const eq = p.id.indexOf('=');
-    name = p.id.slice(0, eq);
-    params = p.id.slice(eq + 1);
-  }
-  addEffect(name, params, p.desc);
-}
-
-// ─── PALETTE ─────────────────────────────────────────────────────────────────
+// ─── PALETTE ──────────────────────────────────────────────────────────────────
 
 function renderPalette() {
   const pal = document.getElementById('palette');
-  pal.innerHTML = '';
-  Object.entries(EFFECTS).forEach(([cat, group]) => {
-    const cc = CAT_COLORS[cat];
-    const wrap = document.createElement('div');
+  Object.entries(EFFECTS).forEach(([cat, items]) => {
+    const { label, cc } = CAT[cat];
+    const wrap  = document.createElement('div');
     wrap.className = 'palette-group';
+
     const title = document.createElement('div');
-    title.className = 'palette-group-title';
-    title.style.setProperty('--cat-color', cc);
-    title.innerHTML = `<span class="cat-dot"></span>${group.label}<span class="toggle">▾</span>`;
+    title.className = 'pg-title';
+    title.style.setProperty('--cc', cc);
+    title.innerHTML = `<span class="dot"></span>${label}<span class="arr">▾</span>`;
     title.addEventListener('click', () => {
       title.classList.toggle('collapsed');
       chips.classList.toggle('hidden');
@@ -470,14 +687,12 @@ function renderPalette() {
 
     const chips = document.createElement('div');
     chips.className = 'palette-chips';
-    chips.style.setProperty('--cat-color', cc);
-
-    group.items.forEach(eff => {
+    chips.style.setProperty('--cc', cc);
+    items.forEach(eff => {
       const chip = document.createElement('div');
       chip.className = 'eff-chip';
-      chip.style.setProperty('--cat-color', cc);
       chip.title = eff.d;
-      chip.innerHTML = `<span class="plus">+</span>${eff.n}`;
+      chip.innerHTML = `<span style="color:var(--muted)">+</span>${eff.n}`;
       chip.addEventListener('click', () => addEffect(eff.n, eff.p, eff.ph || eff.d));
       chips.appendChild(chip);
     });
@@ -488,81 +703,58 @@ function renderPalette() {
   });
 }
 
-// ─── PIPELINE ────────────────────────────────────────────────────────────────
+// ─── PIPELINE ─────────────────────────────────────────────────────────────────
 
 function addEffect(name, params, hint) {
   pipeline.push({ name, params, hint: hint || '' });
-  renderPipeline();
-  updateCmd();
+  renderPipeline(); updateCmd(); updateProcessNote();
 }
-
-function removeEffect(idx) {
-  pipeline.splice(idx, 1);
-  renderPipeline();
-  updateCmd();
+function removeEffect(i) { pipeline.splice(i, 1); renderPipeline(); updateCmd(); updateProcessNote(); }
+function moveEffect(i, d) {
+  const t = i + d;
+  if (t < 0 || t >= pipeline.length) return;
+  [pipeline[i], pipeline[t]] = [pipeline[t], pipeline[i]];
+  renderPipeline(); updateCmd();
 }
-
-function moveEffect(idx, dir) {
-  const to = idx + dir;
-  if (to < 0 || to >= pipeline.length) return;
-  [pipeline[idx], pipeline[to]] = [pipeline[to], pipeline[idx]];
-  renderPipeline();
-  updateCmd();
-}
-
-function clearPipeline() {
-  pipeline = [];
-  renderPipeline();
-  updateCmd();
-}
+function clearPipeline() { pipeline = []; renderPipeline(); updateCmd(); updateProcessNote(); }
 
 function renderPipeline() {
-  const list = document.getElementById('pipelineList');
-  const empty = document.getElementById('pipelineEmpty');
+  const list  = document.getElementById('pipeList');
+  const empty = document.getElementById('plEmpty');
   list.innerHTML = '';
-
-  if (pipeline.length === 0) {
-    empty.style.display = 'flex';
-    return;
-  }
-  empty.style.display = 'none';
+  empty.style.display = pipeline.length ? 'none' : 'flex';
 
   pipeline.forEach((eff, i) => {
     const row = document.createElement('div');
-    row.className = 'pipe-item';
-    row.draggable = true;
-    row.dataset.idx = i;
-
+    row.className = 'pipe-item'; row.draggable = true; row.dataset.idx = i;
+    const hasP = eff.params !== '';
     row.innerHTML = `
       <span class="drag-handle" title="Drag to reorder">⠿</span>
       <span class="pipe-num">${i + 1}</span>
-      <span class="pipe-name">${escHtml(eff.name)}</span>
-      ${eff.params !== '' ? `<span class="pipe-sep">=</span>
-        <input class="pipe-params" value="${escHtml(eff.params)}" placeholder="${escHtml(eff.hint)}" data-idx="${i}" />` :
-        `<span class="pipe-hint">${escHtml(eff.hint)}</span>`}
-      <div class="pipe-actions">
-        <button class="pipe-btn" title="Move up" onclick="moveEffect(${i},-1)">↑</button>
-        <button class="pipe-btn" title="Move down" onclick="moveEffect(${i},1)">↓</button>
-        <button class="pipe-btn del" title="Remove" onclick="removeEffect(${i})">✕</button>
+      <span class="pipe-name">${esc(eff.name)}</span>
+      ${hasP
+        ? `<span class="pipe-sep">=</span><input class="pipe-params" value="${esc(eff.params)}" placeholder="${esc(eff.hint)}" data-idx="${i}">`
+        : `<span class="pipe-hint">${esc(eff.hint)}</span>`}
+      <div class="pipe-acts">
+        <button class="pbtn" onclick="moveEffect(${i},-1)" title="Up">↑</button>
+        <button class="pbtn" onclick="moveEffect(${i}, 1)" title="Down">↓</button>
+        <button class="pbtn del" onclick="removeEffect(${i})" title="Remove">✕</button>
       </div>`;
 
-    // params input live update
     const inp = row.querySelector('.pipe-params');
-    if (inp) inp.addEventListener('input', e => { pipeline[i].params = e.target.value; updateCmd(); });
+    if (inp) inp.addEventListener('input', e => { pipeline[i].params = e.target.value; updateCmd(); updateProcessNote(); });
 
-    // drag & drop
-    row.addEventListener('dragstart', e => { dragSrcIdx = i; setTimeout(() => row.classList.add('dragging'), 0); });
-    row.addEventListener('dragend',   () => { row.classList.remove('dragging'); dragSrcIdx = null; clearDragOver(); });
+    row.addEventListener('dragstart', () => { dragSrcIdx = i; setTimeout(() => row.classList.add('dragging'), 0); });
+    row.addEventListener('dragend',   () => { row.classList.remove('dragging'); clearDragOver(); dragSrcIdx = null; });
     row.addEventListener('dragover',  e => { e.preventDefault(); clearDragOver(); row.classList.add('drag-over'); });
-    row.addEventListener('drop',      e => {
+    row.addEventListener('drop', e => {
       e.preventDefault();
       if (dragSrcIdx !== null && dragSrcIdx !== i) {
-        const moved = pipeline.splice(dragSrcIdx, 1)[0];
-        pipeline.splice(i, 0, moved);
-        renderPipeline(); updateCmd();
+        const [m] = pipeline.splice(dragSrcIdx, 1);
+        pipeline.splice(i, 0, m);
+        renderPipeline(); updateCmd(); updateProcessNote();
       }
     });
-
     list.appendChild(row);
   });
 }
@@ -571,50 +763,45 @@ function clearDragOver() {
   document.querySelectorAll('.pipe-item.drag-over').forEach(el => el.classList.remove('drag-over'));
 }
 
-// ─── COMMAND ─────────────────────────────────────────────────────────────────
+// ─── COMMAND ──────────────────────────────────────────────────────────────────
 
 function buildPipeStr() {
-  return pipeline.map(eff => {
-    const p = eff.params.trim();
-    return p ? `${eff.name}=${p}` : eff.name;
-  }).join(',');
+  return pipeline.map(e => e.params.trim() ? `${e.name}=${e.params.trim()}` : e.name).join(',');
 }
 
 function updateCmd() {
-  const out = document.getElementById('cmdOutput');
   const pipe = buildPipeStr();
-  if (!pipe) {
-    out.innerHTML = '<span class="cmd-empty">— add an effect or preset to generate a command —</span>';
-    return;
-  }
-  out.innerHTML = `<span class="cmd-prefix">th/ihtx&nbsp;</span><span class="cmd-effect">${escHtml(pipe)}</span>`;
+  const out  = document.getElementById('cmdOut');
+  out.innerHTML = pipe
+    ? `<span class="cmd-prefix">th/ihtx&nbsp;</span><span class="cmd-effect">${esc(pipe)}</span>`
+    : '<span class="cmd-empty">— add effects to generate a command —</span>';
 }
 
 function copyCmd() {
   const pipe = buildPipeStr();
   if (!pipe) return;
   navigator.clipboard.writeText(`th/ihtx ${pipe}`);
-  const btn = document.getElementById('copyBtn');
-  btn.textContent = '✓ Copied!'; btn.classList.add('copied');
-  setTimeout(() => { btn.textContent = 'Copy th/ihtx'; btn.classList.remove('copied'); }, 1800);
+  flash('copyBtn', 'Copy th/ihtx', '✓ Copied!', 'copied');
 }
-
 function copySlash() {
   const pipe = buildPipeStr();
   if (!pipe) return;
   navigator.clipboard.writeText(pipe);
-  const btn = document.getElementById('slashCopyBtn');
-  btn.textContent = '✓ Copied effect!'; btn.classList.add('copied');
-  setTimeout(() => { btn.textContent = 'Copy /ihtxgen'; btn.classList.remove('copied'); }, 1800);
+  flash('slashBtn', 'Copy /ihtxgen', '✓ Effect copied!', 'copied');
+}
+function flash(id, original, msg, cls) {
+  const btn = document.getElementById(id);
+  btn.textContent = msg; btn.classList.add(cls);
+  setTimeout(() => { btn.textContent = original; btn.classList.remove(cls); }, 1800);
 }
 
-// ─── UTILS ───────────────────────────────────────────────────────────────────
+// ─── UTILS ────────────────────────────────────────────────────────────────────
 
-function escHtml(s) {
+function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ─── INIT ────────────────────────────────────────────────────────────────────
+// ─── INIT ─────────────────────────────────────────────────────────────────────
 
 renderPresets();
 renderPalette();
