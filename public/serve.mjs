@@ -126,6 +126,138 @@ async function encodeFinal(inPath, outPath, vf, af, isImage) {
   await runFFmpeg(args);
 }
 
+// ─── Format export helper ─────────────────────────────────────────────────────
+
+const FORMAT_MIME = {
+  'mp4': 'video/mp4', 'webm': 'video/webm', 'mov': 'video/quicktime', 'mkv': 'video/x-matroska',
+  'gif': 'image/gif', 'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'flac': 'audio/flac',
+  'ogg': 'audio/ogg', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 'webp': 'image/webp',
+};
+
+async function exportTo(inPath, outPath, fmt, info, isImage) {
+  const fmtNorm = fmt.toLowerCase().replace(/^\./, '');
+  const args = ['-y'];
+  if (isImage) {
+    args.push('-i', inPath, '-frames:v', '1');
+  } else {
+    args.push('-i', inPath);
+  }
+
+  switch (fmtNorm) {
+    case 'mp4':
+      args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-pix_fmt', 'yuv420p', '-movflags', '+faststart');
+      break;
+    case 'webm':
+      args.push('-c:v', 'libvpx-vp9', '-deadline', 'good', '-cpu-used', '4', '-b:v', '0', '-crf', '30', '-c:a', 'libopus', '-b:a', '128k', '-pix_fmt', 'yuv420p');
+      break;
+    case 'mov':
+      args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-pix_fmt', 'yuv420p');
+      break;
+    case 'mkv':
+      args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'flac', '-pix_fmt', 'yuv420p');
+      break;
+    case 'gif':
+      args.push('-vf', 'split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse', '-loop', '0');
+      break;
+    case 'mp3':
+      args.push('-vn', '-c:a', 'libmp3lame', '-b:a', '192k');
+      break;
+    case 'wav':
+      args.push('-vn', '-c:a', 'pcm_s16le');
+      break;
+    case 'flac':
+      args.push('-vn', '-c:a', 'flac');
+      break;
+    case 'ogg':
+      args.push('-vn', '-c:a', 'libopus', '-b:a', '128k');
+      break;
+    case 'jpg': case 'jpeg':
+      args.push('-q:v', '2', '-pix_fmt', 'yuvj420p');
+      break;
+    case 'png':
+      args.push('-compression_level', '3');
+      break;
+    case 'webp':
+      args.push('-q:v', '85');
+      break;
+    default:
+      args.push('-c:a', 'aac', '-b:a', '128k', '-c:v', 'libx264', '-crf', '23', '-pix_fmt', 'yuv420p');
+  }
+
+  args.push(outPath);
+  await runFFmpeg(args);
+}
+
+// ─── Duration / repetitions / trim helper ─────────────────────────────────────
+
+async function applyPostEffects(inPath, outPath, { reps, duration, noTrim, format }, info, tmpDir) {
+  const isAudioOnly = ['mp3', 'wav', 'flac', 'ogg'].includes(format);
+  const isImageFmt  = ['jpg', 'jpeg', 'png', 'webp'].includes(format);
+  const isImageInput = !info.hasVideo && !info.hasAudio && /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(inPath);
+  const isImage = isImageFmt || isImageInput;
+  const isVideo = !isImage && !isAudioOnly;
+
+  let current = inPath;
+  let stepN = 0;
+  const step = (ext) => tmpPath(`post_${stepN++}`, ext);
+
+  // 1) Duration trimming / looping
+  if (!noTrim && duration && isFinite(parseFloat(duration)) && parseFloat(duration) > 0) {
+    const target = parseFloat(duration);
+    const inputDur = info.duration || 0;
+    stepN++;
+    const outDur = step(isVideo ? '.mkv' : (isImage ? '.png' : '.wav'));
+    if (target < inputDur || target > inputDur * 1.01) {
+      // Need to trim or loop; use stream_loop for loop-friendly media and -t target
+      if (isVideo) {
+        await runFFmpeg(['-y', '-stream_loop', '-1', '-i', current, '-t', String(target),
+          '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'aac', '-b:a', '128k',
+          '-pix_fmt', 'yuv420p', outDur]);
+      } else if (isImage) {
+        // For images, just re-encode to the chosen format; duration irrelevant
+        await runFFmpeg(['-y', '-i', current, '-frames:v', '1', outDur]);
+      } else {
+        // Audio: trim/loop with apad
+        await runFFmpeg(['-y', '-i', current, '-filter_complex',
+          `[0:a]aloop=loop=-1:size=2147483647,atrim=0:${target}[a]`,
+          '-map', '[a]', '-c:a', 'pcm_s16le', outDur]);
+      }
+      current = outDur;
+    } else if (target < inputDur) {
+      // Just trim shorter
+      if (isVideo) {
+        await runFFmpeg(['-y', '-i', current, '-t', String(target),
+          '-c:v', 'copy', '-c:a', 'copy', outDur]);
+      } else if (isAudioOnly) {
+        await runFFmpeg(['-y', '-i', current, '-t', String(target), '-c:a', 'copy', outDur]);
+      } else {
+        await runFFmpeg(['-y', '-i', current, '-frames:v', '1', outDur]);
+      }
+      current = outDur;
+    }
+  }
+
+  // 2) Repetitions (concat loop)
+  if (reps > 1 && !isImage) {
+    stepN++;
+    const outRep = step(isVideo ? '.mkv' : '.wav');
+    // Build concat list file
+    const listFile = path.join(tmpDir, `concat_list_${stepN}.txt`);
+    const list = [];
+    for (let i = 0; i < reps; i++) list.push(`file '${current.replace(/'/g, "'\\''")}'`);
+    await fsp.writeFile(listFile, list.join('\n'));
+    await runFFmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', listFile,
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+      '-c:a', 'aac', '-b:a', '128k', '-pix_fmt', 'yuv420p', outRep]);
+    await fsp.unlink(listFile).catch(() => {});
+    current = outRep;
+  }
+
+  // 3) Final export to requested format
+  await exportTo(current, outPath, format, info, isImage);
+  return { isImage, isAudioOnly, isVideo };
+}
+
 // ─── Wave presets (exact from bot) ────────────────────────────────────────────
 const WAVE_PRESETS = {
   large:         `format=yuv444p,geq='p(X-((sin((T*5*0+(0*15))+(Y/H)*(PI*5.4)))*(-15*2)),Y-((sin((T*5*0+(0*15))+(X/W)*(PI*5.4)))*(-15*2)))',setsar=1:1,format=yuv420p`,
@@ -558,7 +690,7 @@ function resolveEffect(name, val) {
       const s = parseFloat(val) || 15;
       const margin = Math.max(4, Math.ceil(s * 2 / 2) * 2);
       const half   = margin >> 1;
-      return { kind:'vf', filter:`pad=iw+${margin}:ih+${margin}:${half}:${half},crop=iw-${margin}:ih-${margin}:'max(0\\,${half}+${s}*sin(n*69))':\\'max(0\\,${half}+${s}*sin(n*671))\\'` };
+      return { kind:'vf', filter:`pad=iw+${margin}:ih+${margin}:${half}:${half},crop=iw-${margin}:ih-${margin}:max(0\\,${half}+${s}*sin(n*69)):max(0\\,${half}+${s}*sin(n*671))` };
     }
     case 'randomjitter': case 'rj': {
       const s = parseFloat(val) || 10;
@@ -745,34 +877,44 @@ async function handleProcess(req, res) {
   const id     = randomBytes(8).toString('hex');
   const tmpDir = path.join(TMP, `ihtx_run_${id}`);
   await fsp.mkdir(tmpDir, { recursive: true });
-  let inPath, outPath;
+  let inPath, stagePath, finalPath;
   try {
     const { fields, files } = await parseMultipart(req);
     const fe = files.file;
     if (!fe) throw new Error('No file uploaded');
     const pipeStr = (fields.pipe || '').trim();
     if (!pipeStr) throw new Error('No pipe effects provided');
+    const reps     = Math.max(1, parseInt(fields.reps || '1', 10) || 1);
+    const duration = (fields.duration || '').trim();
+    const noTrim   = fields.noTrim === '1' || fields.noTrim === 'true';
+    const format   = (fields.format || 'mp4').toLowerCase().replace(/^\./, '');
 
     const ext     = path.extname(fe.filename).toLowerCase() || '.mp4';
     const isImage = /^image\//.test(fe.type) || ['.jpg','.jpeg','.png','.gif','.webp','.bmp'].includes(ext);
-    inPath  = tmpPath(`in_${id}`, ext);
-    outPath = tmpPath(`out_${id}`, isImage ? '.jpg' : '.mp4');
+    inPath    = tmpPath(`in_${id}`, ext);
+    stagePath = tmpPath(`stage_${id}`, isImage ? '.png' : '.mkv');
+    finalPath = tmpPath(`final_${id}`, format === 'jpg' ? '.jpeg' : `.${format}`);
     await fsp.writeFile(inPath, fe.data);
 
-    const unsupported = await applyPipeline(inPath, outPath, pipeStr, tmpDir, isImage);
+    const info = await ffprobeInfo(inPath);
+    const unsupported = await applyPipeline(inPath, stagePath, pipeStr, tmpDir, isImage);
+    const { isImage: finalIsImage, isAudioOnly } = await applyPostEffects(stagePath, finalPath,
+      { reps, duration, noTrim, format }, info, tmpDir);
 
-    const outData = await fsp.readFile(outPath);
-    const outMime = isImage ? 'image/jpeg' : 'video/mp4';
+    const outData = await fsp.readFile(finalPath);
+    const outMime = FORMAT_MIME[format] || (finalIsImage ? 'image/jpeg' : isAudioOnly ? 'audio/mpeg' : 'video/mp4');
+    const finalExt = format || (finalIsImage ? 'jpg' : isAudioOnly ? 'mp3' : 'mp4');
 
     res.writeHead(200, { 'Content-Type':'application/json', 'Access-Control-Allow-Origin':'*' });
     res.end(JSON.stringify({ ok:true, data:outData.toString('base64'), mime:outMime,
-      filename:`ihtx_${id}${isImage?'.jpg':'.mp4'}`, unsupported }));
+      filename:`ihtx_${id}.${finalExt}`, unsupported }));
   } catch (err) {
     res.writeHead(200, { 'Content-Type':'application/json', 'Access-Control-Allow-Origin':'*' });
     res.end(JSON.stringify({ ok:false, error:err.message }));
   } finally {
-    if (inPath)  fsp.unlink(inPath).catch(() => {});
-    if (outPath) fsp.unlink(outPath).catch(() => {});
+    if (inPath)    fsp.unlink(inPath).catch(() => {});
+    if (stagePath) fsp.unlink(stagePath).catch(() => {});
+    if (finalPath) fsp.unlink(finalPath).catch(() => {});
     fsp.rm(tmpDir, { recursive:true, force:true }).catch(() => {});
   }
 }
