@@ -84,6 +84,36 @@ header .tagline { color: var(--muted2); font-size: .8rem; margin-left: auto; }
 #fileInput { display: none; }
 #dropzone input[type=file] { display: none; }
 
+/* ── EXPORT CONTROLS ─────────────────────────────────────────────── */
+.export-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px;
+}
+.export-group {
+  display: flex; flex-direction: column; gap: 5px; background: var(--panel);
+  border: 1px solid var(--border2); border-radius: 8px; padding: 10px 12px;
+}
+.export-group label {
+  font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted); display: flex; align-items: center; gap: 5px;
+}
+.export-group input[type="number"], .export-group select {
+  background: var(--bg); border: 1px solid var(--border2); border-radius: 5px;
+  color: var(--text); padding: 6px 9px; font-size: .85rem; font-family: inherit;
+  outline: none;
+}
+.export-group input[type="number"]:focus, .export-group select:focus { border-color: var(--accent2); }
+.export-group input[type="checkbox"] {
+  width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;
+}
+.export-hint {
+  font-size: .68rem; color: var(--muted2); margin-top: 2px;
+}
+.export-group.chk { flex-direction: row; align-items: center; justify-content: space-between; }
+
+@media (max-width: 680px) {
+  .export-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
 /* ── FILE PREVIEW ────────────────────────────────────────────────── */
 #filePreview {
   display: none; align-items: center; gap: 16px;
@@ -350,6 +380,41 @@ header .tagline { color: var(--muted2); font-size: .8rem; margin-left: auto; }
       <button class="fp-remove" onclick="clearFile()">✕ Remove</button>
     </div>
 
+    <div class="export-grid">
+      <div class="export-group">
+        <label>Repetitions</label>
+        <input type="number" id="repsInput" min="1" max="50" step="1" value="1">
+        <span class="export-hint">Loop output N times</span>
+      </div>
+      <div class="export-group">
+        <label>Duration</label>
+        <input type="number" id="durInput" min="0.1" step="0.1" placeholder="auto">
+        <span class="export-hint">Target seconds</span>
+      </div>
+      <div class="export-group chk">
+        <label>noTrim</label>
+        <input type="checkbox" id="noTrimInput">
+      </div>
+      <div class="export-group">
+        <label>Export Format</label>
+        <select id="fmtInput">
+          <option value="mp4" selected>mp4</option>
+          <option value="webm">webm</option>
+          <option value="mov">mov</option>
+          <option value="mkv">mkv</option>
+          <option value="gif">gif</option>
+          <option value="mp3">mp3</option>
+          <option value="wav">wav</option>
+          <option value="flac">flac</option>
+          <option value="ogg">ogg</option>
+          <option value="jpg">jpg</option>
+          <option value="png">png</option>
+          <option value="webp">webp</option>
+        </select>
+        <span class="export-hint">Output container</span>
+      </div>
+    </div>
+
     <div id="processWrap">
       <button id="processBtn" onclick="processFile()">
         <div class="spinner"></div>
@@ -570,6 +635,14 @@ function clearFile() {
   hideResult(); hideError();
 }
 
+// Toggle duration field based on noTrim
+const durInput = document.getElementById('durInput');
+const noTrimInput = document.getElementById('noTrimInput');
+noTrimInput.addEventListener('change', () => {
+  durInput.disabled = noTrimInput.checked;
+  if (noTrimInput.checked) durInput.value = '';
+});
+
 function updateProcessNote() {
   const note = document.getElementById('processNote');
   const pipe = buildPipeStr();
@@ -595,6 +668,10 @@ async function processFile() {
     const fd = new FormData();
     fd.append('file', currentFile, currentFile.name);
     fd.append('pipe', pipe);
+    fd.append('reps', Math.max(1, parseInt(document.getElementById('repsInput').value) || 1));
+    fd.append('duration', document.getElementById('durInput').value || '');
+    fd.append('noTrim', document.getElementById('noTrimInput').checked ? '1' : '0');
+    fd.append('format', document.getElementById('fmtInput').value);
 
     const resp = await fetch('/process', { method: 'POST', body: fd });
     const json = await resp.json();
