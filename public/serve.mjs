@@ -1,4 +1,5 @@
 import http from 'http';
+import https from 'https';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
@@ -298,7 +299,7 @@ function resolveEffect(name, val) {
     // ── Rainbow ───────────────────────────────────────────────────────────────
     case 'rainbow':
       return { kind:'fc',
-        fc: '[0:v]split=3[r][g][b];[r]lutrgb=r=val:g=0:b=0,pad=iw+6:ih:3:0[ro];[g]lutrgb=r=0:g=val:b=0[go];[b]lutrgb=r=0:g=0:b=val,pad=iw+6:ih:0:0[bo];[ro][go]blend=all_mode=addition[rg];[rg][bo]blend=all_mode=addition[outv]',
+        fc: '[0:v]split=3[r][g][b];[r]lutrgb=r=val:g=0:b=0,pad=iw+6:ih:0:0[ro];[g]lutrgb=r=0:g=val:b=0,pad=iw+6:ih:3:0[go];[b]lutrgb=r=0:g=0:b=val,pad=iw+6:ih:6:0[bo];[ro][go]blend=all_mode=addition[rg];[rg][bo]blend=all_mode=addition[outv]',
         maps: ['[outv]', '0:a?'],
       };
 
@@ -732,12 +733,152 @@ function resolveEffect(name, val) {
     case 'ffmpeg':
       return val ? { kind:'vf', filter:val } : { kind:'skip', reason:'ffmpeg: empty filter' };
 
+    // ── GM4 / RealGM4 ─────────────────────────────────────────────────────────
+    case 'gm4':
+      return { kind:'vf', filter:"selectivecolor=blacks='0 0 0 0':whites='1 1 1 1',format=yuv420p" };
+    case 'realgm4':
+      return { kind:'vf', filter:"curves=all='0/0 0.5/1 1/0'" };
+
+    // ── Vocoder ───────────────────────────────────────────────────────────────
+    case 'vocoder': case 'ilvocodex': case 'orangevocoder': case '4ormulator': case 'audacity': case 'magix': {
+      const defaultMode = name === 'vocoder' ? 'ilvocodex' : name;
+      const tokens = val.split(';').map(s => s.trim());
+      let mode = defaultMode, bandwidth = null, url = '';
+      if (tokens[0] && ['ilvocodex','orangevocoder','4ormulator','audacity','magix'].includes(tokens[0].toLowerCase())) {
+        mode = tokens.shift().toLowerCase();
+      }
+      if (tokens[0] && /^\d+$/.test(tokens[0])) bandwidth = parseInt(tokens.shift());
+      url = tokens[0] || '';
+      if (!url) return { kind:'skip', reason:'vocoder: requires a carrier URL like vocoder=ilvocodex;https://…/pad.mp3' };
+      return {
+        kind: 'run',
+        fn: async (inPath, outPath, tmpDir) => {
+          const id = randomBytes(4).toString('hex');
+          const info = await ffprobeInfo(inPath);
+          const duration = info.duration || 30;
+          // Profiles match the bot
+          const PROFILES = {
+            ilvocodex:      { bands: 256,  win: 1024, modPhases: 6,  hp: 200, bass: -10, limit: 0.2, postPhases: 0 },
+            orangevocoder:  { bands: 256,  win: 1024, modPhases: 0,  hp: 200, bass: -10, limit: 0.2, postPhases: 0 },
+            '4ormulator':   { bands: 128,  win: 256,  modPhases: 0,  hp: 100, bass: -10, limit: 0.2, postPhases: 0 },
+            audacity:       { bands: 64,   win: 512,  modPhases: 0,  hp: 200, bass: -10, limit: 0.5, postPhases: 12 },
+            magix:          { bands: 256,  win: 2048, modPhases: 0,  hp: 200, bass: -10, limit: 0.5, postPhases: 0 },
+          };
+          const p = PROFILES[mode] || PROFILES.ilvocodex;
+          const nBands = bandwidth || p.bands;
+          const win = p.win;
+          const hop = win >> 2;
+
+          // Download carrier
+          const carrierDl = path.join(tmpDir, `carrier_${id}`);
+          const carrierWav = path.join(tmpDir, `carrier_${id}.wav`);
+          const modWav = path.join(tmpDir, `mod_${id}.wav`);
+          const vocWav = path.join(tmpDir, `vocoded_${id}.wav`);
+          const carrWav = path.join(tmpDir, `carr_${id}.wav`);
+
+          if (/^https?:\/\//i.test(url)) {
+            await downloadFile(url, carrierDl);
+          } else if (fs.existsSync(url)) {
+            await fsp.copyFile(url, carrierDl);
+          } else {
+            throw new Error(`vocoder: carrier not found: ${url}`);
+          }
+          await runFFmpeg(['-y','-i',carrierDl,'-ac','1','-ar','48000','-f','wav',carrierWav]);
+          await runFFmpeg(['-y','-i',inPath,'-vn','-ac','1','-ar','48000',
+            ...(p.modPhases > 0 ? ['-af', Array(p.modPhases).fill('aphaseshift=order=16:shift=1').join(',')] : []),
+            '-f','wav',modWav]);
+          await runFFmpeg(['-y','-stream_loop','-1','-i',carrierWav,'-ac','1','-ar','48000','-t',String(duration),'-f','wav',carrWav]);
+
+          // FFT vocoder via Python
+          const pyScript = path.join(tmpDir, `vocoder_${id}.py`);
+          await fsp.writeFile(pyScript, `
+import sys, wave, numpy as np
+mod_path, car_path, out_path, n_bands, win_size, hop = sys.argv[1:7]
+n_bands, win_size, hop = int(n_bands), int(win_size), int(hop)
+
+def read_mono(path):
+    with wave.open(path, 'rb') as wf:
+        sr = wf.getframerate(); sw = wf.getsampwidth(); nc = wf.getnchannels()
+        raw = wf.readframes(wf.getnframes())
+    if sw == 2: s = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    elif sw == 1: s = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
+    elif sw == 4: s = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+    else: s = np.zeros(len(raw)//sw, dtype=np.float32)
+    if nc > 1: s = s.reshape(-1, nc).mean(axis=1)
+    return s, sr
+
+mod, _ = read_mono(mod_path)
+car, _ = read_mono(car_path)
+n = min(len(mod), len(car))
+mod, car = mod[:n], car[:n]
+window = np.hanning(win_size).astype(np.float32)
+out = np.zeros(n + win_size, dtype=np.float32)
+n_fft = win_size // 2 + 1
+bpb = max(1, n_fft // n_bands)
+for start in range(0, n - win_size, hop):
+    mf = mod[start:start+win_size] * window
+    cf = car[start:start+win_size] * window
+    mfft = np.fft.rfft(mf)
+    cfft = np.fft.rfft(cf)
+    mag = np.abs(mfft)
+    pha = np.angle(cfft)
+    offt = np.zeros(n_fft, dtype=np.complex64)
+    for b in range(n_bands):
+        bs, be = b*bpb, min((b+1)*bpb, n_fft)
+        env = float(np.mean(mag[bs:be]))
+        offt[bs:be] = env * np.exp(1j * pha[bs:be])
+    out[start:start+win_size] += np.fft.irfft(offt)[:win_size] * window
+res = out[:n]
+peak = np.max(np.abs(res))
+if peak > 0: res = res / peak * 0.88
+with wave.open(out_path, 'wb') as wf:
+    wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(48000)
+    wf.writeframes((res * 32767).astype(np.int16).tobytes())
+`);
+          await runCmd('python3', [pyScript, modWav, carrWav, vocWav, String(nBands), String(win), String(hop)]);
+
+          const post = [
+            `highpass=f=${p.hp}`, `bass=g=${p.bass}`,
+            `alimiter=limit=${p.limit}:latency=1`,
+            ...(p.postPhases > 0 ? Array(p.postPhases).fill('aphaseshift=order=16:shift=1') : []),
+          ].join(',');
+
+          await runFFmpeg(['-y','-i',inPath,'-i',vocWav,'-af',post,
+            '-map','0:v','-map','1:a','-c:v','copy','-c:a','aac','-b:a','192k',outPath]);
+        },
+      };
+    }
+
     // ── Default: try as raw vf ────────────────────────────────────────────────
     default:
       if (val) return { kind:'vf', filter:`${name}=${val}` };
       return { kind:'vf', filter:name };
   }
 }
+
+// ─── Download helper ──────────────────────────────────────────────────────────
+
+async function downloadFile(url, outPath) {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith('https:') ? https : http;
+    const req = lib.get(url, { timeout: 60_000 }, res => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return downloadFile(new URL(res.headers.location, url).href, outPath).then(resolve).catch(reject);
+      }
+      if (res.statusCode !== 200) return reject(new Error(`download failed: ${res.statusCode}`));
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', async () => {
+        await fsp.writeFile(outPath, Buffer.concat(chunks));
+        resolve();
+      });
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(60_000, () => { req.destroy(); reject(new Error('download timeout')); });
+  });
+}
+
 
 // ─── Pipeline engine ──────────────────────────────────────────────────────────
 
