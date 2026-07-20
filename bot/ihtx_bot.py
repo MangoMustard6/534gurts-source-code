@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-20: [Web] Added expression variable system to public/serve.mjs pipe engine: `$vd` (duration s), `$fc` (frame count), `$f` (FPS), `$sr` (sample rate) are substituted with literal numbers before FFmpeg; `lerp(a,b,t)` expands to `((a)+((b)-(a))*(t))`; `T`/`t` (time) and `N`/`n` (frame#) pass through as native FFmpeg expression variables. Pipe segment splitter is now parenthesis/quote-aware so `lerp(0,1,N/$fc)` commas are never treated as effect separators. Added `pinch&punch`/`p&p`/`pinchpunch` effect (geq-based Gaussian pinch distortion; params: strength;radius;cx;cy, all accept expressions). Fixed `swirl` to accept expression strings for strength (e.g. `swirl=0.05*T/$vd`). Usage examples: `swirl=0.05*T/$vd`, `p&p=1;0.5;lerp(0,1,N/$fc)`.
 - 2026-07-18: [TS] Removed `th/multipitchihtx` command and its source file (it was already unwired from the dispatcher).
 - 2026-07-18: [TS] Added `th/videolength` (aliases: vidlen, videolen) — runs ffprobe on a URL and returns the duration formatted as H:MM:SS.ss plus raw seconds.
 - 2026-07-18: Added `magix` vocoder mode (window_size=2048, bandwidth=256, alimiter=0.5) — mirrors the exe's `-w 2048 -v 10 -N` flags; available as `th/vocoder magix <url>`, `magix=url` pipe shortcut, and `vocoder=magix;url`.

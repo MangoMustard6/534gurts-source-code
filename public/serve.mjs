@@ -1,4 +1,5 @@
 import http from 'http';
+import https from 'https';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
@@ -67,13 +68,15 @@ function ffprobeInfo(filePath) {
         const dur = parseFloat(data.format?.duration || vs.duration || '0');
         const [fn, fd] = (vs.r_frame_rate || '30/1').split('/');
         const fps = parseFloat(fn) / (parseFloat(fd) || 1);
+        const sr = parseInt(as.sample_rate || '0', 10) || 44100;
         resolve({
-          width:    vs.width  || 0,
-          height:   vs.height || 0,
-          duration: isFinite(dur) ? dur : 0,
-          fps:      isFinite(fps) && fps > 0 ? fps : 30,
-          hasAudio: !!as.codec_type,
-          hasVideo: !!vs.codec_type,
+          width:      vs.width  || 0,
+          height:     vs.height || 0,
+          duration:   isFinite(dur) ? dur : 0,
+          fps:        isFinite(fps) && fps > 0 ? fps : 30,
+          sampleRate: sr,
+          hasAudio:   !!as.codec_type,
+          hasVideo:   !!vs.codec_type,
         });
       } catch { reject(new Error('ffprobe parse error')); }
     });
@@ -82,6 +85,88 @@ function ffprobeInfo(filePath) {
 }
 
 function tmpPath(id, ext) { return path.join(TMP, `ihtx_${id}${ext}`); }
+
+// ─── Expression variable helpers ──────────────────────────────────────────────
+// Mirrors the bot's _expand_lerp / _preprocess_math_expr logic.
+// Supported variables:
+//   $fc  — total frame count (resolved to literal number)
+//   $vd  — video duration in seconds (resolved to literal number)
+//   $f   — frames per second (resolved to literal number)
+//   $sr  — audio sample rate in Hz (resolved to literal number)
+//   T/t  — kept as-is; native FFmpeg expression time variable
+//   N/n  — kept as-is; native FFmpeg expression frame-number variable
+
+/**
+ * Expand all lerp(a,b,t) calls (possibly nested) into FFmpeg-compatible arithmetic.
+ * lerp(a,b,t) → ((a)+((b)-(a))*(t))
+ */
+function expandLerp(expr) {
+  let out = expr;
+  for (let iter = 0; iter < 20; iter++) {
+    const m = out.match(/\blerp\s*\(/i);
+    if (!m) break;
+    const start = m.index;
+    let depth = 1, i = start + m[0].length;
+    while (i < out.length && depth > 0) {
+      if (out[i] === '(') depth++;
+      else if (out[i] === ')') depth--;
+      i++;
+    }
+    if (depth !== 0) break; // unbalanced — leave as-is
+    const inner = out.slice(start + m[0].length, i - 1);
+    // split by top-level commas
+    const args = [];
+    let buf = '', d = 0;
+    for (const ch of inner) {
+      if (ch === '(' || ch === '[') d++;
+      else if (ch === ')' || ch === ']') d--;
+      if (ch === ',' && d === 0) { args.push(buf); buf = ''; }
+      else buf += ch;
+    }
+    args.push(buf);
+    if (args.length !== 3) break;
+    const [a, b, t] = args;
+    const replacement = `(${a})+(((${b})-(${a}))*(${t}))`;
+    out = out.slice(0, start) + `(${replacement})` + out.slice(i);
+  }
+  return out;
+}
+
+/**
+ * Substitute $fc/$vd/$f/$sr with literal numbers, then expand lerp().
+ * T, N, n, t, PI etc. are left intact for FFmpeg's expression evaluator.
+ * @param {string} val    — raw effect value string
+ * @param {object} info   — { duration, fps, sampleRate } from ffprobeInfo
+ */
+function preprocessVal(val, info) {
+  if (!val || !val.trim()) return val;
+  const fc = Math.max(1, Math.round((info.duration || 0) * (info.fps || 30)));
+  const vd = info.duration || 0;
+  const f  = info.fps || 30;
+  const sr = info.sampleRate || 44100;
+  let out = val;
+  out = out.replace(/\$fc/g, String(fc));
+  out = out.replace(/\$vd/g, vd.toFixed(10).replace(/\.?0+$/, '') || '0');
+  out = out.replace(/\$f\b/g, f.toFixed(6).replace(/\.?0+$/, '') || '30');
+  out = out.replace(/\$sr/g, String(sr));
+  out = expandLerp(out);
+  return out;
+}
+
+/** Returns true if the value contains FFmpeg runtime expression tokens (T, N, n, t as standalone). */
+function isExprVal(val) {
+  return /(?<![A-Za-z_])([TN]|(?<![a-z])t(?![a-z])|(?<![a-z])n(?![a-z]))(?![A-Za-z_0-9])/.test(val);
+}
+
+/** Parse val as a number; if it contains expression tokens, return the raw string instead. */
+function numOrExpr(val, fallback) {
+  if (val === undefined || val === null || val === '') return String(fallback);
+  const v = String(val).trim();
+  if (!v) return String(fallback);
+  const n = parseFloat(v);
+  if (isFinite(n)) return n;          // pure number → return as number (for arithmetic)
+  return v;                           // expression string → return as-is
+}
 
 // Intermediate step: re-encodes to mkv for lossless-ish quality between steps
 async function encodeStep(inPath, outPath, vf, af, isImage) {
@@ -298,7 +383,7 @@ function resolveEffect(name, val) {
     // ── Rainbow ───────────────────────────────────────────────────────────────
     case 'rainbow':
       return { kind:'fc',
-        fc: '[0:v]split=3[r][g][b];[r]lutrgb=r=val:g=0:b=0,pad=iw+6:ih:3:0[ro];[g]lutrgb=r=0:g=val:b=0[go];[b]lutrgb=r=0:g=0:b=val,pad=iw+6:ih:0:0[bo];[ro][go]blend=all_mode=addition[rg];[rg][bo]blend=all_mode=addition[outv]',
+        fc: '[0:v]split=3[r][g][b];[r]lutrgb=r=val:g=0:b=0,pad=iw+6:ih:0:0[ro];[g]lutrgb=r=0:g=val:b=0,pad=iw+6:ih:3:0[go];[b]lutrgb=r=0:g=0:b=val,pad=iw+6:ih:6:0[bo];[ro][go]blend=all_mode=addition[rg];[rg][bo]blend=all_mode=addition[outv]',
         maps: ['[outv]', '0:a?'],
       };
 
@@ -494,7 +579,10 @@ function resolveEffect(name, val) {
 
     // ── Swirl ─────────────────────────────────────────────────────────────────
     case 'swirl': {
-      const strength = parseFloat(val) || 180;
+      // Accept both static numbers and FFmpeg expression strings (e.g. 0.05*T/$vd)
+      const strengthRaw = val && val.trim() ? val.trim() : '180';
+      const strengthNum = parseFloat(strengthRaw);
+      const strength    = isFinite(strengthNum) ? strengthNum : strengthRaw;
       const radius   = 0.5, xc = 0.5, yc = 0.5;
       const atten   = `(if(lt(hypot(X-W*${xc},Y-H*${yc})+1e-6,min(W,H)*${radius}),1-(hypot(X-W*${xc},Y-H*${yc})+1e-6)/(min(W,H)*${radius}),0)^2)`;
       const angle   = `((${strength})*(PI^2)*(-255/180))`;
@@ -513,6 +601,24 @@ function resolveEffect(name, val) {
           await runFFmpeg(args);
         },
       };
+    }
+
+    // ── Pinch & Punch ─────────────────────────────────────────────────────────
+    // Usage: p&p=strength;radius;cx;cy  (all default to 1;0.5;0.5;0.5)
+    // All params accept FFmpeg expression strings — they land inside geq context
+    // where T (time), N (frame#), W, H, X, Y, PI are all available.
+    case 'pinch&punch': case 'p&p': case 'pinchpunch': {
+      const ps = val ? val.split(';').map(s => s.trim()) : [];
+      const strength = ps[0] && ps[0] !== '' ? ps[0] : '1';
+      const radius   = ps[1] && ps[1] !== '' ? ps[1] : '0.5';
+      const cx       = ps[2] && ps[2] !== '' ? ps[2] : '0.5';
+      const cy       = ps[3] && ps[3] !== '' ? ps[3] : '0.5';
+      // gauss(x) = exp(-x*x/2)/sqrt(2*PI) — available in FFmpeg geq evaluator
+      const geqExpr = (
+        `p(W*(${cx})+(X-W*(${cx}))*max(1-(${strength})*gauss(-3.3333*pow(hypot((X-W*(${cx}))/(W*(${radius})),(Y-H*(${cy}))/(H*(${radius}))),2)),0),`+
+        `H*(${cy})+(Y-H*(${cy}))*max(1-(${strength})*gauss(-3.3333*pow(hypot((X-W*(${cx}))/(W*(${radius})),(Y-H*(${cy}))/(H*(${radius}))),2)),0))`
+      );
+      return { kind:'vf', filter:`format=yuv444p,geq='${geqExpr}',scale=iw:ih,setsar=1:1,format=yuv420p` };
     }
 
     // ── CCShue (ImageMagick haldclut) ─────────────────────────────────────────
@@ -732,6 +838,122 @@ function resolveEffect(name, val) {
     case 'ffmpeg':
       return val ? { kind:'vf', filter:val } : { kind:'skip', reason:'ffmpeg: empty filter' };
 
+    // ── GM4 / RealGM4 ─────────────────────────────────────────────────────────
+    case 'gm4':
+      return { kind:'vf', filter:"selectivecolor=blacks='0 0 0 0':whites='1 1 1 1',format=yuv420p" };
+    case 'realgm4':
+      return { kind:'vf', filter:"curves=all='0/0 0.5/1 1/0'" };
+
+    // ── Vocoder ───────────────────────────────────────────────────────────────
+    case 'vocoder': case 'ilvocodex': case 'orangevocoder': case '4ormulator': case 'audacity': case 'magix': {
+      const defaultMode = name === 'vocoder' ? 'ilvocodex' : name;
+      const tokens = val.split(';').map(s => s.trim());
+      let mode = defaultMode, bandwidth = null, url = '';
+      if (tokens[0] && ['ilvocodex','orangevocoder','4ormulator','audacity','magix'].includes(tokens[0].toLowerCase())) {
+        mode = tokens.shift().toLowerCase();
+      }
+      if (tokens[0] && /^\d+$/.test(tokens[0])) bandwidth = parseInt(tokens.shift());
+      url = tokens[0] || '';
+      if (!url) return { kind:'skip', reason:'vocoder: requires a carrier URL like vocoder=ilvocodex;https://…/pad.mp3' };
+      return {
+        kind: 'run',
+        fn: async (inPath, outPath, tmpDir) => {
+          const id = randomBytes(4).toString('hex');
+          const info = await ffprobeInfo(inPath);
+          const duration = info.duration || 30;
+          // Profiles match the bot
+          const PROFILES = {
+            ilvocodex:      { bands: 256,  win: 1024, modPhases: 6,  hp: 200, bass: -10, limit: 0.2, postPhases: 0 },
+            orangevocoder:  { bands: 256,  win: 1024, modPhases: 0,  hp: 200, bass: -10, limit: 0.2, postPhases: 0 },
+            '4ormulator':   { bands: 128,  win: 256,  modPhases: 0,  hp: 100, bass: -10, limit: 0.2, postPhases: 0 },
+            audacity:       { bands: 64,   win: 512,  modPhases: 0,  hp: 200, bass: -10, limit: 0.5, postPhases: 12 },
+            magix:          { bands: 256,  win: 2048, modPhases: 0,  hp: 200, bass: -10, limit: 0.5, postPhases: 0 },
+          };
+          const p = PROFILES[mode] || PROFILES.ilvocodex;
+          const nBands = bandwidth || p.bands;
+          const win = p.win;
+          const hop = win >> 2;
+
+          // Download carrier
+          const carrierDl = path.join(tmpDir, `carrier_${id}`);
+          const carrierWav = path.join(tmpDir, `carrier_${id}.wav`);
+          const modWav = path.join(tmpDir, `mod_${id}.wav`);
+          const vocWav = path.join(tmpDir, `vocoded_${id}.wav`);
+          const carrWav = path.join(tmpDir, `carr_${id}.wav`);
+
+          if (/^https?:\/\//i.test(url)) {
+            await downloadFile(url, carrierDl);
+          } else if (fs.existsSync(url)) {
+            await fsp.copyFile(url, carrierDl);
+          } else {
+            throw new Error(`vocoder: carrier not found: ${url}`);
+          }
+          await runFFmpeg(['-y','-i',carrierDl,'-ac','1','-ar','48000','-f','wav',carrierWav]);
+          await runFFmpeg(['-y','-i',inPath,'-vn','-ac','1','-ar','48000',
+            ...(p.modPhases > 0 ? ['-af', Array(p.modPhases).fill('aphaseshift=order=16:shift=1').join(',')] : []),
+            '-f','wav',modWav]);
+          await runFFmpeg(['-y','-stream_loop','-1','-i',carrierWav,'-ac','1','-ar','48000','-t',String(duration),'-f','wav',carrWav]);
+
+          // FFT vocoder via Python
+          const pyScript = path.join(tmpDir, `vocoder_${id}.py`);
+          await fsp.writeFile(pyScript, `
+import sys, wave, numpy as np
+mod_path, car_path, out_path, n_bands, win_size, hop = sys.argv[1:7]
+n_bands, win_size, hop = int(n_bands), int(win_size), int(hop)
+
+def read_mono(path):
+    with wave.open(path, 'rb') as wf:
+        sr = wf.getframerate(); sw = wf.getsampwidth(); nc = wf.getnchannels()
+        raw = wf.readframes(wf.getnframes())
+    if sw == 2: s = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    elif sw == 1: s = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
+    elif sw == 4: s = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+    else: s = np.zeros(len(raw)//sw, dtype=np.float32)
+    if nc > 1: s = s.reshape(-1, nc).mean(axis=1)
+    return s, sr
+
+mod, _ = read_mono(mod_path)
+car, _ = read_mono(car_path)
+n = min(len(mod), len(car))
+mod, car = mod[:n], car[:n]
+window = np.hanning(win_size).astype(np.float32)
+out = np.zeros(n + win_size, dtype=np.float32)
+n_fft = win_size // 2 + 1
+bpb = max(1, n_fft // n_bands)
+for start in range(0, n - win_size, hop):
+    mf = mod[start:start+win_size] * window
+    cf = car[start:start+win_size] * window
+    mfft = np.fft.rfft(mf)
+    cfft = np.fft.rfft(cf)
+    mag = np.abs(mfft)
+    pha = np.angle(cfft)
+    offt = np.zeros(n_fft, dtype=np.complex64)
+    for b in range(n_bands):
+        bs, be = b*bpb, min((b+1)*bpb, n_fft)
+        env = float(np.mean(mag[bs:be]))
+        offt[bs:be] = env * np.exp(1j * pha[bs:be])
+    out[start:start+win_size] += np.fft.irfft(offt)[:win_size] * window
+res = out[:n]
+peak = np.max(np.abs(res))
+if peak > 0: res = res / peak * 0.88
+with wave.open(out_path, 'wb') as wf:
+    wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(48000)
+    wf.writeframes((res * 32767).astype(np.int16).tobytes())
+`);
+          await runCmd('python3', [pyScript, modWav, carrWav, vocWav, String(nBands), String(win), String(hop)]);
+
+          const post = [
+            `highpass=f=${p.hp}`, `bass=g=${p.bass}`,
+            `alimiter=limit=${p.limit}:latency=1`,
+            ...(p.postPhases > 0 ? Array(p.postPhases).fill('aphaseshift=order=16:shift=1') : []),
+          ].join(',');
+
+          await runFFmpeg(['-y','-i',inPath,'-i',vocWav,'-af',post,
+            '-map','0:v','-map','1:a','-c:v','copy','-c:a','aac','-b:a','192k',outPath]);
+        },
+      };
+    }
+
     // ── Default: try as raw vf ────────────────────────────────────────────────
     default:
       if (val) return { kind:'vf', filter:`${name}=${val}` };
@@ -739,11 +961,78 @@ function resolveEffect(name, val) {
   }
 }
 
+// ─── Download helper ──────────────────────────────────────────────────────────
+
+async function downloadFile(url, outPath) {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith('https:') ? https : http;
+    const req = lib.get(url, { timeout: 60_000 }, res => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return downloadFile(new URL(res.headers.location, url).href, outPath).then(resolve).catch(reject);
+      }
+      if (res.statusCode !== 200) return reject(new Error(`download failed: ${res.statusCode}`));
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', async () => {
+        await fsp.writeFile(outPath, Buffer.concat(chunks));
+        resolve();
+      });
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(60_000, () => { req.destroy(); reject(new Error('download timeout')); });
+  });
+}
+
+
 // ─── Pipeline engine ──────────────────────────────────────────────────────────
 
+// Effects whose vals are raw command/filter strings — do NOT preprocess them.
+const _RAW_VAL_EFFECTS = new Set([
+  'ffmpeg', 'gradientmap', 'gmap', 'gm', 'imagemagick', 'im', 'geq',
+  'frei0r', 'gm4', 'realgm4', 'vocoder', 'ilvocodex', 'orangevocoder',
+  '4ormulator', 'audacity', 'magix',
+]);
+
+/**
+ * Split a pipe string on commas, but NOT on commas that sit inside
+ * parentheses (e.g. lerp(0,1,t)) or inside single/double quotes.
+ * This mirrors the bot's _split_pipe_segments logic.
+ */
+function splitPipeSegments(pipe) {
+  const parts = [];
+  let buf = '', depth = 0, inQ = null;
+  for (let i = 0; i < pipe.length; i++) {
+    const ch = pipe[i];
+    if (inQ) {
+      buf += ch;
+      if (ch === inQ) inQ = null;
+    } else if (ch === "'" || ch === '"') {
+      inQ = ch; buf += ch;
+    } else if (ch === '(') {
+      depth++; buf += ch;
+    } else if (ch === ')') {
+      depth--; buf += ch;
+    } else if (ch === ',' && depth === 0) {
+      const s = buf.trim();
+      if (s) parts.push(s);
+      buf = '';
+    } else {
+      buf += ch;
+    }
+  }
+  const s = buf.trim();
+  if (s) parts.push(s);
+  return parts;
+}
+
 async function applyPipeline(inputPath, finalOutPath, pipeStr, tmpDir, isImage) {
-  const parts = pipeStr.split(',').map(s => s.trim()).filter(Boolean);
+  const parts = splitPipeSegments(pipeStr).filter(Boolean);
   if (!parts.length) throw new Error('No effects specified');
+
+  // Probe input once so preprocessVal can substitute $fc/$vd/$f/$sr.
+  let pipeInfo;
+  try { pipeInfo = await ffprobeInfo(inputPath); } catch { pipeInfo = { duration:0, fps:30, sampleRate:44100 }; }
 
   let current   = inputPath;
   let pendingVf = [];
@@ -768,7 +1057,9 @@ async function applyPipeline(inputPath, finalOutPath, pipeStr, tmpDir, isImage) 
     const part   = parts[i];
     const eqIdx  = part.indexOf('=');
     const name   = (eqIdx === -1 ? part : part.slice(0, eqIdx)).toLowerCase().trim();
-    const val    = eqIdx === -1 ? '' : part.slice(eqIdx + 1).trim();
+    const rawVal = eqIdx === -1 ? '' : part.slice(eqIdx + 1).trim();
+    // Preprocess expression variables ($fc/$vd/$f/$sr, lerp expansion) unless raw effect
+    const val    = _RAW_VAL_EFFECTS.has(name) ? rawVal : preprocessVal(rawVal, pipeInfo);
     const isLast = i === parts.length - 1;
 
     const resolved = resolveEffect(name, val);

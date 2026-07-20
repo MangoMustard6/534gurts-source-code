@@ -560,11 +560,14 @@ const EFFECTS = {
     { n:'srw',         d:'4-way split: negate/reverse/0.5×/2× pitch', p:'',          ph:'' },
     { n:'multipitch',  d:'Multi-voice pitch shift (fileaa binary)',    p:'0|7|-7',    ph:'semitones | separated' },
     { n:'multipitch2', d:'Multi-voice pitch (FFmpeg rubberband)',      p:'0|7|12',    ph:'semitones | separated' },
+    { n:'vocoder',     d:'FFT phase vocoder (needs carrier URL)',     p:'ilvocodex;https://…', ph:'[mode;][bands;]carrierURL' },
     { n:'ccshue',      d:'Hue/sat/gamma via ImageMagick hald LUT',    p:'90',        ph:'hue[:sat[:gamma[:gain[:offset]]]]' },
     { n:'imagemagick', d:'ImageMagick operation (frame-by-frame)',     p:'-negate',   ph:'magick args (| separated)' },
     { n:'gradientmap', d:'Map luminance to color gradient',           p:'#000,#f0f,#fff', ph:'comma-sep hex colors' },
     { n:'swirl',       d:'Vortex swirl distortion (geq)',             p:'180',       ph:'strength degrees' },
     { n:'mirror',      d:'Mirror half of frame',                      p:'left',      ph:'left / right / top / bottom' },
+    { n:'gm4',         d:'GM4 selective color correction',            p:'',          ph:'' },
+    { n:'realgm4',     d:'RealGM4 inverted-S curve',                  p:'',          ph:'' },
     { n:'frei0r',      d:'Apply frei0r plugin',                       p:'zerocrossing', ph:'plugin name[:params]' },
     { n:'ffmpeg',      d:'Raw ffmpeg -vf filter injection',           p:'negate',    ph:'filter string' },
     { n:'watermark',   d:'Watermark / caption text overlay',          p:'text',      ph:'caption text' },
@@ -700,7 +703,7 @@ async function processFile() {
     const unsupDiv = document.getElementById('resultUnsupported');
     if (json.unsupported && json.unsupported.length) {
       unsupDiv.style.display = 'block';
-      unsupDiv.textContent = `⚠️ Skipped (Discord-only effects): ${json.unsupported.join(', ')}`;
+      unsupDiv.textContent = `⚠️ Could not apply: ${json.unsupported.join(', ')}`;
     } else {
       unsupDiv.style.display = 'none';
     }
