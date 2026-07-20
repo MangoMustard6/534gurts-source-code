@@ -68,13 +68,15 @@ function ffprobeInfo(filePath) {
         const dur = parseFloat(data.format?.duration || vs.duration || '0');
         const [fn, fd] = (vs.r_frame_rate || '30/1').split('/');
         const fps = parseFloat(fn) / (parseFloat(fd) || 1);
+        const sr = parseInt(as.sample_rate || '0', 10) || 44100;
         resolve({
-          width:    vs.width  || 0,
-          height:   vs.height || 0,
-          duration: isFinite(dur) ? dur : 0,
-          fps:      isFinite(fps) && fps > 0 ? fps : 30,
-          hasAudio: !!as.codec_type,
-          hasVideo: !!vs.codec_type,
+          width:      vs.width  || 0,
+          height:     vs.height || 0,
+          duration:   isFinite(dur) ? dur : 0,
+          fps:        isFinite(fps) && fps > 0 ? fps : 30,
+          sampleRate: sr,
+          hasAudio:   !!as.codec_type,
+          hasVideo:   !!vs.codec_type,
         });
       } catch { reject(new Error('ffprobe parse error')); }
     });
@@ -83,6 +85,88 @@ function ffprobeInfo(filePath) {
 }
 
 function tmpPath(id, ext) { return path.join(TMP, `ihtx_${id}${ext}`); }
+
+// ─── Expression variable helpers ──────────────────────────────────────────────
+// Mirrors the bot's _expand_lerp / _preprocess_math_expr logic.
+// Supported variables:
+//   $fc  — total frame count (resolved to literal number)
+//   $vd  — video duration in seconds (resolved to literal number)
+//   $f   — frames per second (resolved to literal number)
+//   $sr  — audio sample rate in Hz (resolved to literal number)
+//   T/t  — kept as-is; native FFmpeg expression time variable
+//   N/n  — kept as-is; native FFmpeg expression frame-number variable
+
+/**
+ * Expand all lerp(a,b,t) calls (possibly nested) into FFmpeg-compatible arithmetic.
+ * lerp(a,b,t) → ((a)+((b)-(a))*(t))
+ */
+function expandLerp(expr) {
+  let out = expr;
+  for (let iter = 0; iter < 20; iter++) {
+    const m = out.match(/\blerp\s*\(/i);
+    if (!m) break;
+    const start = m.index;
+    let depth = 1, i = start + m[0].length;
+    while (i < out.length && depth > 0) {
+      if (out[i] === '(') depth++;
+      else if (out[i] === ')') depth--;
+      i++;
+    }
+    if (depth !== 0) break; // unbalanced — leave as-is
+    const inner = out.slice(start + m[0].length, i - 1);
+    // split by top-level commas
+    const args = [];
+    let buf = '', d = 0;
+    for (const ch of inner) {
+      if (ch === '(' || ch === '[') d++;
+      else if (ch === ')' || ch === ']') d--;
+      if (ch === ',' && d === 0) { args.push(buf); buf = ''; }
+      else buf += ch;
+    }
+    args.push(buf);
+    if (args.length !== 3) break;
+    const [a, b, t] = args;
+    const replacement = `(${a})+(((${b})-(${a}))*(${t}))`;
+    out = out.slice(0, start) + `(${replacement})` + out.slice(i);
+  }
+  return out;
+}
+
+/**
+ * Substitute $fc/$vd/$f/$sr with literal numbers, then expand lerp().
+ * T, N, n, t, PI etc. are left intact for FFmpeg's expression evaluator.
+ * @param {string} val    — raw effect value string
+ * @param {object} info   — { duration, fps, sampleRate } from ffprobeInfo
+ */
+function preprocessVal(val, info) {
+  if (!val || !val.trim()) return val;
+  const fc = Math.max(1, Math.round((info.duration || 0) * (info.fps || 30)));
+  const vd = info.duration || 0;
+  const f  = info.fps || 30;
+  const sr = info.sampleRate || 44100;
+  let out = val;
+  out = out.replace(/\$fc/g, String(fc));
+  out = out.replace(/\$vd/g, vd.toFixed(10).replace(/\.?0+$/, '') || '0');
+  out = out.replace(/\$f\b/g, f.toFixed(6).replace(/\.?0+$/, '') || '30');
+  out = out.replace(/\$sr/g, String(sr));
+  out = expandLerp(out);
+  return out;
+}
+
+/** Returns true if the value contains FFmpeg runtime expression tokens (T, N, n, t as standalone). */
+function isExprVal(val) {
+  return /(?<![A-Za-z_])([TN]|(?<![a-z])t(?![a-z])|(?<![a-z])n(?![a-z]))(?![A-Za-z_0-9])/.test(val);
+}
+
+/** Parse val as a number; if it contains expression tokens, return the raw string instead. */
+function numOrExpr(val, fallback) {
+  if (val === undefined || val === null || val === '') return String(fallback);
+  const v = String(val).trim();
+  if (!v) return String(fallback);
+  const n = parseFloat(v);
+  if (isFinite(n)) return n;          // pure number → return as number (for arithmetic)
+  return v;                           // expression string → return as-is
+}
 
 // Intermediate step: re-encodes to mkv for lossless-ish quality between steps
 async function encodeStep(inPath, outPath, vf, af, isImage) {
@@ -495,7 +579,10 @@ function resolveEffect(name, val) {
 
     // ── Swirl ─────────────────────────────────────────────────────────────────
     case 'swirl': {
-      const strength = parseFloat(val) || 180;
+      // Accept both static numbers and FFmpeg expression strings (e.g. 0.05*T/$vd)
+      const strengthRaw = val && val.trim() ? val.trim() : '180';
+      const strengthNum = parseFloat(strengthRaw);
+      const strength    = isFinite(strengthNum) ? strengthNum : strengthRaw;
       const radius   = 0.5, xc = 0.5, yc = 0.5;
       const atten   = `(if(lt(hypot(X-W*${xc},Y-H*${yc})+1e-6,min(W,H)*${radius}),1-(hypot(X-W*${xc},Y-H*${yc})+1e-6)/(min(W,H)*${radius}),0)^2)`;
       const angle   = `((${strength})*(PI^2)*(-255/180))`;
@@ -514,6 +601,24 @@ function resolveEffect(name, val) {
           await runFFmpeg(args);
         },
       };
+    }
+
+    // ── Pinch & Punch ─────────────────────────────────────────────────────────
+    // Usage: p&p=strength;radius;cx;cy  (all default to 1;0.5;0.5;0.5)
+    // All params accept FFmpeg expression strings — they land inside geq context
+    // where T (time), N (frame#), W, H, X, Y, PI are all available.
+    case 'pinch&punch': case 'p&p': case 'pinchpunch': {
+      const ps = val ? val.split(';').map(s => s.trim()) : [];
+      const strength = ps[0] && ps[0] !== '' ? ps[0] : '1';
+      const radius   = ps[1] && ps[1] !== '' ? ps[1] : '0.5';
+      const cx       = ps[2] && ps[2] !== '' ? ps[2] : '0.5';
+      const cy       = ps[3] && ps[3] !== '' ? ps[3] : '0.5';
+      // gauss(x) = exp(-x*x/2)/sqrt(2*PI) — available in FFmpeg geq evaluator
+      const geqExpr = (
+        `p(W*(${cx})+(X-W*(${cx}))*max(1-(${strength})*gauss(-3.3333*pow(hypot((X-W*(${cx}))/(W*(${radius})),(Y-H*(${cy}))/(H*(${radius}))),2)),0),`+
+        `H*(${cy})+(Y-H*(${cy}))*max(1-(${strength})*gauss(-3.3333*pow(hypot((X-W*(${cx}))/(W*(${radius})),(Y-H*(${cy}))/(H*(${radius}))),2)),0))`
+      );
+      return { kind:'vf', filter:`format=yuv444p,geq='${geqExpr}',scale=iw:ih,setsar=1:1,format=yuv420p` };
     }
 
     // ── CCShue (ImageMagick haldclut) ─────────────────────────────────────────
@@ -882,9 +987,52 @@ async function downloadFile(url, outPath) {
 
 // ─── Pipeline engine ──────────────────────────────────────────────────────────
 
+// Effects whose vals are raw command/filter strings — do NOT preprocess them.
+const _RAW_VAL_EFFECTS = new Set([
+  'ffmpeg', 'gradientmap', 'gmap', 'gm', 'imagemagick', 'im', 'geq',
+  'frei0r', 'gm4', 'realgm4', 'vocoder', 'ilvocodex', 'orangevocoder',
+  '4ormulator', 'audacity', 'magix',
+]);
+
+/**
+ * Split a pipe string on commas, but NOT on commas that sit inside
+ * parentheses (e.g. lerp(0,1,t)) or inside single/double quotes.
+ * This mirrors the bot's _split_pipe_segments logic.
+ */
+function splitPipeSegments(pipe) {
+  const parts = [];
+  let buf = '', depth = 0, inQ = null;
+  for (let i = 0; i < pipe.length; i++) {
+    const ch = pipe[i];
+    if (inQ) {
+      buf += ch;
+      if (ch === inQ) inQ = null;
+    } else if (ch === "'" || ch === '"') {
+      inQ = ch; buf += ch;
+    } else if (ch === '(') {
+      depth++; buf += ch;
+    } else if (ch === ')') {
+      depth--; buf += ch;
+    } else if (ch === ',' && depth === 0) {
+      const s = buf.trim();
+      if (s) parts.push(s);
+      buf = '';
+    } else {
+      buf += ch;
+    }
+  }
+  const s = buf.trim();
+  if (s) parts.push(s);
+  return parts;
+}
+
 async function applyPipeline(inputPath, finalOutPath, pipeStr, tmpDir, isImage) {
-  const parts = pipeStr.split(',').map(s => s.trim()).filter(Boolean);
+  const parts = splitPipeSegments(pipeStr).filter(Boolean);
   if (!parts.length) throw new Error('No effects specified');
+
+  // Probe input once so preprocessVal can substitute $fc/$vd/$f/$sr.
+  let pipeInfo;
+  try { pipeInfo = await ffprobeInfo(inputPath); } catch { pipeInfo = { duration:0, fps:30, sampleRate:44100 }; }
 
   let current   = inputPath;
   let pendingVf = [];
@@ -909,7 +1057,9 @@ async function applyPipeline(inputPath, finalOutPath, pipeStr, tmpDir, isImage) 
     const part   = parts[i];
     const eqIdx  = part.indexOf('=');
     const name   = (eqIdx === -1 ? part : part.slice(0, eqIdx)).toLowerCase().trim();
-    const val    = eqIdx === -1 ? '' : part.slice(eqIdx + 1).trim();
+    const rawVal = eqIdx === -1 ? '' : part.slice(eqIdx + 1).trim();
+    // Preprocess expression variables ($fc/$vd/$f/$sr, lerp expansion) unless raw effect
+    const val    = _RAW_VAL_EFFECTS.has(name) ? rawVal : preprocessVal(rawVal, pipeInfo);
     const isLast = i === parts.length - 1;
 
     const resolved = resolveEffect(name, val);
