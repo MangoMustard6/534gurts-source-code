@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-20: [Python] Fixed `swirl` pipe effect to accept FFmpeg expression strings for `strength` (e.g. `swirl=0.05*T/$vd`): changed call site from `_pfloat` (silently fell back to 180.0) to `_expr_param` which preserves non-numeric strings; updated `_run_swirl` signature to `strength: float | str`.
 - 2026-07-20: [Python] Fixed `_split_pipe_segments` to use universal paren-depth tracking (any `(` increments depth, any `)` decrements) instead of the `_FUNC_NAMES` whitelist. Previously, functions not in the whitelist (e.g. `lerp`, `gauss`, `hypot`) had their internal commas treated as pipe-segment delimiters, causing `lerp(0,1,N/$fc)` to split into three bogus segments and land unexpanded inside geq expressions.
 - 2026-07-20: [Web] Added expression variable system to public/serve.mjs pipe engine: `$vd` (duration s), `$fc` (frame count), `$f` (FPS), `$sr` (sample rate) are substituted with literal numbers before FFmpeg; `lerp(a,b,t)` expands to `((a)+((b)-(a))*(t))`; `T`/`t` (time) and `N`/`n` (frame#) pass through as native FFmpeg expression variables. Pipe segment splitter is now parenthesis/quote-aware so `lerp(0,1,N/$fc)` commas are never treated as effect separators. Added `pinch&punch`/`p&p`/`pinchpunch` effect (geq-based Gaussian pinch distortion; params: strength;radius;cx;cy, all accept expressions). Fixed `swirl` to accept expression strings for strength (e.g. `swirl=0.05*T/$vd`). Usage examples: `swirl=0.05*T/$vd`, `p&p=1;0.5;lerp(0,1,N/$fc)`.
 - 2026-07-18: [TS] Removed `th/multipitchihtx` command and its source file (it was already unwired from the dispatcher).
@@ -2166,7 +2167,7 @@ def _run_vocoder(
 def _run_swirl(
     input_path: str,
     output_path: str,
-    strength: float = 180.0,
+    strength: float | str = 180.0,  # accepts numeric or FFmpeg expression string
     radius: float = 0.5,
     xc: float = 0.5,
     yc: float = 0.5,
@@ -3953,7 +3954,7 @@ def _apply_pipe_effects(
                 is1to1_val = str(_sp(5, "true")).lower() in ("1", "true", "t", "y", "yes", "+", "on")
                 ok, err = _run_swirl(
                     current, out,
-                    strength=_pfloat(params, 0, 180.0),
+                    strength=_expr_param(params[0] if params else None, 180.0),
                     radius=_pfloat(params, 1, 0.5),
                     xc=_pfloat(params, 2, 0.5),
                     yc=_pfloat(params, 3, 0.5),
