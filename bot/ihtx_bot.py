@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-20: [Python] Fixed `_split_pipe_segments` to use universal paren-depth tracking (any `(` increments depth, any `)` decrements) instead of the `_FUNC_NAMES` whitelist. Previously, functions not in the whitelist (e.g. `lerp`, `gauss`, `hypot`) had their internal commas treated as pipe-segment delimiters, causing `lerp(0,1,N/$fc)` to split into three bogus segments and land unexpanded inside geq expressions.
 - 2026-07-20: [Web] Added expression variable system to public/serve.mjs pipe engine: `$vd` (duration s), `$fc` (frame count), `$f` (FPS), `$sr` (sample rate) are substituted with literal numbers before FFmpeg; `lerp(a,b,t)` expands to `((a)+((b)-(a))*(t))`; `T`/`t` (time) and `N`/`n` (frame#) pass through as native FFmpeg expression variables. Pipe segment splitter is now parenthesis/quote-aware so `lerp(0,1,N/$fc)` commas are never treated as effect separators. Added `pinch&punch`/`p&p`/`pinchpunch` effect (geq-based Gaussian pinch distortion; params: strength;radius;cx;cy, all accept expressions). Fixed `swirl` to accept expression strings for strength (e.g. `swirl=0.05*T/$vd`). Usage examples: `swirl=0.05*T/$vd`, `p&p=1;0.5;lerp(0,1,N/$fc)`.
 - 2026-07-18: [TS] Removed `th/multipitchihtx` command and its source file (it was already unwired from the dispatcher).
 - 2026-07-18: [TS] Added `th/videolength` (aliases: vidlen, videolen) — runs ffprobe on a URL and returns the duration formatted as H:MM:SS.ss plus raw seconds.
@@ -2558,17 +2559,21 @@ def _split_effect_params(value: str) -> list[str]:
 
 
 def _split_pipe_segments(pipe_str: str) -> list[str]:
-    """Split pipe_str on ',' while respecting function blocks and arrays.
+    """Split pipe_str on ',' (or '>') while respecting parentheses and quotes.
 
-    Commas inside ``ffmpeg(...)``, ``leftsplit(...)``, ``rightsplit(...)``,
-    and commas inside ``[[...]]`` array literals, are treated as part of the
-    args, not as segment delimiters. Parens inside those blocks are depth-
-    tracked so that expressions like ``7*(text_h)`` do not corrupt the split.
+    Any comma or '>' that sits inside unmatched parentheses or brackets, or
+    inside a single/double-quoted string, is treated as part of the current
+    segment rather than as a delimiter.  This lets expressions like
+    ``lerp(0,1,N/$fc)``, ``ffmpeg(...)``, and ``geq='p(X,Y)'`` pass through
+    without being incorrectly split.
+
+    Universal paren-depth tracking replaces the earlier _FUNC_NAMES whitelist
+    approach, which failed for any function not in the list (e.g. ``lerp``).
+    Balanced arithmetic sub-expressions like ``7*(text_h)`` are handled
+    correctly because their parens open and close within the same segment.
     """
-    _FUNC_NAMES = ("ffmpeg", "leftsplit", "rightsplit", "imagemagick", "im")
     segments: list[str] = []
-    in_func = False
-    func_depth = 0
+    paren_depth = 0
     array_depth = 0
     in_quote: str | None = None   # current open quote char: "'" or '"'
     current: list[str] = []
@@ -2589,26 +2594,18 @@ def _split_pipe_segments(pipe_str: str) -> list[str]:
             continue
         # ── Normal (unquoted) character processing ─────────────────────────
         if ch == "(":
-            prefix = "".join(current).strip()
-            if prefix.rstrip().endswith(_FUNC_NAMES):
-                in_func = True
-                func_depth = 1
-            elif in_func:
-                func_depth += 1
+            paren_depth += 1
             current.append(ch)
         elif ch == ")":
-            if in_func:
-                func_depth -= 1
-                if func_depth == 0:
-                    in_func = False
+            paren_depth = max(0, paren_depth - 1)
             current.append(ch)
         elif ch == "[":
             array_depth += 1
             current.append(ch)
         elif ch == "]":
-            array_depth -= 1
+            array_depth = max(0, array_depth - 1)
             current.append(ch)
-        elif ch in (",", ">") and not in_func and array_depth == 0:
+        elif ch in (",", ">") and paren_depth == 0 and array_depth == 0:
             seg = "".join(current).strip()
             if seg:
                 segments.append(seg)
