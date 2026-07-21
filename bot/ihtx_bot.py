@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-21: [Python] Raised Catbox upload threshold from 8 MB to 10 MB (CATBOX_THRESHOLD constant + hardcoded site in th/repeat); updated all user-facing messages accordingly. Fixed Catbox video playback: `_upload_to_catbox` now transcodes video files to web-compatible MP4 (H.264/AAC, +faststart) via `_transcode_to_web_mp4` before uploading, so videos play correctly in browsers and Discord embeds. Catbox upload timeout increased from 60 s to 120 s.
 - 2026-07-20: [Python] Fixed `swirl` pipe effect to accept FFmpeg expression strings for `strength` (e.g. `swirl=0.05*T/$vd`): changed call site from `_pfloat` (silently fell back to 180.0) to `_expr_param` which preserves non-numeric strings; updated `_run_swirl` signature to `strength: float | str`.
 - 2026-07-20: [Python] Fixed `_split_pipe_segments` to use universal paren-depth tracking (any `(` increments depth, any `)` decrements) instead of the `_FUNC_NAMES` whitelist. Previously, functions not in the whitelist (e.g. `lerp`, `gauss`, `hypot`) had their internal commas treated as pipe-segment delimiters, causing `lerp(0,1,N/$fc)` to split into three bogus segments and land unexpanded inside geq expressions.
 - 2026-07-20: [Web] Added expression variable system to public/serve.mjs pipe engine: `$vd` (duration s), `$fc` (frame count), `$f` (FPS), `$sr` (sample rate) are substituted with literal numbers before FFmpeg; `lerp(a,b,t)` expands to `((a)+((b)-(a))*(t))`; `T`/`t` (time) and `N`/`n` (frame#) pass through as native FFmpeg expression variables. Pipe segment splitter is now parenthesis/quote-aware so `lerp(0,1,N/$fc)` commas are never treated as effect separators. Added `pinch&punch`/`p&p`/`pinchpunch` effect (geq-based Gaussian pinch distortion; params: strength;radius;cx;cy, all accept expressions). Fixed `swirl` to accept expression strings for strength (e.g. `swirl=0.05*T/$vd`). Usage examples: `swirl=0.05*T/$vd`, `p&p=1;0.5;lerp(0,1,N/$fc)`.
@@ -694,7 +695,7 @@ SUPPORTED_EXTENSIONS  = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".gif", ".png"
 VIDEO_EXTENSIONS      = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".gif"}
 AUDIO_VIDEO_EXTS      = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 MAX_FILE_SIZE         = 25 * 1024 * 1024
-CATBOX_THRESHOLD      = 8  * 1024 * 1024   # upload to catbox above this, Discord limit is 25 MB
+CATBOX_THRESHOLD      = 10 * 1024 * 1024   # upload to catbox above this, Discord limit is 25 MB
 MAX_REPETITIONS       = 1000
 MAX_DURATION          = 600
 
@@ -895,13 +896,63 @@ async def _update_bot_presence() -> None:
         pass
 
 
-async def _upload_to_catbox(file_path: str) -> str | None:
-    """Upload a file to catbox.moe and return the URL, or None on failure."""
-    global _renders_completed
+def _transcode_to_web_mp4(file_path: str) -> str | None:
+    """
+    Re-encode a video file to a web-compatible MP4 (H.264 + AAC) so it plays
+    in browsers and Discord embeds after being hosted on Catbox.moe.
+
+    Returns the path to the transcoded file (a .mp4 in the same directory),
+    or None if the file is not a video or transcoding fails.
+    The caller is responsible for deleting the returned temp file.
+    """
+    ext = Path(file_path).suffix.lower()
+    if ext not in AUDIO_VIDEO_EXTS:
+        return None
+    out_path = file_path + "_catbox_web.mp4"
+    cmd = [
+        "ffmpeg", "-y", "-i", file_path,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
+        "-pix_fmt", "yuv420p",
+        out_path,
+    ]
     try:
-        with open(file_path, "rb") as fh:
+        result = subprocess.run(cmd, capture_output=True, timeout=300)
+        if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            return out_path
+    except Exception:
+        pass
+    # Clean up partial output on failure
+    try:
+        os.remove(out_path)
+    except OSError:
+        pass
+    return None
+
+
+async def _upload_to_catbox(file_path: str) -> str | None:
+    """Upload a file to catbox.moe and return the URL, or None on failure.
+
+    Video files are transcoded to web-compatible MP4 (H.264/AAC) before
+    uploading so they play correctly in browsers and Discord embeds.
+    """
+    global _renders_completed
+    transcoded: str | None = None
+    upload_path = file_path
+    try:
+        # Re-encode videos so they play in browser after catbox serves them
+        ext = Path(file_path).suffix.lower()
+        if ext in AUDIO_VIDEO_EXTS:
+            transcoded = await asyncio.get_event_loop().run_in_executor(
+                None, _transcode_to_web_mp4, file_path
+            )
+            if transcoded:
+                upload_path = transcoded
+
+        with open(upload_path, "rb") as fh:
             file_bytes = fh.read()
-        filename = Path(file_path).name
+        filename = Path(upload_path).name
         form = aiohttp.FormData()
         form.add_field("reqtype", "fileupload")
         if CATBOX_USERHASH:
@@ -909,7 +960,7 @@ async def _upload_to_catbox(file_path: str) -> str | None:
         form.add_field("fileToUpload", file_bytes, filename=filename)
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                "https://catbox.moe/user/api.php", data=form, timeout=aiohttp.ClientTimeout(total=60)
+                "https://catbox.moe/user/api.php", data=form, timeout=aiohttp.ClientTimeout(total=120)
             ) as resp:
                 text = await resp.text()
                 if resp.status == 200 and text.startswith("https://"):
@@ -919,6 +970,12 @@ async def _upload_to_catbox(file_path: str) -> str | None:
                 return None
     except Exception:
         return None
+    finally:
+        if transcoded:
+            try:
+                os.remove(transcoded)
+            except OSError:
+                pass
 
 
 def _ffprobe(input_path: str, *args: str) -> str:
@@ -6711,7 +6768,7 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
@@ -6804,7 +6861,7 @@ async def pipetest_command(ctx: commands.Context, *, effects: str = ""):
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ **pipetest** done! [Download]({cb_url})\n{cb_url}")
@@ -7041,7 +7098,7 @@ async def preview1280_command(ctx: commands.Context, start: float = 1.85, durati
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
@@ -7135,7 +7192,7 @@ async def oppositep1280_command(ctx: commands.Context, start: float = 1.85, dura
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
@@ -7231,7 +7288,7 @@ async def preview1280_640x360resize_command(ctx: commands.Context, start: float 
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
@@ -7370,7 +7427,7 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
@@ -7492,7 +7549,7 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
@@ -8210,7 +8267,7 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
 
         # Catbox fallback if >25 MB (same as ihtxgen)
         if out_size > CATBOX_THRESHOLD:
-            await _update("⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await _update("⬆️ Output exceeds 10 MB — uploading to Catbox…")
             catbox_url = await _upload_to_catbox(output_path)
             if catbox_url:
                 result_embed = _make_embed()
@@ -8423,7 +8480,7 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
@@ -8594,7 +8651,7 @@ async def ffmpeg_process_command(ctx: commands.Context, *, args: str = ""):
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
@@ -8829,7 +8886,7 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
@@ -8982,7 +9039,7 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Stretched to `{target_duration:.4f}s`! [Download]({cb_url})\n{cb_url}")
@@ -9094,7 +9151,7 @@ async def repeat_command(ctx: commands.Context, *, args: str = ""):
 
         out_name = f"repeat_{base}{out_ext}"
         file_size = os.stat(out).st_size
-        if file_size <= 8 * 1024 * 1024:
+        if file_size <= CATBOX_THRESHOLD:
             await status_msg.edit(content=f"✅ Repeated {n}×!")
             await ctx.reply(file=discord.File(out, filename=out_name))
         else:
@@ -9326,7 +9383,7 @@ async def concatenate_command(ctx: commands.Context, *, args: str = ""):
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Concatenated {len(sources)} files! [Download]({cb_url})\n{cb_url}")
@@ -9535,7 +9592,7 @@ async def join_command(ctx: commands.Context, *, args: str = ""):
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Joined 2 files! [Download]({cb_url})\n{cb_url}")
@@ -9665,7 +9722,7 @@ async def autotune_command(ctx: commands.Context, *, args: str = ""):
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
@@ -10011,7 +10068,7 @@ async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str =
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
@@ -10116,7 +10173,7 @@ async def huehsv_command(
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
@@ -10354,7 +10411,7 @@ async def lut2png_cmd(ctx: commands.Context, cube_url: str = ""):
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
@@ -10445,7 +10502,7 @@ async def syncaudio_command(ctx: commands.Context, mode: str = ""):
 
         out_size = os.path.getsize(output_path)
         if out_size > CATBOX_THRESHOLD:
-            await status_msg.edit(content="⬆️ Output exceeds 8 MB — uploading to Catbox…")
+            await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
             cb_url = await _upload_to_catbox(output_path)
             if cb_url:
                 await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
