@@ -80,5 +80,13 @@
     "guild_id": "1496091892067209307",
     "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
     "submitted_at": "2026-07-17T10:10:29.056171+00:00"
+  },
+  "denouement": {
+    "effects": "lut=https://file.garden/akpXUy7cShbwSW4u/h.cube,p&p=0.7,p&p=-1,mp=44;32;21;16;0;-10;-27;-35,ffmpeg(-f mp4 -filter_complex \"[0]volume=1.2,bass=f=180:g=2.5[a1];[a1]amix=1,highpass=5[a]\" -map 0:v -map \"[a]\" -c:a flac)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
+    "submitted_at": "2026-07-20T13:36:39.256638+00:00"
   }
 }
