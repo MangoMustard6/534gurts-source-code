@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-21: [Python] Re-matched `_run_tvsim` to latest TypeScript runTvSimulator: param 0 renamed `curvature` (was `line_sync`); new param 1 `line_sync` = zoom factor for interlace/scanphase filters and displacement map Y-stretch; param 2 `detail_zoom` now controls scroll speed (was crop zoom); param 3 `vertical_sync` now controls phosphor lutrgb (was scroll); param 4 `phosphorescence` now interlacing scanlines (centered sin, line_sync-aware); param 5 `interlacing` now scan phasing (cos when curved / -sin when flat, line_sync-aware); scan phasing formula branches on `is_curved`; grill/static inputs now processed with `syncFilter` (center-zoom geq when line_sync!=1); disp map gets Y-stretch geq when line_sync!=1; base gray background changed to `#808080`; trivial case (flat+no grill+no static) uses simple -vf or copy. Standalone `th/tvsim` command updated to match new param order and defaults. Added `labadjust`/`labadj` pipe effect: negates selected Lab color channels (l/a/b params 0 or 1) via ImageMagick hald:8 HALD CLUT and FFmpeg haldclut filter.
 - 2026-07-21: [Python] Updated `_run_tvsim` (standalone command + pipe effect) to match TypeScript runTVSimulator: interlacing formula now centered sin with detail_zoom-aware frequency (`sin(0.5+(Y/H-0.5)*(300/dz))`); scan_phasing now uses `-sin` with detail_zoom-aware frequency and period 4.833333 (was `cos(...period=5)`); aperture_grill now uses external PNG (`tv_simulator_aperture_grill.png`) + `blend=multiply` + `huesaturation` instead of geq mask; static now uses external MP4 (`tv_simulator_static.mp4`) + `blend=overlay` instead of FFmpeg noise filter; optional filters now applied *after* displacement (not before); added `_TVSIM_APERTURE_GRILL_URL` and `_TVSIM_STATIC_URL` constants.
 - 2026-07-21: [Python] Raised Catbox upload threshold from 8 MB to 10 MB (CATBOX_THRESHOLD constant + hardcoded site in th/repeat); updated all user-facing messages accordingly. Fixed Catbox video playback: `_upload_to_catbox` now transcodes video files to web-compatible MP4 (H.264/AAC, +faststart) via `_transcode_to_web_mp4` before uploading, so videos play correctly in browsers and Discord embeds. Catbox upload timeout increased from 60 s to 120 s.
 - 2026-07-20: [Python] Fixed `swirl` pipe effect to accept FFmpeg expression strings for `strength` (e.g. `swirl=0.05*T/$vd`): changed call site from `_pfloat` (silently fell back to 180.0) to `_expr_param` which preserves non-numeric strings; updated `_run_swirl` signature to `strength: float | str`.
@@ -1430,38 +1431,29 @@ _TVSIM_STATIC_URL        = "https://file.garden/aTXso15ukD3mnuPI/tv_simulator_st
 def _run_tvsim(
     input_path: str,
     output_path: str,
-    line_sync: float = 0.5,
-    detail_zoom: float = 1.0,
-    vertical_sync: float = 1.0,
-    phosphorescence: float = 0.0,
-    interlacing: float = 0.0,
-    scan_phasing: float = 0.0,
-    aperture_grill: float = 0.0,
-    static_noise: float = 0.0,
+    curvature: float = 0.0,       # arg 0: displacement strength (1=flat, 0=max curve)
+    line_sync: float = 1.0,       # arg 1: zoom factor for filters + disp map Y-stretch
+    detail_zoom: float = 1.0,     # arg 2: scroll speed (detail_zoom != 1 activates scroll)
+    vertical_sync: float = 0.0,   # arg 3: phosphor lutrgb tint strength
+    phosphorescence: float = 0.0, # arg 4: interlacing scanline darkening strength
+    interlacing: float = 0.0,     # arg 5: scan phasing ripple strength
+    aperture_grill: float = 0.0,  # arg 6: grill PNG blend (0=off, 1=full)
+    static_noise: float = 0.0,    # arg 7: static MP4 blend (0=off, 1=full)
     _in_split: bool = False,
 ) -> tuple[bool, str]:
     """Apply TV-simulator CRT effect via FFmpeg displacement map.
 
-    Matches the TypeScript runTVSimulator logic:
-      - Optional inline filters (scroll, lut, interlace, scan_phase) are applied
-        *after* displacement (or after format=gbrp when line_sync==1).
-      - Interlacing: centered sin formula, detail_zoom-aware.
-      - Scan phasing: -sin formula with detail_zoom-aware frequency and period 4.833333.
-      - Aperture grill: external PNG blended with multiply + huesaturation intensity.
-      - Static: external MP4 blended with overlay.
-
-    Args:
-        line_sync       — 0-1, displacement strength (0=max, 1=none). Required.
-        detail_zoom     — crop factor on the displacement map (default 1)
-        vertical_sync   — vertical scroll speed (default 1 = none)
-        phosphorescence — CRT phosphor glow tint (default 0 = off)
-        interlacing     — scanline darkening strength (default 0 = off)
-        scan_phasing    — ripple/phasing on scanlines (default 0 = off)
-        aperture_grill  — vertical phosphor stripe mask 0-1 (default 0 = off)
-        static_noise    — TV static noise strength 0-1 (default 0 = off)
-        _in_split       — when True, apply displacement to full frame without internal split
+    Matches TypeScript runTvSimulator:
+      curvature    — displacement strength (1=flat, 0=max CRT curve)
+      line_sync    — zoom factor for interlace/scanphase filters and disp map Y-stretch
+      detail_zoom  — scroll speed; != 1 activates vertical scroll
+      vertical_sync — phosphor lutrgb tint strength
+      phosphorescence — interlacing scanline darkening (centered sin, line_sync-aware)
+      interlacing  — scan phasing ripple (cos when curved, -sin when flat; line_sync-aware)
+      aperture_grill — external PNG blended multiply + huesaturation intensity
+      static_noise   — external MP4 blended overlay
     """
-    line_sync = max(0.0, min(1.0, line_sync))
+    curvature = max(0.0, min(1.0, curvature))
 
     vinfo = _ffprobe_video_info(input_path)
     w = vinfo["width"] or 854
@@ -1473,57 +1465,95 @@ def _run_tvsim(
     except Exception:
         fr = 30.0
 
-    dz = detail_zoom
+    is_curved  = curvature != 1.0
+    has_grill  = aperture_grill != 0.0
+    has_static = static_noise   != 0.0
+    ls = line_sync
 
-    # --- Inline optional filters applied after displacement/format step ---
-    optional: list[str] = []
+    # --- Inline optional filters (applied after displacement or base format step) ---
+    fx: list[str] = []
 
-    if vertical_sync != 1.0:
-        optional.append(f"scroll=v='lerp(8/{fr},0,({vertical_sync})^(1/3))'")
+    # Scroll — detail_zoom != 1 activates it; uses probed frame rate
+    if detail_zoom != 1.0:
+        fx.append(f"scroll=v='lerp(8/{fr},0,({detail_zoom})^(1/3))'")
 
-    if phosphorescence != 0.0:
-        p = phosphorescence
-        optional.append(
-            f"lutrgb='lerp(val,val*1.15,{p})':'lerp(val,val*1.15+48,{p})':'lerp(val,val*1.15+64,{p})'"
+    # Phosphor lutrgb tint — vertical_sync != 0
+    if vertical_sync != 0.0:
+        vs = vertical_sync
+        fx.append(
+            f"lutrgb='lerp(val,val*1.15,{vs})':'lerp(val,val*1.15+48,{vs})':'lerp(val,val*1.15+64,{vs})'"
         )
 
+    # Interlacing scanlines (phosphorescence != 0) — centered sin, line_sync-aware frequency
+    if phosphorescence != 0.0:
+        ph = phosphorescence
+        fx.append(
+            f"geq=r='p(X,Y)*lerp(1,(sin(0.5+(Y/H-0.5)*(300/{ls}))+1)/2,{ph})':"
+            f"g='p(X,Y)*lerp(1,(sin(0.5+(Y/H-0.5)*(300/{ls}))+1)/2,{ph})':"
+            f"b='p(X,Y)*lerp(1,(sin(0.5+(Y/H-0.5)*(300/{ls}))+1)/2,{ph})'"
+        )
+
+    # Scan phasing / ripple (interlacing != 0) — cos when curved, -sin when flat
     if interlacing != 0.0:
         il = interlacing
-        optional.append(
-            f"geq=r='p(X,Y)*lerp(1,(sin(0.5+(Y/H-0.5)*(300/{dz}))+1)/2,{il})':"
-            f"g='p(X,Y)*lerp(1,(sin(0.5+(Y/H-0.5)*(300/{dz}))+1)/2,{il})':"
-            f"b='p(X,Y)*lerp(1,(sin(0.5+(Y/H-0.5)*(300/{dz}))+1)/2,{il})'"
-        )
+        if is_curved:
+            fx.append(
+                f"geq=r='min(p(X,Y)+max(cos(Y/H*(5/{ls})-mod(T*16.666666*{il},5))*128-64,0),255)':"
+                f"g='min(p(X,Y)+max(cos(Y/H*(5/{ls})-mod(T*16.666666*{il},5))*128-64,0),255)':"
+                f"b='min(p(X,Y)+max(cos(Y/H*(5/{ls})-mod(T*16.666666*{il},5))*128-64,0),255)'"
+            )
+        else:
+            fx.append(
+                f"geq=r='min(p(X,Y)+max(-sin(0.5+(Y/H-0.5)*(5/{ls})-mod(T*16.666666*{il},4.833333))*128-64,0),255)':"
+                f"g='min(p(X,Y)+max(-sin(0.5+(Y/H-0.5)*(5/{ls})-mod(T*16.666666*{il},4.833333))*128-64,0),255)':"
+                f"b='min(p(X,Y)+max(-sin(0.5+(Y/H-0.5)*(5/{ls})-mod(T*16.666666*{il},4.833333))*128-64,0),255)'"
+            )
 
-    if scan_phasing != 0.0:
-        sp = scan_phasing
-        optional.append(
-            f"geq=r='min(p(X,Y)+max(-sin(0.5+(Y/H-0.5)*(5/{dz})-mod(T*16.666666*{sp},4.833333))*128-64,0),255)':"
-            f"g='min(p(X,Y)+max(-sin(0.5+(Y/H-0.5)*(5/{dz})-mod(T*16.666666*{sp},4.833333))*128-64,0),255)':"
-            f"b='min(p(X,Y)+max(-sin(0.5+(Y/H-0.5)*(5/{dz})-mod(T*16.666666*{sp},4.833333))*128-64,0),255)'"
-        )
+    fx_chain = ("," + ",".join(fx)) if fx else ""
 
-    optional_str = ("," + ",".join(optional)) if optional else ""
+    # syncFilter applied to grill/static inputs when line_sync != 1 (center-zoom)
+    if line_sync != 1.0:
+        sync_filter = (
+            f"format=yuv444p,"
+            f"geq='p(mod((W/2)+(X-(W/2))/{ls},W),mod((H/2)+(Y-(H/2))/{ls},H))',"
+        )
+    else:
+        sync_filter = ""
+
+    # --- Trivial case: flat + no grill + no static ---
+    if not is_curved and not has_grill and not has_static:
+        if fx:
+            vf = ",".join(fx) + ",format=yuv420p"
+            cmd = [
+                "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                "-i", input_path,
+                "-vf", vf, "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", output_path,
+            ]
+        else:
+            cmd = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                   "-i", input_path, "-c", "copy", output_path]
+        return _run_ffmpeg_raw(cmd, timeout=600)
 
     # --- Build input list with stream indices ---
     extra_inputs: list[str] = []
-    cur_idx = 1  # [0] is always input_path
+    cur_idx = 1
 
-    if line_sync != 1.0:
+    if is_curved:
         disp_idx = cur_idx
         extra_inputs += ["-stream_loop", "-1", "-i", _TVSIM_DISPLACE_MAP_URL]
         cur_idx += 1
     else:
         disp_idx = None
 
-    if aperture_grill != 0.0:
+    if has_grill:
         ag_idx = cur_idx
         extra_inputs += ["-i", _TVSIM_APERTURE_GRILL_URL]
         cur_idx += 1
     else:
         ag_idx = None
 
-    if static_noise != 0.0:
+    if has_static:
         st_idx = cur_idx
         extra_inputs += ["-stream_loop", "-1", "-i", _TVSIM_STATIC_URL]
         cur_idx += 1
@@ -1532,41 +1562,49 @@ def _run_tvsim(
 
     # --- Build filter_complex ---
     segs: list[str] = []
+    out_fmt = "gbrp" if (has_grill or has_static) else "yuv444p"
+    current = "_v1"  # tracks current labeled output through the chain
 
-    # Step 1: displacement (or passthrough) → [_v1]
-    if line_sync != 1.0:
-        contrast = (1.0 - line_sync) * 2.366
-        segs.append(f"[0]scale=854:854,format=bgr32[_tv00]")
-        segs.append(
-            f"[{disp_idx}]crop=iw:ih/{dz}:0:0,scale=854:854,"
-            f"eq=contrast={contrast:.6f},format=bgr32,hue=b=-0.033[_tvx]"
+    # Step 1: base → [_v1]
+    if is_curved:
+        contrast = (1.0 - curvature) * 2.366666
+        # Y-stretch on displacement map when line_sync != 1
+        disp_pre = (
+            f"format=yuv444p,geq='p(mod(X,W),mod(Y/{ls},H))',"
+            if line_sync != 1.0 else ""
         )
-        segs.append("color=s=854x854:c=gray,format=bgr32[_tvy]")
+        segs.append(f"[0:v]scale=854:854,format=bgr32[_tv00]")
         segs.append(
-            f"[_tv00][_tvx][_tvy]displace=edge=wrap,scale={w}:{h},setsar=1,format=gbrp"
-            f"{optional_str}[_v1]"
+            f"[{disp_idx}:v]{disp_pre}scale=854:854,"
+            f"eq=contrast={contrast:.6f}:eval=frame,format=bgr32,hue=b=-0.033[_tvx]"
+        )
+        segs.append("color=s=854x854:c=#808080,format=bgr32[_tvy]")
+        segs.append(
+            f"[_tv00][_tvx][_tvy]displace=edge=wrap,scale={w}:{h},setsar=1,"
+            f"format={out_fmt}{fx_chain}[_v1]"
         )
     else:
-        segs.append(f"[0]format=gbrp{optional_str}[_v1]")
+        segs.append(f"[0:v]format=gbrp{fx_chain}[_v1]")
 
-    # Step 2: aperture grill — external PNG + blend multiply + huesaturation → [_vag]
-    if ag_idx is not None:
-        segs.append(f"[{ag_idx}]scale={w}:{h},format=gbrp[_ag]")
-        ag_intensity = aperture_grill / 2.0
+    # Step 2: aperture grill — PNG + blend multiply + huesaturation → [_vag]
+    if has_grill:
+        ag = aperture_grill
+        segs.append(f"[{ag_idx}:v]{sync_filter}scale={w}:{h},format=gbrp[_ag]")
         segs.append(
-            f"[_v1][_ag]blend=all_mode=multiply:all_opacity={aperture_grill},"
-            f"huesaturation=hue=0:saturation=0:intensity={ag_intensity}:strength=100[_vag]"
+            f"[{current}][_ag]blend=all_mode=multiply:all_opacity={ag},"
+            f"huesaturation=hue=0:saturation=0:intensity={ag / 2.0}:strength=100[_vag]"
         )
-        post_ag = "_vag"
-    else:
-        post_ag = "_v1"
+        current = "_vag"
 
-    # Step 3: static — external MP4 + blend overlay → [_vout]
-    if st_idx is not None:
-        segs.append(f"[{st_idx}]scale={w}:{h},format=gbrp[_st]")
-        segs.append(f"[{post_ag}][_st]blend=all_mode=overlay:all_opacity=1:shortest=1[_vout]")
-    else:
-        segs.append(f"[{post_ag}]format=yuv420p[_vout]")
+    # Step 3: static — MP4 + blend overlay → [_vst]
+    if has_static:
+        segs.append(f"[{st_idx}:v]{sync_filter}scale={w}:{h},format=gbrp[_st]")
+        segs.append(f"[{current}][_st]blend=all_mode=overlay:all_opacity=1:shortest=1[_vst]")
+        current = "_vst"
+
+    # Ensure final output is always labeled [_vout] for -map
+    if current != "_vout":
+        segs.append(f"[{current}]format=yuv420p[_vout]")
 
     fc = ";".join(segs)
 
@@ -1637,6 +1675,78 @@ def _run_folkvalley(input_path: str, output_path: str) -> tuple[bool, str]:
             output_path,
         ]
         return _run_ffmpeg_raw(cmd, timeout=300)
+
+
+# ---------- Lab Adjust ----------
+
+def _run_labadjust(
+    input_path: str,
+    output_path: str,
+    l: int = 0,
+    a: int = 0,
+    b: int = 0,
+) -> tuple[bool, str]:
+    """Negate selected Lab color channels using an ImageMagick HALD CLUT.
+
+    Generates a hald:8 LUT in Lab color space, negates the requested channels
+    (l=L*, a=a*, b=b* — mapped to r/g/b in ImageMagick's Lab representation),
+    converts back to sRGB, then applies the LUT via FFmpeg's haldclut filter.
+
+    Args:
+        l — negate the L* (luminance) channel (0 or 1)
+        a — negate the a* (green–red) channel (0 or 1)
+        b — negate the b* (blue–yellow) channel (0 or 1)
+    """
+    channels = ""
+    if int(l) == 1:
+        channels += "r"
+    if int(a) == 1:
+        channels += "g"
+    if int(b) == 1:
+        channels += "b"
+
+    # If no channels selected, just copy
+    if not channels:
+        cmd = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+               "-i", input_path, "-c", "copy", output_path]
+        return _run_ffmpeg_raw(cmd, timeout=60)
+
+    with tempfile.NamedTemporaryFile(suffix=".ppm", delete=False) as tf:
+        lut_path = tf.name
+
+    try:
+        # Generate HALD CLUT: Lab colorspace, negate selected channels, back to sRGB
+        magick_cmd = [
+            "magick", "hald:8",
+            "-colorspace", "lab",
+            "-channel", channels,
+            "-negate", "+channel",
+            "-colorspace", "srgb",
+            lut_path,
+        ]
+        result = subprocess.run(magick_cmd, capture_output=True, timeout=60)
+        if result.returncode != 0:
+            return False, result.stderr.decode(errors="replace")
+
+        # Apply HALD CLUT to input video via haldclut filter
+        # [1:v] = LUT, [0:v] = input video
+        cmd = [
+            "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+            "-i", input_path,
+            "-i", lut_path,
+            "-filter_complex", "[1:v][0:v]haldclut",
+            "-map", "0:a?",
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:a", "aac",
+            output_path,
+        ]
+        return _run_ffmpeg_raw(cmd, timeout=300)
+    finally:
+        try:
+            os.remove(lut_path)
+        except OSError:
+            pass
 
 
 # ---------- Autotune ----------
@@ -2528,6 +2638,7 @@ PIPE_EFFECT_NAMES = {
     "earthquake", "nbfx",
     "ssmp", "soundstretchmultipitch",
     "folkvalley", "fv",
+    "labadjust", "labadj",
     "vocoder", "ilvocodex", "orangevocoder", "4ormulator", "audacity", "magix",
     "alimiter",
     "freakzinga", "fzgm156", "freakzingagm156", "fgm156",
@@ -4023,12 +4134,12 @@ def _apply_pipe_effects(
             if name in ("tvsim", "tv"):
                 ok, err = _run_tvsim(
                     current, out,
-                    line_sync=_pfloat(params, 0, 0.5),
-                    detail_zoom=_pfloat(params, 1, 1.0),
-                    vertical_sync=_pfloat(params, 2, 1.0),
-                    phosphorescence=_pfloat(params, 3, 0.0),
-                    interlacing=_pfloat(params, 4, 0.0),
-                    scan_phasing=_pfloat(params, 5, 0.0),
+                    curvature=_pfloat(params, 0, 0.5),
+                    line_sync=_pfloat(params, 1, 1.0),
+                    detail_zoom=_pfloat(params, 2, 1.0),
+                    vertical_sync=_pfloat(params, 3, 0.0),
+                    phosphorescence=_pfloat(params, 4, 0.0),
+                    interlacing=_pfloat(params, 5, 0.0),
                     aperture_grill=_pfloat(params, 6, 0.0),
                     static_noise=_pfloat(params, 7, 0.0),
                     _in_split=_in_split,
@@ -4107,6 +4218,19 @@ def _apply_pipe_effects(
                 ok, err = _run_folkvalley(current, out)
                 if not ok:
                     return False, f"folkvalley failed: {err}"
+                current = out
+                continue
+
+            # labadjust (labadj) — negate selected Lab channels via ImageMagick HALD CLUT
+            # Params: l;a;b — each 0 or 1 (1 = negate that channel)
+            # Example: labadjust=1;0;1  →  negate L and b channels
+            if name in ("labadjust", "labadj"):
+                _lab_l = int(_pfloat(params, 0, 0.0))
+                _lab_a = int(_pfloat(params, 1, 0.0))
+                _lab_b = int(_pfloat(params, 2, 0.0))
+                ok, err = _run_labadjust(current, out, _lab_l, _lab_a, _lab_b)
+                if not ok:
+                    return False, f"labadjust failed: {err}"
                 current = out
                 continue
 
@@ -10734,17 +10858,17 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
     """Apply a TV/CRT simulator effect to an attached video.
 
     Usage:
-      th/tvsim <line_sync> [detail_zoom] [vertical_sync] [phosphorescence] [interlacing] [scan_phasing] [aperture_grill] [static]
+      th/tvsim <curvature> [line_sync] [detail_zoom] [vertical_sync] [phosphorescence] [interlacing] [aperture_grill] [static]
 
     Parameters (all separated by spaces or pipes):
-      line_sync       — 0-1, displacement strength (0=max CRT warp, 1=no warp). Required.
-      detail_zoom     — crop zoom on displacement map (default 1)
-      vertical_sync   — vertical scroll speed (default 1 = none)
-      phosphorescence — CRT phosphor color tint (default 0 = off)
-      interlacing     — scanline darkening (default 0 = off)
-      scan_phasing    — scanline ripple/phase shift (default 0 = off)
-      aperture_grill  — vertical phosphor stripe mask 0-1 (default 0 = off)
-      static          — TV static noise strength 0-1 (default 0 = off)
+      curvature      — 0-1, CRT warp strength (0=max curve, 1=flat/no warp). Required.
+      line_sync      — zoom factor for interlace/scan filters + disp map Y-stretch (default 1)
+      detail_zoom    — scroll speed; != 1 activates vertical scroll (default 1 = off)
+      vertical_sync  — phosphor lutrgb tint strength (default 0 = off)
+      phosphorescence — interlacing scanline darkening (default 0 = off)
+      interlacing    — scan phasing ripple (default 0 = off)
+      aperture_grill — grill PNG blend strength 0-1 (default 0 = off)
+      static         — static MP4 blend strength 0-1 (default 0 = off)
 
     Examples:
       th/tvsim 0.5
@@ -10763,8 +10887,8 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
     if not tokens:
         await ctx.reply(
             "**th/tvsim** — CRT/TV simulator effect\n"
-            "Attach a video and provide `line_sync` (0–1, required).\n\n"
-            "**Usage:** `th/tvsim <line_sync> [detail_zoom] [vert_sync] [phosphor] [interlace] [scan_phase] [aperture_grill] [static]`\n"
+            "Attach a video and provide `curvature` (0–1, required).\n\n"
+            "**Usage:** `th/tvsim <curvature> [line_sync] [detail_zoom] [vert_sync] [phosphor] [interlace] [aperture_grill] [static]`\n"
             "**Example:** `th/tvsim 0.5`\n"
             "**Full example:** `th/tvsim 0.3 1 1 0.4 0.5 0 0.6 0`\n"
             "**As pipe effect:** `th/ihtx 1 5 - mp4 tvsim=0.5`\n"
@@ -10772,27 +10896,26 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
         )
         return
 
-    line_sync = _tp(0, 0.5)
-    if not (0.0 <= line_sync <= 1.0):
-        await ctx.reply("❌ `line_sync` must be between 0 and 1.")
+    curvature = _tp(0, 0.5)
+    if not (0.0 <= curvature <= 1.0):
+        await ctx.reply("❌ `curvature` must be between 0 and 1.")
         return
 
-    detail_zoom     = _tp(1, 1.0)
-    vertical_sync   = _tp(2, 1.0)
-    phosphorescence = _tp(3, 0.0)
-    interlacing     = _tp(4, 0.0)
-    scan_phasing    = _tp(5, 0.0)
+    line_sync       = _tp(1, 1.0)
+    detail_zoom     = _tp(2, 1.0)
+    vertical_sync   = _tp(3, 0.0)
+    phosphorescence = _tp(4, 0.0)
+    interlacing     = _tp(5, 0.0)
     aperture_grill  = _tp(6, 0.0)
     static_noise    = _tp(7, 0.0)
 
     # Resolve attachment
-    attachment = None
     source = await _resolve_media_source(ctx)
 
     if source is None:
         await ctx.reply(
             "❌ Attach a video to use `th/tvsim`.\n"
-            "**Usage:** `th/tvsim <line_sync> [detail_zoom] [vertical_sync] [phosphorescence] [interlacing] [scan_phasing]`"
+            "**Usage:** `th/tvsim <curvature> [line_sync] [detail_zoom] [vert_sync] [phosphor] [interlace] [aperture_grill] [static]`"
         )
         return
 
@@ -10805,7 +10928,7 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
         await ctx.reply(f"❌ `th/tvsim` requires a video file. Got `{suffix}`.")
         return
 
-    param_str = f"line_sync={line_sync}"
+    param_str = f"curvature={curvature}"
     status_msg = await ctx.reply(f"⏳ Applying TV simulator ({param_str})…")
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -10822,8 +10945,8 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
         ok, err = await loop.run_in_executor(
             None, _run_tvsim,
             input_path, output_path,
-            line_sync, detail_zoom, vertical_sync,
-            phosphorescence, interlacing, scan_phasing,
+            curvature, line_sync, detail_zoom,
+            vertical_sync, phosphorescence, interlacing,
             aperture_grill, static_noise,
         )
 
@@ -10847,8 +10970,8 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
             embed = discord.Embed(
                 title="IHTX Bot — th/tvsim",
                 description=(
-                    f"line_sync={line_sync} · zoom={detail_zoom} · vert={vertical_sync} · "
-                    f"phosphor={phosphorescence} · interlace={interlacing} · scan={scan_phasing} · "
+                    f"curvature={curvature} · line_sync={line_sync} · scroll={detail_zoom} · "
+                    f"phosphor={vertical_sync} · interlace={phosphorescence} · scan={interlacing} · "
                     f"aperture={aperture_grill} · static={static_noise}"
                 ),
                 color=11578404,
