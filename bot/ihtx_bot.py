@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-22: [Python] `th/effectlist` now paginates with ◀/▶ buttons (10 per page). Added `games` tab to `th/ihtxhelp` covering all game commands (8ball, coinflip, roll, rps, choose, rate, slots, numguess, scramble, typerace, mathquiz, trivia). Updated tvsim help entry to match renamed params (curvature→line_sync→detail_zoom order). Added `labadjust=l;a;b` to the pipe effects summary entry in ihtxhelp.
 - 2026-07-21: [Python] Removed peak normalization from `_run_vocoder` (the `result / peak * 0.88` step before writing vocoded.wav); the alimiter post-filter still applies per-profile.
 - 2026-07-21: [Python] Re-matched `_run_tvsim` to latest TypeScript runTvSimulator: param 0 renamed `curvature` (was `line_sync`); new param 1 `line_sync` = zoom factor for interlace/scanphase filters and displacement map Y-stretch; param 2 `detail_zoom` now controls scroll speed (was crop zoom); param 3 `vertical_sync` now controls phosphor lutrgb (was scroll); param 4 `phosphorescence` now interlacing scanlines (centered sin, line_sync-aware); param 5 `interlacing` now scan phasing (cos when curved / -sin when flat, line_sync-aware); scan phasing formula branches on `is_curved`; grill/static inputs now processed with `syncFilter` (center-zoom geq when line_sync!=1); disp map gets Y-stretch geq when line_sync!=1; base gray background changed to `#808080`; trivial case (flat+no grill+no static) uses simple -vf or copy. Standalone `th/tvsim` command updated to match new param order and defaults. Added `labadjust`/`labadj` pipe effect: negates selected Lab color channels (l/a/b params 0 or 1) via ImageMagick hald:8 HALD CLUT and FFmpeg haldclut filter.
 - 2026-07-21: [Python] Updated `_run_tvsim` (standalone command + pipe effect) to match TypeScript runTVSimulator: interlacing formula now centered sin with detail_zoom-aware frequency (`sin(0.5+(Y/H-0.5)*(300/dz))`); scan_phasing now uses `-sin` with detail_zoom-aware frequency and period 4.833333 (was `cos(...period=5)`); aperture_grill now uses external PNG (`tv_simulator_aperture_grill.png`) + `blend=multiply` + `huesaturation` instead of geq mask; static now uses external MP4 (`tv_simulator_static.mp4`) + `blend=overlay` instead of FFmpeg noise filter; optional filters now applied *after* displacement (not before); added `_TVSIM_APERTURE_GRILL_URL` and `_TVSIM_STATIC_URL` constants.
@@ -7077,6 +7078,84 @@ async def submiteffect_command(ctx: commands.Context, name: str = "", *, effects
     await ctx.reply(embed=embed)
 
 
+_EFFECTLIST_PAGE_SIZE = 10
+
+
+class _EffectListNavButton(discord.ui.Button):
+    def __init__(self, direction: int, invoker_id: int, **kwargs):
+        super().__init__(**kwargs)
+        self._direction = direction
+        self._invoker_id = invoker_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self._invoker_id:
+            return await interaction.response.send_message(
+                "Only the person who ran this command can use these buttons.", ephemeral=True
+            )
+        view: _EffectListView = self.view  # type: ignore
+        view._page = max(0, min(view._page + self._direction, view._total - 1))
+        view._update_buttons()
+        await interaction.response.edit_message(embed=view._build_embed(), view=view)
+
+
+class _EffectListView(discord.ui.View):
+    def __init__(self, invoker_id: int, entries: list[tuple[str, dict]], search: str = ""):
+        super().__init__(timeout=180)
+        self._invoker_id = invoker_id
+        self._entries = entries
+        self._search = search
+        self._page = 0
+        self._total = max(1, -(-len(entries) // _EFFECTLIST_PAGE_SIZE))
+
+        self._btn_prev = _EffectListNavButton(
+            -1, invoker_id, label="◀ Prev",
+            style=discord.ButtonStyle.secondary, disabled=True,
+        )
+        self._btn_next = _EffectListNavButton(
+            +1, invoker_id, label="Next ▶",
+            style=discord.ButtonStyle.secondary, disabled=(self._total <= 1),
+        )
+        self.add_item(self._btn_prev)
+        self.add_item(self._btn_next)
+
+    def _update_buttons(self) -> None:
+        self._btn_prev.disabled = (self._page <= 0)
+        self._btn_next.disabled = (self._page >= self._total - 1)
+
+    def _build_embed(self) -> discord.Embed:
+        start = self._page * _EFFECTLIST_PAGE_SIZE
+        page_entries = self._entries[start : start + _EFFECTLIST_PAGE_SIZE]
+        title = f"🎛️ Global User Effects ({len(self._entries)})"
+        if self._search:
+            title += f"  ·  🔍 {self._search}"
+        embed = discord.Embed(
+            title=title,
+            description="Submissions are shared across all servers the bot is in.",
+            color=0x40E0D0,
+            timestamp=discord.utils.utcnow(),
+        )
+        for name, data in page_entries:
+            pipeline = data.get("effects", "")
+            author   = data.get("author_name", "unknown")
+            guild    = data.get("guild_name", "unknown")
+            short = pipeline[:80] + ("…" if len(pipeline) > 80 else "")
+            embed.add_field(
+                name=f"`{name}`  — by {author}  ·  from {guild}",
+                value=f"```{short}```",
+                inline=False,
+            )
+        footer_parts = []
+        if self._total > 1:
+            footer_parts.append(f"Page {self._page + 1}/{self._total}")
+        footer_parts.append(f"{len(self._entries)} effects total")
+        embed.set_footer(text=" · ".join(footer_parts))
+        return embed
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
 @bot.command(name="listeffects", aliases=["usereffects", "le", "effectlist"])
 async def listeffects_command(ctx: commands.Context, *, search: str = ""):
     """List all user-submitted named pipe effects.
@@ -7098,25 +7177,8 @@ async def listeffects_command(ctx: commands.Context, *, search: str = ""):
         await ctx.reply(f"No effects found matching `{search}`.")
         return
 
-    embed = discord.Embed(
-        title=f"🎛️ Global User Effects ({len(entries)})",
-        description="Submissions are shared across all servers the bot is in.",
-        color=0x40E0D0,
-        timestamp=discord.utils.utcnow(),
-    )
-    for name, data in entries[:20]:
-        pipeline = data.get("effects", "")
-        author = data.get("author_name", "unknown")
-        guild_name = data.get("guild_name", "unknown")
-        short = pipeline[:80] + ("…" if len(pipeline) > 80 else "")
-        embed.add_field(
-            name=f"`{name}`  — by {author}  ·  from {guild_name}",
-            value=f"```{short}```",
-            inline=False,
-        )
-    if len(entries) > 20:
-        embed.set_footer(text=f"Showing first 20 of {len(entries)}. Search by name to narrow results.")
-    await ctx.reply(embed=embed)
+    view = _EffectListView(ctx.author.id, entries, search)
+    await ctx.reply(embed=view._build_embed(), view=view)
 
 
 @bot.command(name="deleteeffect", aliases=["removeeffect", "deleffect"])
@@ -11227,9 +11289,10 @@ _HELP_ENTRIES: list[dict] = [
             "**Split:** `leftsplit(<inner_effects>)` · `rightsplit(<inner_effects>)` — apply inner effects to one half, mirror/combine\n"
             "**Reverse:** `vreverse` (video frames) · `areverse` (audio)\n"
             "**Audio:** `multipitch=semis` `volume=<val>` `vibrato=freq;depth` `syncaudio` `vocoder=mode;url` `ilvocodex=url` `orangevocoder=url` `4ormulator=url` `audacity=url`\n"
-            "**CRT:** `tvsim=line_sync[;detail_zoom;vert_sync;phosphor;interlace;scan_phase;aperture_grill;static]`\n"
+            "**CRT:** `tvsim=curvature[;line_sync;detail_zoom;vert_sync;phosphor;interlace;aperture_grill;static]`\n"
             "**Swirl:** `swirl=strength[;radius;xc;yc;fallout;is1to1]`\n"
             "**Aesthetics:** `folkvalley` / `fv` — music replacement + brightness + overlay\n"
+            "**Color:** `labadjust=l;a;b` (negate Lab channels; each 0 or 1)\n"
             "**Overlay:** `nepeta[=url]` (cat-ear PNG or custom image scaled to video) `watermark=<url>` `ring[=url]` `miui` `reddit` `caption=<text>`\n"
             "**Raw / FX:** `ffmpeg(<args>)` `frei0r=plugin:params` `lut=<url>` `speed=<factor>`"
         ),
@@ -11433,24 +11496,24 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "heavy",
-        "name": "th/tvsim <line_sync> [...]  (aliases: tv, tvsimulator)",
+        "name": "th/tvsim <curvature> [...]  (aliases: tv, tvsimulator)",
         "value": (
             "Apply a CRT/TV simulator effect using an FFmpeg displacement map.\n"
             "**Parameters** (space- or pipe-separated):\n"
-            "• `line_sync` — 0–1, displacement strength. 0 = max CRT warp, 1 = no displacement. **Required.**\n"
-            "• `detail_zoom` — zoom/crop on the displacement map (default 1)\n"
-            "• `vertical_sync` — vertical scroll speed (default 1 = off)\n"
-            "• `phosphorescence` — CRT phosphor color tint 0–1 (default 0 = off)\n"
-            "• `interlacing` — scanline darkening 0–1 (default 0 = off)\n"
-            "• `scan_phasing` — animated scanline ripple 0–1 (default 0 = off)\n"
+            "• `curvature` — 0–1, warp strength. 0 = max CRT curve, 1 = flat/no displacement. **Required.**\n"
+            "• `line_sync` — zoom factor for interlace/scan filters + disp map Y-stretch (default 1)\n"
+            "• `detail_zoom` — scroll speed; != 1 activates vertical scroll (default 1 = off)\n"
+            "• `vertical_sync` — phosphor lutrgb tint strength (default 0 = off)\n"
+            "• `phosphorescence` — interlacing scanline darkening 0–1 (default 0 = off)\n"
+            "• `interlacing` — scan phasing ripple 0–1 (default 0 = off)\n"
             "• `aperture_grill` — Trinitron-style vertical phosphor stripe mask 0–1 (default 0 = off)\n"
-            "• `static` — random TV static noise strength 0–1 (default 0 = off)\n\n"
+            "• `static` — TV static MP4 blend strength 0–1 (default 0 = off)\n\n"
             "**Examples:**\n"
             "`th/tvsim 0.5` — moderate CRT warp\n"
             "`th/tvsim 0.3 1 1 0.4 0.5 0 0.6 0` — warp + phosphor + interlace + aperture grill\n"
             "`th/tvsim 0.5 1 1 0 0 0 0 1` — warp + full static\n"
             "**As pipe effect:** `th/ihtx 1 5 - mp4 tvsim=0.5`\n"
-            "Full pipe syntax: `tvsim=line_sync;detail_zoom;vert_sync;phosphor;interlace;scan_phase;aperture_grill;static`"
+            "Full pipe syntax: `tvsim=curvature;line_sync;detail_zoom;vert_sync;phosphor;interlace;aperture_grill;static`"
         ),
     },
     {
@@ -11735,11 +11798,73 @@ _HELP_ENTRIES: list[dict] = [
         "name": "th/slowmode [seconds]",
         "value": "Set channel slowmode delay (0–21600 seconds). Use `th/slowmode 0` or just `th/slowmode` to disable.",
     },
+    # ── Games ──
+    {
+        "cat": "games",
+        "name": "th/8ball <question>  (alias: eightball)",
+        "value": "Ask the magic 8-ball a yes/no question. The oracle never lies.",
+    },
+    {
+        "cat": "games",
+        "name": "th/coinflip  (aliases: flip, coin)",
+        "value": "Flip a coin — **Heads** or **Tails**?",
+    },
+    {
+        "cat": "games",
+        "name": "th/roll [sides]  (aliases: dice, d)",
+        "value": "Roll a die. Default is `d6`. `th/roll 20` rolls a d20. Max: d1000000.",
+    },
+    {
+        "cat": "games",
+        "name": "th/rps <rock|paper|scissors>  (alias: rockpaperscissors)",
+        "value": "Play rock, paper, scissors against the bot. Shortcuts: `r` `p` `s` or emoji (✊✋✌️).",
+    },
+    {
+        "cat": "games",
+        "name": "th/choose <a|b|c>  (alias: pick)",
+        "value": "Randomly pick one item from a pipe-separated list.\nExample: `th/choose pizza|sushi|tacos`",
+    },
+    {
+        "cat": "games",
+        "name": "th/rate <thing>",
+        "value": "Rate something out of 10. Score is deterministic — same input always gets the same rating.",
+    },
+    {
+        "cat": "games",
+        "name": "th/slots  (alias: slot)",
+        "value": "Spin the slot machine 🎰. Land **7️⃣ 7️⃣ 7️⃣** (25% chance) to win **+200 XP!**",
+    },
+    {
+        "cat": "games",
+        "name": "th/numguess  (aliases: ng, guess)",
+        "value": "Guess a secret number between 1–100. You have **7 tries** with 30 seconds per guess.",
+    },
+    {
+        "cat": "games",
+        "name": "th/scramble  (aliases: ws, wordscramble)",
+        "value": "Unscramble a shuffled video/audio-related word. **30 seconds** on the clock.",
+    },
+    {
+        "cat": "games",
+        "name": "th/typerace  (aliases: tr, type, typer)",
+        "value": "Race to type a phrase exactly as fast as you can. Reports your **WPM** on success. 60 seconds to complete.",
+    },
+    {
+        "cat": "games",
+        "name": "th/mathquiz  (alias: mq)",
+        "value": "5 arithmetic questions (addition, subtraction, multiplication), **10 seconds** each.",
+    },
+    {
+        "cat": "games",
+        "name": "th/trivia",
+        "value": "10-question music trivia — multiple choice **A/B/C/D**, 20s per question. Earn **100 XP** per correct answer.",
+    },
 ]
 
 _HELP_CATS = {
     "heavy": ("⚙️ Heavy Commands", discord.Color(0x40E0D0)),
     "fun":   ("🎉 Fun",            discord.Color(0x40E0D0)),
+    "games": ("🎮 Games",          discord.Color(0x40E0D0)),
     "owner": ("🔒 Owner",          discord.Color(0x40E0D0)),
 }
 
@@ -11800,6 +11925,7 @@ def _build_home_embed() -> discord.Embed:
             "`th/ihtxhelp <query>` to search all commands.\n\n"
             f"⚙️ **Heavy Commands** — {counts['heavy']} entries\n"
             f"🎉 **Fun** — {counts['fun']} entries\n"
+            f"🎮 **Games** — {counts['games']} entries\n"
             f"🔒 **Owner** — {counts['owner']} entries"
         ),
         color=0x40E0D0,
@@ -11816,6 +11942,8 @@ class _HelpSelect(discord.ui.Select):
                                  description="ihtx, ffmpeg, multipitch, effects reference…"),
             discord.SelectOption(label="🎉 Fun",            value="fun",
                                  description="huehsv, trim, dl, catbox, tag, chat, ask…"),
+            discord.SelectOption(label="🎮 Games",          value="games",
+                                 description="8ball, coinflip, dice, slots, trivia, numguess…"),
             discord.SelectOption(label="🔒 Owner",          value="owner",
                                  description="blockuser, autoreply, warn, say, setlimit…"),
             discord.SelectOption(label="🏠 Home",            value="home",
