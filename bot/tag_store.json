@@ -127,6 +127,16 @@
         "allowed_roles": [],
         "denied_users": [],
         "guild_origin": "1514193593697435779"
+      },
+      "tagscript_test": {
+        "name": "tagscript_test",
+        "content": "tagscript:\nhello {user} welcome to {tagname}",
+        "owner_id": 1513712642819231812,
+        "created_at": "2026-07-21T12:55:30.816917+00:00",
+        "uses": 1,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": []
       }
     },
     "aliases": {

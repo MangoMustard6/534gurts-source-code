@@ -88,5 +88,69 @@
     "guild_id": "1496091892067209307",
     "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
     "submitted_at": "2026-07-20T13:36:39.256638+00:00"
+  },
+  "bgm": {
+    "effects": "gradientmap=[[0,150,21,255,0],[145,255,75,255,0.5],[0,45,45,255,0.6],[15,24,255,255,0.75]],mp=-10;-5;5;10,ffmpeg(-f mp4 -filter_complex \"[0]volume=1.4[a1];[a1]amix=1,highpass=15[a]\" -map 0:v -map \"[a]\" -c:a flac)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
+    "submitted_at": "2026-07-21T10:20:49.205391+00:00"
+  },
+  "bgm0": {
+    "effects": "huehsv=0.5,mirror=-90;0.318,mirror=90;0.682,mp=0;0.1;-5;-5.1,ffmpeg(-f mp4 -filter_complex \"[0]volume=1.4,bass=g=1.25[a1];[a1]amix=1,highpass=12.5[a]\" -map 0:v -map \"[a]\" -c:a flac)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
+    "submitted_at": "2026-07-21T10:26:46.029413+00:00"
+  },
+  "bgm1": {
+    "effects": "hflip,ccshue=330,channelblend=b;g;r,invlum,mp=-2;-4,ffmpeg(-f mp4 -filter_complex \"[0]volume=1.4[a1];[a1]amix=1,highpass=12.5[a]\" -map 0:v -map \"[a]\" -c:a flac)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
+    "submitted_at": "2026-07-21T10:32:02.422927+00:00"
+  },
+  "bgm2oldp": {
+    "effects": "gradientmap=[[0,0,0,0,0.5],[0,0,0,255,1]],channelblend=b;g;r,ccshue=100,mirror=right,swirl=0.001,mp=0;5;0.2;5.2,ffmpeg(-f mp4 -filter_complex \"[0]volume=1.4[a1];[a1]amix=1,highpass=12.5[a]\" -map 0:v -map \"[a]\" -c:a flac)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
+    "submitted_at": "2026-07-21T10:36:59.953394+00:00"
+  },
+  "bgm2newp": {
+    "effects": "gradientmap=[[0,0,0,0,0.5],[0,0,0,255,1]],channelblend=b;g;r,ccshue=100,mirror=right,swirl=0.001,mp=0;5;-0.2;4.98,ffmpeg(-f mp4 -filter_complex \"[0]volume=1.4[a1];[a1]amix=1,highpass=12.5[a]\" -map 0:v -map \"[a]\" -c:a flac)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
+    "submitted_at": "2026-07-21T10:37:31.218195+00:00"
+  },
+  "bgm3": {
+    "effects": "hflip,channelblend=b;g;r,huehsv=0.707,mp=-5;8,ffmpeg(-f mp4 -filter_complex \"[0]volume=1.3[a1];[a1]amix=1,highpass=12.5[a]\" -map 0:v -map \"[a]\" -c:a flac)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
+    "submitted_at": "2026-07-21T10:44:24.666020+00:00"
+  },
+  "haha_major": {
+    "effects": "ffmpeg(-vf scroll=h=0.5/15),mp=-1.5;1.5,ffmpeg(-f mp4 -filter_complex \"[0]volume=1.25[a1];[a1]amix=1,highpass=12.5[a]\" -map 0:v -map \"[a]\" -c:a pcm_s16le)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
+    "submitted_at": "2026-07-21T12:10:31.548722+00:00"
+  },
+  "fzcm3": {
+    "effects": "swirl=0.5,swirl=-0.5,ccshue=180;3,mp=-25;25,ffmpeg(-f mp4 -filter_complex \"[0]volume=1.25[a1];[a1]amix=1,highpass=12.5[a]\" -map 0:v -map \"[a]\" -c:a pcm_s16le)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
+    "submitted_at": "2026-07-21T12:19:30.961817+00:00"
   }
 }

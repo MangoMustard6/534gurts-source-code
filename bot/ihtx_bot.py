@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-21: [Python] Removed peak normalization from `_run_vocoder` (the `result / peak * 0.88` step before writing vocoded.wav); the alimiter post-filter still applies per-profile.
 - 2026-07-21: [Python] Re-matched `_run_tvsim` to latest TypeScript runTvSimulator: param 0 renamed `curvature` (was `line_sync`); new param 1 `line_sync` = zoom factor for interlace/scanphase filters and displacement map Y-stretch; param 2 `detail_zoom` now controls scroll speed (was crop zoom); param 3 `vertical_sync` now controls phosphor lutrgb (was scroll); param 4 `phosphorescence` now interlacing scanlines (centered sin, line_sync-aware); param 5 `interlacing` now scan phasing (cos when curved / -sin when flat, line_sync-aware); scan phasing formula branches on `is_curved`; grill/static inputs now processed with `syncFilter` (center-zoom geq when line_sync!=1); disp map gets Y-stretch geq when line_sync!=1; base gray background changed to `#808080`; trivial case (flat+no grill+no static) uses simple -vf or copy. Standalone `th/tvsim` command updated to match new param order and defaults. Added `labadjust`/`labadj` pipe effect: negates selected Lab color channels (l/a/b params 0 or 1) via ImageMagick hald:8 HALD CLUT and FFmpeg haldclut filter.
 - 2026-07-21: [Python] Updated `_run_tvsim` (standalone command + pipe effect) to match TypeScript runTVSimulator: interlacing formula now centered sin with detail_zoom-aware frequency (`sin(0.5+(Y/H-0.5)*(300/dz))`); scan_phasing now uses `-sin` with detail_zoom-aware frequency and period 4.833333 (was `cos(...period=5)`); aperture_grill now uses external PNG (`tv_simulator_aperture_grill.png`) + `blend=multiply` + `huesaturation` instead of geq mask; static now uses external MP4 (`tv_simulator_static.mp4`) + `blend=overlay` instead of FFmpeg noise filter; optional filters now applied *after* displacement (not before); added `_TVSIM_APERTURE_GRILL_URL` and `_TVSIM_STATIC_URL` constants.
 - 2026-07-21: [Python] Raised Catbox upload threshold from 8 MB to 10 MB (CATBOX_THRESHOLD constant + hardcoded site in th/repeat); updated all user-facing messages accordingly. Fixed Catbox video playback: `_upload_to_catbox` now transcodes video files to web-compatible MP4 (H.264/AAC, +faststart) via `_transcode_to_web_mp4` before uploading, so videos play correctly in browsers and Discord embeds. Catbox upload timeout increased from 60 s to 120 s.
@@ -2282,9 +2283,6 @@ def _run_vocoder(
             output[start: start + win_size] += out_frame
 
         result = output[:n]
-        peak = float(np.max(np.abs(result)))
-        if peak > 0:
-            result = result / peak * 0.88
 
         voc_wav = os.path.join(tmpdir, "vocoded.wav")
         with _wave.open(voc_wav, "wb") as wf:
