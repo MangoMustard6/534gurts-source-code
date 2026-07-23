@@ -152,5 +152,29 @@
     "guild_id": "1496091892067209307",
     "guild_name": "T1GNI IHTX and Fun Bot (Home Server)",
     "submitted_at": "2026-07-21T12:19:30.961817+00:00"
+  },
+  "bgm187": {
+    "effects": "ffmpeg(-vf scale=640:640),wave=custom:0;5.4;2;0;0;5.4;2;0,ffmpeg(-vf scale=640:360),invlum,huehsv=0.5,mp=-16;24,ffmpeg(-f mp4 -filter_complex \"[0]volume=1.4,bass=g=1.25[a1];[a1]amix=1,highpass=12.5[a]\" -map 0:v -map \"[a]\" -c:a pcm_s16le)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "the challenge",
+    "submitted_at": "2026-07-22T09:11:39.676285+00:00"
+  },
+  "bgm188": {
+    "effects": "mirror=right,tvsim=0.75,huehsv=0.626,channelblend=b;g;r,mp=-5;4.5",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "the challenge",
+    "submitted_at": "2026-07-22T11:04:39.012675+00:00"
+  },
+  "bgm189": {
+    "effects": "p&p=-0.5,p&p=0.5,mirror=left,huehsv=0.333,invert,mp=1;-4;-23,ffmpeg(-f mp4 -filter_complex \"[0]bass=g=1.25[a1];[a1]amix=1,highpass=10.5[a]\" -map 0:v -map \"[a]\" -c:a pcm_s16le)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "the challenge",
+    "submitted_at": "2026-07-22T11:35:21.705796+00:00"
   }
 }
