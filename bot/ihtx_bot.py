@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-23: [Python] Fixed `labadjust` haldclut "Failed to configure input pad" error: switched from `-filter_complex "[1:v][0:v]haldclut"` (two -i inputs) to `-vf "movie={lut_path},[in]haldclut,format=yuv420p"` (same pattern as huehsv/ccshue). Added pipe-effect variables `$d` (duration alias for `$vd`), `$fr` (frame rate alias for `$f`), `$w` (video width px), `$h` (video height px).
+- 2026-07-23: [Python] Fixed `labadjust` output unplayable: switched to `-c:a copy` with no explicit video codec (matches huehsv/ccshue pattern exactly), so the output container/codec follows output_path extension. Updated `_concat_codec_args` formats (mkv/mxf/mov/mp4/avi) to use `-bufsize 16M -threads 0 -crf 25 -preset veryfast`; wired `export_format` through to final concat output in tagscript workflow (no longer hardcoded to mp4). Fixed `labadjust` haldclut "Failed to configure input pad" error: switched from `-filter_complex "[1:v][0:v]haldclut"` to `-vf "movie={lut_path},[in]haldclut,format=yuv420p"`. Added pipe-effect variables `$d` (duration alias for `$vd`), `$fr` (frame rate alias for `$f`), `$w` (video width px), `$h` (video height px).
 - 2026-07-22: [Python] `th/effectlist` now paginates with ◀/▶ buttons (10 per page). Added `games` tab to `th/ihtxhelp` covering all game commands (8ball, coinflip, roll, rps, choose, rate, slots, numguess, scramble, typerace, mathquiz, trivia). Updated tvsim help entry to match renamed params (curvature→line_sync→detail_zoom order). Added `labadjust=l;a;b` to the pipe effects summary entry in ihtxhelp.
 - 2026-07-21: [Python] Removed peak normalization from `_run_vocoder` (the `result / peak * 0.88` step before writing vocoded.wav); the alimiter post-filter still applies per-profile.
 - 2026-07-21: [Python] Re-matched `_run_tvsim` to latest TypeScript runTvSimulator: param 0 renamed `curvature` (was `line_sync`); new param 1 `line_sync` = zoom factor for interlace/scanphase filters and displacement map Y-stretch; param 2 `detail_zoom` now controls scroll speed (was crop zoom); param 3 `vertical_sync` now controls phosphor lutrgb (was scroll); param 4 `phosphorescence` now interlacing scanlines (centered sin, line_sync-aware); param 5 `interlacing` now scan phasing (cos when curved / -sin when flat, line_sync-aware); scan phasing formula branches on `is_curved`; grill/static inputs now processed with `syncFilter` (center-zoom geq when line_sync!=1); disp map gets Y-stretch geq when line_sync!=1; base gray background changed to `#808080`; trivial case (flat+no grill+no static) uses simple -vf or copy. Standalone `th/tvsim` command updated to match new param order and defaults. Added `labadjust`/`labadj` pipe effect: negates selected Lab color channels (l/a/b params 0 or 1) via ImageMagick hald:8 HALD CLUT and FFmpeg haldclut filter.
@@ -1738,17 +1738,14 @@ def _run_labadjust(
         if result.returncode != 0:
             return False, result.stderr.decode(errors="replace")
 
-        # Apply HALD CLUT via movie= source (same pattern as huehsv/ccshue).
-        # Using -vf with movie= avoids pixel-format negotiation issues that
-        # arise when loading the PPM as a second -i in filter_complex.
+        # Apply HALD CLUT via movie= source — identical pattern to huehsv/ccshue.
+        # Use -c:a copy (not aac) so the output container/codec is determined
+        # by output_path's extension, matching how other haldclut effects work.
         cmd = [
-            "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-            "-i", input_path,
+            "ffmpeg", "-y", "-i", input_path,
             "-vf", f"movie={lut_path},[in]haldclut,format=yuv420p",
-            "-map", "0:a?",
+            "-c:a", "copy",
             "-pix_fmt", "yuv420p",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-            "-c:a", "aac",
             output_path,
         ]
         return _run_ffmpeg_raw(cmd, timeout=300)
@@ -5070,19 +5067,28 @@ def _safe_awk_duration(duration_expr: str, vidlen: float) -> tuple[bool, str]:
 
 
 def _concat_codec_args(output_format: str) -> list[str]:
-    """Return final concat codec args matching the IHTX TagScript cases."""
+    """Return final concat codec args for each supported output format."""
     fmt = output_format.lower().lstrip(".")
     if fmt == "mkv":
-        return ["-c:v", "mpeg2video", "-q:v", "1", "-c:a", "flac", "-pix_fmt", "yuv420p", "-bufsize", "64M"]
+        return ["-c:v", "mpeg2video", "-q:v", "1", "-c:a", "flac",
+                "-pix_fmt", "yuv420p", "-bufsize", "16M", "-threads", "0"]
     if fmt == "mxf":
-        return ["-c:v", "mpeg2video", "-qscale", "1", "-qmin", "1", "-c:a", "pcm_s16le", "-ar", "48000", "-pix_fmt", "yuv420p", "-bufsize", "64M"]
+        return ["-c:v", "mpeg2video", "-qscale", "1", "-qmin", "1",
+                "-c:a", "pcm_s16le", "-ar", "48000",
+                "-pix_fmt", "yuv420p", "-bufsize", "16M", "-threads", "0"]
     if fmt == "mov":
-        return ["-c:v", "libx264", "-profile:v", "high422", "-level:v", "5", "-tune", "zerolatency", "-q:v", "1", "-crf", "30", "-preset", "superfast", "-c:a", "aac", "-q:a", "10", "-b:a", "192K", "-aac_coder", "fast", "-pix_fmt", "yuv420p", "-bufsize", "64M"]
+        return ["-c:v", "libx264", "-profile:v", "high422", "-level:v", "5",
+                "-tune", "zerolatency", "-q:v", "1", "-crf", "25", "-preset", "veryfast",
+                "-c:a", "aac", "-q:a", "10", "-b:a", "96K", "-aac_coder", "fast",
+                "-pix_fmt", "yuv420p", "-bufsize", "16M", "-threads", "0"]
     if fmt == "mp4":
-        return ["-c:v", "libx264", "-profile:v", "high422", "-level:v", "5", "-tune", "zerolatency", "-q:v", "1", "-crf", "30", "-preset", "superfast", "-c:a", "flac", "-pix_fmt", "yuv420p", "-bufsize", "64M"]
+        return ["-c:v", "libx264", "-profile:v", "high422", "-level:v", "5",
+                "-tune", "zerolatency", "-q:v", "1", "-crf", "25", "-preset", "veryfast",
+                "-c:a", "flac", "-pix_fmt", "yuv420p", "-bufsize", "16M", "-threads", "0"]
     if fmt == "avi":
-        return ["-c:v", "mpeg2video", "-c:a", "flac", "-pix_fmt", "yuv420p"]
-    return ["-pix_fmt", "yuv420p", "-bufsize", "64M"]
+        return ["-c:v", "mpeg2video", "-c:a", "flac", "-pix_fmt", "yuv420p", "-threads", "0"]
+    # fallback: copy streams, let FFmpeg choose container defaults
+    return ["-pix_fmt", "yuv420p", "-bufsize", "16M", "-threads", "0"]
 
 
 def _run_ihtx_tagscript_workflow(
@@ -5117,7 +5123,8 @@ def _run_ihtx_tagscript_workflow(
         return False, dur_or_error
     dur = dur_or_error
 
-    extension = "mp4"
+    _SUPPORTED_FINAL_FORMATS = {"mp4", "mkv", "mxf", "mov", "avi"}
+    extension = export_format.lower() if export_format.lower() in _SUPPORTED_FINAL_FORMATS else "mp4"
 
     with tempfile.TemporaryDirectory() as tmpdir:
         base = os.path.join(tmpdir, "0.mp4")
