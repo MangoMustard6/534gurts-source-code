@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-23: [Python] Removed preview1280/p1280, oppositep1280/op1280, preview1280with640x360resize/p1280ff!3/p1280w16:9r, and multipitch/mp/multi from HEAVY_COMMANDS (no longer rate-limited). Moved their _HELP_ENTRIES category from "heavy" to "fun". Updated th/help (TypeScript): moved preview1280/multipitch out of Heavy Effects into Video Tools section; added missing commands (tvsim, swirl, folkvalley, vocoder, download, videolength, bytebeat, wave, submiteffect, listeffects, invite); split Games into TS-only and Python-only subsections; added numguess, scramble, typerace, mathquiz to Python games; merged Info+Limits into one field.
 - 2026-07-23: [Python] Fixed `labadjust` output unplayable: switched to `-c:a copy` with no explicit video codec (matches huehsv/ccshue pattern exactly), so the output container/codec follows output_path extension. Updated `_concat_codec_args` formats (mkv/mxf/mov/mp4/avi) to use `-bufsize 16M -threads 0 -crf 25 -preset veryfast`; wired `export_format` through to final concat output in tagscript workflow (no longer hardcoded to mp4). Fixed `labadjust` haldclut "Failed to configure input pad" error: switched from `-filter_complex "[1:v][0:v]haldclut"` to `-vf "movie={lut_path},[in]haldclut,format=yuv420p"`. Added pipe-effect variables `$d` (duration alias for `$vd`), `$fr` (frame rate alias for `$f`), `$w` (video width px), `$h` (video height px).
 - 2026-07-22: [Python] `th/effectlist` now paginates with ◀/▶ buttons (10 per page). Added `games` tab to `th/ihtxhelp` covering all game commands (8ball, coinflip, roll, rps, choose, rate, slots, numguess, scramble, typerace, mathquiz, trivia). Updated tvsim help entry to match renamed params (curvature→line_sync→detail_zoom order). Added `labadjust=l;a;b` to the pipe effects summary entry in ihtxhelp.
 - 2026-07-21: [Python] Removed peak normalization from `_run_vocoder` (the `result / peak * 0.88` step before writing vocoded.wav); the alimiter post-filter still applies per-profile.
@@ -336,7 +337,7 @@ def _expr_param(param: str | None, default: float) -> str:
 
 
 # Heavy command rate limiting
-HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "preview1280", "p1280", "oppositep1280", "op1280", "preview1280with640x360resize", "p1280ff!3", "p1280w16:9r", "multipitch", "mp", "multi", "ihtxsap", "sap", "concatenate", "concat", "join", "multipitch_bungee", "mpb", "bmp", "multipitchbungee", "bungeemultipitch"}
+HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "ihtxsap", "sap", "concatenate", "concat", "join", "multipitch_bungee", "mpb", "bmp", "multipitchbungee", "bungeemultipitch"}
 HEAVY_LIMIT_DEFAULT = 20
 HEAVY_LIMIT_OWNER = 5340
 LIMITS_FILE = Path("bot/limits.json")
@@ -11534,7 +11535,7 @@ _HELP_ENTRIES: list[dict] = [
         ),
     },
     {
-        "cat": "heavy",
+        "cat": "fun",
         "name": "th/multipitch <semitones>  (aliases: mp, multi)",
         "value": (
             "Multi-voice pitch shift via Rubber Band R3.\n"
@@ -11559,17 +11560,17 @@ _HELP_ENTRIES: list[dict] = [
         ),
     },
     {
-        "cat": "heavy",
-        "name": "th/preview1280 [start] [dur]",
+        "cat": "fun",
+        "name": "th/preview1280 [start] [dur]  (aliases: p1280, pv1280)",
         "value": "12-segment TV-simulator montage. Defaults: start=1.85, dur=0.85",
     },
     {
-        "cat": "heavy",
+        "cat": "fun",
         "name": "th/oppositep1280 [start] [dur]  (aliases: op1280, opposite, opposite1280)",
         "value": "Inverse TV-simulator montage: all hue shifts negated, all pitch shifts inverted vs preview1280. Defaults: start=1.85, dur=0.85",
     },
     {
-        "cat": "heavy",
+        "cat": "fun",
         "name": "th/preview1280with640x360resize [start] [dur]  (aliases: p1280ff!3, p1280w16:9r)",
         "value": "Same 12-segment TV-simulator montage as preview1280 but the final output is locked to **640×360** regardless of input resolution. Defaults: start=1.85, dur=0.85",
     },
