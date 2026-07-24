@@ -6621,6 +6621,246 @@ def _run_oppositep1280(
 
 
 
+
+def _run_preview1280what(
+    input_path: str,
+    output_path: str,
+    start_offset: float = 1.85,
+    segment_dur: float = 0.85,
+    target_len: float = 5.0,
+    use_tempo: bool = False,
+) -> tuple[bool, str]:
+    """28-segment TV-simulator extended montage (preview1280 FFmpeg Extended v8 v2+).
+
+    4 full segs (t) + 23 half segs (t2) + 1 looping long seg (target_len).
+    use_tempo=True adds proportional time-stretch to each rubberband filter.
+    Requires: ffmpeg, ImageMagick (magick), tvsimulator.mov displacement map.
+    """
+    def _rb(semitones: float, transients: str = "mixed", tempo: float = 0.0) -> str:
+        ratio = 2 ** (semitones / 12)
+        rb = (
+            f"rubberband=pitch={ratio:.6f}:"
+            f"window=short:transients={transients}:"
+            f"detector=soft:channels=together:pitchq=consistency"
+        )
+        if use_tempo and tempo:
+            rb += f":tempo={tempo:.6f}"
+        return rb
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        info = _ffprobe_video_info(input_path)
+        w, h = info["width"], info["height"]
+        if w == 0 or h == 0:
+            return False, "Could not read input video dimensions."
+
+        # Generate CLUTs (values match original tag script)
+        _clut_specs = [
+            ("c54",  "hslhue_54.ppm",     100, 100, 130),
+            ("cn54", "hslhue_neg54.ppm",  100, 100,  70),
+            ("c180", "hslhue_180.ppm",    100, 100, 200),
+            ("c22",  "hslhue_22.ppm",     100, 100, 112),
+            ("c108", "hslhue_108_30.ppm", 100, 130, 160),
+        ]
+        cluts: dict[str, str | None] = {}
+        for key, fname, br, sat, hue_mod in _clut_specs:
+            cp = os.path.join(tmpdir, fname)
+            r = subprocess.run(
+                ["magick", "hald:4", "-modulate", f"{br},{sat},{hue_mod}", cp],
+                capture_output=True, text=True, timeout=30,
+            )
+            cluts[key] = cp if r.returncode == 0 else None
+        c54  = cluts["c54"]
+        cn54 = cluts["cn54"]
+        c180 = cluts["c180"]
+        c22  = cluts["c22"]
+        c108 = cluts["c108"]
+
+        # Displacement map
+        disp_map = next(
+            (p for p in [
+                "bot/displacemaps/tvsimulator.mov",
+                "displacemaps/tvsimulator.mov",
+                "/app/bot/displacemaps/tvsimulator.mov",
+            ] if os.path.exists(p)),
+            None,
+        )
+
+        # Timing
+        t  = segment_dur
+        t2 = segment_dur / 2
+        t3 = start_offset + segment_dur
+        t5 = start_offset + target_len
+
+        # Short clip (0.avi) — covers segments 1-27
+        avi0 = os.path.join(tmpdir, "0.avi")
+        ok, err = _run_ffmpeg_raw([
+            "ffmpeg", "-y", "-stream_loop", "-1", "-i", input_path,
+            "-vf", "scale=640:360,setsar=1:1",
+            "-ss", str(start_offset), "-to", str(t3),
+            "-c:v", "ffv1", "-c:a", "pcm_s16le", avi0,
+        ], timeout=120)
+        if not ok:
+            return False, f"Short clip failed: {err}"
+
+        avi_w = _ffprobe(avi0, "-select_streams", "v:0",
+                         "-show_entries", "stream=width",
+                         "-of", "default=nw=1:nk=1") or "640"
+        avi_h = _ffprobe(avi0, "-select_streams", "v:0",
+                         "-show_entries", "stream=height",
+                         "-of", "default=nw=1:nk=1") or "360"
+
+        # Long clip (0_long.avi) — for segment 28
+        avi0_long = os.path.join(tmpdir, "0_long.avi")
+        ok, err = _run_ffmpeg_raw([
+            "ffmpeg", "-y", "-stream_loop", "-1", "-i", input_path,
+            "-vf", "scale=640:360,setsar=1:1",
+            "-ss", str(start_offset), "-to", str(t5),
+            "-c:v", "ffv1", "-c:a", "pcm_s16le", avi0_long,
+        ], timeout=120)
+        if not ok:
+            return False, f"Long clip failed: {err}"
+
+        # Filter helpers
+        def hclut(path: str | None, deg: float) -> str:
+            if path:
+                return f"movie={path},[in]haldclut,format=yuv420p"
+            return f"hue=h={deg},format=yuv420p"
+
+        _geq_wave = (
+            "geq='p(X-((sin((T*5*0+(0*15))+(Y/H)*(PI*0)))*(-15*0)),"
+            "Y-((sin((T*5*0+(0.17946*15))+(X/W)*(PI*6.09)))*(-15*0.72)))'"
+        )
+
+        def geq108(path: str | None) -> str:
+            return (
+                f"{hclut(path, 108)},format=yuv444p,scale=640:640,"
+                f"{_geq_wave},scale={avi_w}:{avi_h},setsar=1:1,format=yuv420p"
+            )
+
+        if disp_map and c180:
+            _disp_fc = (
+                f"movie={c180}[h];"
+                f"[0][h]haldclut,hflip,crop=iw/2:ih:0:0,split[left][tmp];"
+                f"[tmp]hflip[right];[left][right]hstack,format=yuv420p,format=bgr32[00];"
+                f"[1]crop=iw:ih/1:0:0,scale={avi_w}:{avi_h},eq=contrast=0.375,"
+                f"format=bgr32,hue=b=-0.033[x];"
+                f"nullsrc=1x1,geq=r=128:g=128:b=128,scale={avi_w}:{avi_h},format=bgr32[y];"
+                f"[00][x][y]displace=edge=wrap[v]"
+            )
+            _disp_has_map = True
+        else:
+            _disp_fc = (
+                "hue=h=180,hflip,crop=iw/2:ih:0:0,split[left][tmp];"
+                "[tmp]hflip[right];[left][right]hstack,format=yuv420p"
+            )
+            _disp_has_map = False
+
+        segments: list[tuple[list[str], str]] = []
+
+        def seg(n: int, dur: float,
+                vf: str | None = None, af: str | None = None) -> None:
+            path = os.path.join(tmpdir, f"{n}.avi")
+            cmd = ["ffmpeg", "-y", "-i", avi0]
+            if vf:
+                cmd.extend(["-vf", vf])
+            if af:
+                cmd.extend(["-af", af])
+            cmd.extend(["-t", str(dur), "-c:v", "ffv1", "-c:a", "pcm_s16le", path])
+            segments.append((cmd, path))
+
+        def seg_disp(n: int, dur: float) -> None:
+            path = os.path.join(tmpdir, f"{n}.avi")
+            if _disp_has_map:
+                cmd = [
+                    "ffmpeg", "-y", "-i", avi0,
+                    "-stream_loop", "-1", "-i", disp_map,
+                    "-filter_complex", _disp_fc,
+                    "-af", _rb(-2, tempo=0.890),
+                    "-map", "[v]", "-map", "0:a",
+                    "-pix_fmt", "yuv420p",
+                    "-t", str(dur), "-c:v", "ffv1", "-c:a", "pcm_s16le", path,
+                ]
+            else:
+                cmd = [
+                    "ffmpeg", "-y", "-i", avi0,
+                    "-vf", _disp_fc,
+                    "-af", _rb(-2, tempo=0.890),
+                    "-t", str(dur), "-c:v", "ffv1", "-c:a", "pcm_s16le", path,
+                ]
+            segments.append((cmd, path))
+
+        # Segments 1-4: full duration (t)
+        seg(1, t)
+        seg(2, t, vf=hclut(c54, 54),  af=_rb(1,  tempo=1.059))
+        seg_disp(3, t)
+        seg(4, t, vf=hclut(c54, 54),  af=_rb(1,  tempo=1.059))
+
+        # Segments 5-27: half duration (t2)
+        seg(5, t2)
+        seg(6, t2,
+            vf=f"movie={c22},[in]haldclut,hflip,format=yuv420p" if c22
+               else "hue=h=22,hflip,format=yuv420p",
+            af=_rb(2, "smooth", tempo=2 ** (2 / 12)))
+        seg(7,  t2, vf=hclut(c54,  54),  af=_rb(1,  tempo=1.059))
+        seg(8,  t2, vf=geq108(c108),     af=_rb(3,  tempo=1.389))
+        seg_disp(9, t2)
+        seg(10, t2, vf="swapuv")
+        seg(11, t2, vf=hclut(c54,  54),  af=_rb(1,  tempo=1.059))
+        seg(12, t2, vf=geq108(c108),     af=_rb(3,  tempo=1.389))
+        seg_disp(13, t2)
+        seg(14, t2, vf="swapuv")
+        seg(15, t2, vf=hclut(cn54, -54), af=_rb(-1, tempo=0.940))
+        seg(16, t2, vf=hclut(c54,  54),  af=_rb(1,  tempo=1.059))
+        seg(17, t2,
+            vf=f"movie={c180},[in]haldclut,format=yuv420p,negate,format=yuv420p" if c180
+               else "hue=h=180,negate,format=yuv420p",
+            af=_rb(-4, tempo=2 ** (-4 / 12)))
+        seg_disp(18, t2)
+        seg(19, t2, vf=hclut(cn54, -54), af=_rb(-1, tempo=0.940))
+        seg(20, t2, vf=hclut(c54,  54),  af=_rb(1,  tempo=1.059))
+        seg(21, t2)
+        seg(22, t2, vf="negate,hflip",   af=_rb(12, tempo=2.0))
+        seg(23, t2, vf=hclut(c54,  54),  af=_rb(1,  tempo=1.059))
+        seg(24, t2,
+            vf=f"movie={c54},[in]haldclut,format=yuv420p,negate,hflip,format=yuv420p" if c54
+               else "hue=h=54,negate,hflip,format=yuv420p",
+            af=_rb(13, tempo=2.1189))
+        seg_disp(25, t2)
+        seg(26, t2, vf="swapuv")
+        seg(27, t2, vf=hclut(c54,  54),  af=_rb(1,  tempo=1.059))
+
+        # Segment 28: long looping from avi0_long
+        seg28_path = os.path.join(tmpdir, "28.avi")
+        segments.append(([
+            "ffmpeg", "-y", "-i", avi0_long,
+            "-vf", geq108(c108),
+            "-af", f"aloop=loop=-1:size=2e9,{_rb(3, tempo=1.389)}",
+            "-t", str(target_len),
+            "-c:v", "ffv1", "-c:a", "pcm_s16le", seg28_path,
+        ], seg28_path))
+
+        # Render all segments
+        for i, (cmd, seg_path) in enumerate(segments):
+            ok, err = _run_ffmpeg_raw(cmd, timeout=180)
+            if not ok:
+                return False, f"Segment {i + 1}/{len(segments)} failed: {err}"
+
+        # Concat -> output
+        avi_files = [sp for _, sp in segments if os.path.exists(sp)]
+        if not avi_files:
+            return False, "No segments were produced."
+
+        return _run_ffmpeg_raw([
+            "ffmpeg", "-y",
+            "-i", "concat:" + "|".join(avi_files),
+            "-vf", f"scale={w}:{h},setsar=1",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            output_path,
+        ], timeout=300)
+
+
 # ---------- Bot events & commands ----------
 
 @tasks.loop(seconds=5)
