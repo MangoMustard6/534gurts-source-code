@@ -16117,6 +16117,7 @@ async def guesseffect(ctx: commands.Context):
 @bot.event
 async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.CommandNotFound):
+        await ctx.reply("❓ Unknown command. Use `th/bothelp` to see all available commands.")
         return
     if isinstance(error, commands.MissingRequiredArgument):
         await ctx.reply(f"❌ Missing argument: `{error.param.name}`. Use `th/ihtxhelp` for usage.")
