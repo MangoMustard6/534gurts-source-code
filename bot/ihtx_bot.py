@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-24: [Python] Added th/preview1280what (aliases: p1280what, p1280fev8v2plus) — 28-segment TV-simulator extended montage (preview1280 FFmpeg Extended v8 v2+). 4 full segs + 23 half segs + 1 looping long seg; optional use_tempo param for rubberband time-stretch. Output is .mov (pwhatextended). Added to th/ihtxhelp Fun section. Removed set_thumbnail from all command result embeds (p1280, op1280, p1280r, swirl, fzte, tvsim, folkvalley). Added gif thumbnail (_IHTX_SAP_FOOTER_ICON) to th/ihtxhelp overview and all section pages.
 - 2026-07-23: [Python] Removed preview1280/p1280, oppositep1280/op1280, preview1280with640x360resize/p1280ff!3/p1280w16:9r, and multipitch/mp/multi from HEAVY_COMMANDS (no longer rate-limited). Moved their _HELP_ENTRIES category from "heavy" to "fun". Updated th/help (TypeScript): moved preview1280/multipitch out of Heavy Effects into Video Tools section; added missing commands (tvsim, swirl, folkvalley, vocoder, download, videolength, bytebeat, wave, submiteffect, listeffects, invite); split Games into TS-only and Python-only subsections; added numguess, scramble, typerace, mathquiz to Python games; merged Info+Limits into one field.
 - 2026-07-23: [Python] Fixed `labadjust` output unplayable: switched to `-c:a copy` with no explicit video codec (matches huehsv/ccshue pattern exactly), so the output container/codec follows output_path extension. Updated `_concat_codec_args` formats (mkv/mxf/mov/mp4/avi) to use `-bufsize 16M -threads 0 -crf 25 -preset veryfast`; wired `export_format` through to final concat output in tagscript workflow (no longer hardcoded to mp4). Fixed `labadjust` haldclut "Failed to configure input pad" error: switched from `-filter_complex "[1:v][0:v]haldclut"` to `-vf "movie={lut_path},[in]haldclut,format=yuv420p"`. Added pipe-effect variables `$d` (duration alias for `$vd`), `$fr` (frame rate alias for `$f`), `$w` (video width px), `$h` (video height px).
 - 2026-07-22: [Python] `th/effectlist` now paginates with ◀/▶ buttons (10 per page). Added `games` tab to `th/ihtxhelp` covering all game commands (8ball, coinflip, roll, rps, choose, rate, slots, numguess, scramble, typerace, mathquiz, trivia). Updated tvsim help entry to match renamed params (curvature→line_sync→detail_zoom order). Added `labadjust=l;a;b` to the pipe effects summary entry in ihtxhelp.
@@ -7312,7 +7313,6 @@ async def preview1280_command(ctx: commands.Context, start: float = 1.85, durati
                 description="use whatever sync to audio tag you want, I highly recommend notsobot's tag system (.t sync+)",
                 color=11578404,
             )
-            embed_p1280.set_thumbnail(url="https://files.catbox.moe/dnjdty.png")
             await ctx.reply(
                 embed=embed_p1280,
                 file=discord.File(output_path, filename=out_filename),
@@ -7406,7 +7406,6 @@ async def oppositep1280_command(ctx: commands.Context, start: float = 1.85, dura
                 description="All hue shifts negated · All pitch shifts inverted vs preview1280",
                 color=11578404,
             )
-            embed_op1280.set_thumbnail(url="https://files.catbox.moe/dnjdty.png")
             await ctx.reply(
                 embed=embed_op1280,
                 file=discord.File(output_path, filename=out_filename),
@@ -7502,11 +7501,116 @@ async def preview1280_640x360resize_command(ctx: commands.Context, start: float 
                 description="use whatever sync to audio tag you want, I highly recommend notsobot's tag system (.t sync+)",
                 color=11578404,
             )
-            embed_p1280r.set_thumbnail(url="https://files.catbox.moe/dnjdty.png")
             await ctx.reply(
                 embed=embed_p1280r,
                 file=discord.File(output_path, filename=out_filename),
             )
+            await status_msg.delete()
+        except discord.HTTPException as e:
+            await status_msg.edit(content=f"❌ Failed to upload result: {e}")
+
+
+@bot.command(name="preview1280what", aliases=["p1280what", "p1280fev8v2plus"])
+async def preview1280what_command(
+    ctx: commands.Context,
+    start: float = 1.85,
+    dur: float = 0.85,
+    target_len: float = 5.0,
+    use_tempo: str = "false",
+):
+    """28-segment TV-simulator extended montage (preview1280 FFmpeg Extended v8 v2+).
+
+    Usage: th/preview1280what [start] [dur] [target_len] [use_tempo=true|false]
+    Aliases: th/p1280what, th/p1280fev8v2plus
+    Defaults: start=1.85, dur=0.85, target_len=5, use_tempo=false
+    """
+    source = await _resolve_media_source(ctx)
+
+    if source is None:
+        await ctx.reply(
+            "**IHTX Preview1280what?? — FFmpeg Extended v8 v2+**\n"
+            "Attach a video and run `th/preview1280what [start] [dur] [target_len] [true|false]`.\n\n"
+            "Creates a **28-segment** TV-simulator montage: 4 full-length segs + 23 half-length + "
+            "1 looping long segment. Pass `true` as the 4th arg to enable tempo-stretching.\n\n"
+            "Defaults: start=1.85 · dur=0.85 · target_len=5 · use_tempo=false\n"
+            "Aliases: `th/p1280what` · `th/p1280fev8v2plus`\n"
+            "Example: `th/p1280what 1.85 0.85 5`"
+        )
+        return
+
+    if isinstance(source, discord.Attachment) and source.size > MAX_FILE_SIZE:
+        await ctx.reply(f"❌ File too large (max 25 MB). Your file is {source.size / 1024 / 1024:.1f} MB.")
+        return
+
+    suffix = (
+        Path(source.filename).suffix.lower()
+        if isinstance(source, discord.Attachment)
+        else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
+    )
+    if suffix not in VIDEO_EXTENSIONS:
+        await ctx.reply(f"❌ `preview1280what` requires a video file. Got `{suffix}`.")
+        return
+
+    start      = max(0.0, start)
+    dur        = max(0.1, min(dur, 10.0))
+    target_len = max(1.0, min(target_len, 60.0))
+    use_tempo_bool = use_tempo.lower() == "true"
+
+    status_msg = await ctx.reply(
+        f"⚙️ Creating **preview1280what??** montage "
+        f"(start={start}s, dur={dur}s, target_len={target_len}s, tempo={use_tempo_bool}) "
+        f"— 28 segments, this will take a while."
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path  = os.path.join(tmpdir, f"input{suffix}")
+        output_path = os.path.join(tmpdir, "pwhatextended.mov")
+
+        try:
+            await download_attachment(source, input_path)
+        except Exception as e:
+            await status_msg.edit(content=f"❌ Failed to download your file: {e}")
+            return
+
+        try:
+            await _ensure_displacement_map(tmpdir)
+        except FileNotFoundError as e:
+            await status_msg.edit(content=f"❌ {e}")
+            return
+
+        loop = asyncio.get_event_loop()
+        ok, err = await loop.run_in_executor(
+            None, _run_preview1280what,
+            input_path, output_path, start, dur, target_len, use_tempo_bool,
+        )
+
+        if not ok:
+            await status_msg.edit(content=f"❌ preview1280what failed:\n```\n{err[-1500:]}\n```")
+            return
+
+        out_size = os.path.getsize(output_path)
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output too large — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ **preview1280what??** done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
+            return
+
+        out_filename = f"p1280what_{Path(source.filename).stem}.mov"
+        try:
+            embed = discord.Embed(
+                title="Preview 1280 FFmpeg Extended v8 v2+ (preview1280what??)",
+                description=(
+                    f"start={start} · dur={dur} · target_len={target_len} · tempo={use_tempo_bool}\n"
+                    "use .t sync+ or any audio-sync tag to sync to audio"
+                ),
+                color=11578404,
+            )
+            embed.add_field(name="File Size", value=f"{out_size / (1024*1024):.2f} MB", inline=True)
+            await ctx.reply(embed=embed, file=discord.File(output_path, filename=out_filename))
             await status_msg.delete()
         except discord.HTTPException as e:
             await status_msg.edit(content=f"❌ Failed to upload result: {e}")
@@ -10839,7 +10943,7 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
                 ),
                 color=4886754,
             )
-            embed.set_thumbnail(url="https://files.catbox.moe/xli8jw.png")
+            pass  # no thumbnail
             embed.add_field(name="File Size", value=f"{out_size/(1024*1024):.2f} MB", inline=True)
             await ctx.reply(embed=embed, file=discord.File(output_path, filename=out_filename))
             await status_msg.delete()
@@ -10923,7 +11027,7 @@ async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = "")
                 description="invlum→huehsv→ccshue→channelblend→invlum→rotate→tvsim→wave→rotate→mirror→mirror→mirror→ffmpeg→mp3",
                 color=4886754,
             )
-            embed.set_thumbnail(url="https://files.catbox.moe/xli8jw.png")
+            pass  # no thumbnail
             embed.add_field(name="File Size", value=f"{out_size/(1024*1024):.2f} MB", inline=True)
             await ctx.reply(embed=embed, file=discord.File(output_path, filename=out_filename))
             await status_msg.delete()
@@ -11054,7 +11158,7 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
                 ),
                 color=11578404,
             )
-            embed.set_thumbnail(url="https://files.catbox.moe/xli8jw.png")
+            pass  # no thumbnail
             embed.add_field(name="File Size", value=f"{out_size/(1024*1024):.2f} MB", inline=True)
             await ctx.reply(embed=embed, file=discord.File(output_path, filename=out_filename))
             await status_msg.delete()
@@ -11134,7 +11238,7 @@ async def folkvalley_command(ctx: commands.Context):
                 description="Music replacement · brightness boost (HSV V+100) · decorative overlay",
                 color=0x40E0D0,
             )
-            embed.set_thumbnail(url="https://files.catbox.moe/xli8jw.png")
+            pass  # no thumbnail
             embed.add_field(name="File Size", value=f"{out_size / (1024 * 1024):.2f} MB", inline=True)
             await ctx.reply(embed=embed, file=discord.File(output_path, filename=out_filename))
             await status_msg.delete()
@@ -11575,6 +11679,17 @@ _HELP_ENTRIES: list[dict] = [
         "value": "Same 12-segment TV-simulator montage as preview1280 but the final output is locked to **640×360** regardless of input resolution. Defaults: start=1.85, dur=0.85",
     },
     {
+        "cat": "fun",
+        "name": "th/preview1280what [start] [dur] [target_len] [use_tempo]  (aliases: p1280what, p1280fev8v2plus)",
+        "value": (
+            "**28-segment** TV-simulator extended montage (FFmpeg Extended v8 v2+).\n"
+            "4 full-length segs + 23 half-length segs + 1 looping long seg.\n"
+            "Defaults: start=1.85 · dur=0.85 · target_len=5 · use_tempo=false\n"
+            "Pass `true` as 4th arg to enable tempo-stretching via rubberband.\n"
+            "Output: `.mov` (pwhatextended). Use .t sync+ to sync to audio."
+        ),
+    },
+    {
         "cat": "heavy",
         "name": "th/invlum [n]",
         "value": "Apply luma-inversion progressively N times and concat all iterations.",
@@ -11913,6 +12028,7 @@ def _build_help_embed(
         title, color = "🔍 Search Results", discord.Color.gold()
 
     embed = discord.Embed(title=title, color=color)
+    embed.set_thumbnail(url=_IHTX_SAP_FOOTER_ICON)
     for entry in page_entries:
         copyable_value = f"`{entry['name']}`\n{entry['value']}"
         if len(copyable_value) > 1024:
@@ -11948,6 +12064,7 @@ def _build_home_embed() -> discord.Embed:
         ),
         color=0x40E0D0,
     )
+    embed.set_thumbnail(url=_IHTX_SAP_FOOTER_ICON)
     embed.set_footer(text="I Hate The X — FFmpeg logo destruction bot")
     return embed
 
