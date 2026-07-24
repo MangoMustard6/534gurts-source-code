@@ -5126,7 +5126,10 @@ def _run_ihtx_tagscript_workflow(
     dur = dur_or_error
 
     _SUPPORTED_FINAL_FORMATS = {"mp4", "mkv", "mxf", "mov", "avi"}
-    extension = export_format.lower() if export_format.lower() in _SUPPORTED_FINAL_FORMATS else "mp4"
+    _fmt_lower = export_format.lower()
+    if _fmt_lower in {"mkv", "mxf"}:
+        _fmt_lower = "mp4"
+    extension = _fmt_lower if _fmt_lower in _SUPPORTED_FINAL_FORMATS else "mp4"
 
     with tempfile.TemporaryDirectory() as tmpdir:
         base = os.path.join(tmpdir, "0.mp4")
@@ -9579,7 +9582,7 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
         ratio = vidlen / target_duration
 
         _audio_only_exts = {".mp3", ".wav", ".flac", ".ogg", ".m4a"}
-        out_suffix = suffix if suffix in _audio_only_exts else ".mkv"
+        out_suffix = suffix if suffix in _audio_only_exts else ".mp4"
         output_path = os.path.join(tmpdir, f"stretched{out_suffix}")
 
         if suffix in _audio_only_exts:
