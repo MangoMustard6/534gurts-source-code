@@ -9578,8 +9578,9 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
 
         ratio = vidlen / target_duration
 
-        output_path = os.path.join(tmpdir, f"stretched{suffix}")
         _audio_only_exts = {".mp3", ".wav", ".flac", ".ogg", ".m4a"}
+        out_suffix = suffix if suffix in _audio_only_exts else ".mkv"
+        output_path = os.path.join(tmpdir, f"stretched{out_suffix}")
 
         if suffix in _audio_only_exts:
             cmd = [
@@ -9597,7 +9598,7 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
                 "-vf", f"setpts=1/{ratio:.10f}*PTS,fps={framerate}",
                 "-af", f"rubberband=tempo={ratio:.10f}",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-                "-c:a", "aac", "-b:a", "192k",
+                "-c:a", "flac",
                 "-movflags", "+faststart",
                 "-pix_fmt", "yuv420p",
                 output_path,
@@ -9620,7 +9621,7 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
             return
 
         stem = Path(src_name).stem
-        out_filename = f"stl_{target_duration:.4f}s_{stem}{suffix}"
+        out_filename = f"stl_{target_duration:.4f}s_{stem}{out_suffix}"
 
         try:
             await ctx.reply(
