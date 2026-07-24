@@ -369,16 +369,32 @@ def _handle_block(name: str, content: str, engine_blocks: list, ctx: dict = None
         engine_blocks.append({"engine": canonical, "content": content.strip()})
         return ""
 
-    # ── {arg:n} / {arg:*} — 0-indexed argument access ──
+    # ── {arg:n[|fallback]} / {arg:n+} / {arg:*[|sep]} — argument access ──
     if name_lo == "arg":
         words = ctx.get("args", "").split()
-        c = content.strip()
-        if c == "*":
+        # Split on first pipe for optional fallback/separator
+        pipe_idx = content.find("|")
+        key = content[:pipe_idx].strip() if pipe_idx != -1 else content.strip()
+        fallback = content[pipe_idx + 1:] if pipe_idx != -1 else None
+
+        if key == "*":
+            # {arg:*} or {arg:*|sep} — all args joined
+            if fallback is not None:
+                return ctx.get("args", "").replace(" ", fallback) if words else ""
             return ctx.get("args", "")
+        if key.endswith("+"):
+            # {arg:N+} — all args from index N onward
+            try:
+                idx = int(key[:-1])
+                sliced = words[idx:]
+                return " ".join(sliced) if sliced else (fallback or "")
+            except (ValueError, IndexError):
+                return fallback or ""
         try:
-            return words[int(c)] if 0 <= int(c) < len(words) else ""
+            val = words[int(key)] if 0 <= int(key) < len(words) else ""
+            return val if val else (fallback or "")
         except (ValueError, IndexError):
-            return ""
+            return fallback or ""
 
     # ── {get:var} — retrieve named variable ──
     if name_lo == "get":
@@ -479,6 +495,23 @@ def _handle_block(name: str, content: str, engine_blocks: list, ctx: dict = None
         if len(parts) == 2:
             return str(parts[1].find(parts[0]))
         return "-1"
+
+    # ── {or:value|fallback} — return value if non-empty, else fallback ──
+    if name_lo == "or":
+        pipe_idx = content.find("|")
+        if pipe_idx == -1:
+            return content
+        val = content[:pipe_idx]
+        fallback = content[pipe_idx + 1:]
+        return val if val.strip() else fallback
+
+    # ── {replace:find|with|text} — string replacement ──
+    if name_lo == "replace":
+        parts = content.split("|", 2)
+        if len(parts) < 3:
+            return content
+        find, rep, src = parts[0], parts[1], parts[2]
+        return src.replace(find, rep) if find else src
 
     # Unknown — leave intact
     return "{" + name + ":" + content + "}"
@@ -589,6 +622,13 @@ def _resolved_ref(discord_ctx) -> object | None:
     return resolved
 
 
+def _all_attachment_urls(msg) -> list[str]:
+    """Return proxy_url (or url) for every attachment on a message."""
+    if not msg or not msg.attachments:
+        return []
+    return [att.proxy_url or att.url for att in msg.attachments]
+
+
 def build_context(discord_ctx, args: str) -> dict:
     """Build the variable context dict from a discord.py Context object."""
     user = discord_ctx.author
@@ -611,7 +651,10 @@ def build_context(discord_ctx, args: str) -> dict:
     if not iv:
         iv = ia  # last resort: use whatever attachment is there
 
-    return {
+    # {iv2}, {iv3}, … — all attachment URLs from current message then reply
+    all_urls = _all_attachment_urls(cur_msg) or _all_attachment_urls(ref_msg)
+
+    ctx: dict = {
         "user":      user.display_name,
         "username":  user.name,
         "userid":    str(user.id),
@@ -627,5 +670,14 @@ def build_context(discord_ctx, args: str) -> dict:
         "args":      args,
         "argslen":   str(len(args.split()) if args else 0),
         "iv":        iv,
+        "iv1":       iv,
         "ia":        ia,
+        "ia1":       ia,
     }
+
+    # Populate {iv2}, {iv3}, … / {ia2}, {ia3}, … for each extra attachment
+    for i, url in enumerate(all_urls, start=1):
+        ctx[f"iv{i}"] = url
+        ctx[f"ia{i}"] = url
+
+    return ctx

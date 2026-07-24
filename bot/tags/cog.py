@@ -660,7 +660,9 @@ class TagCog(commands.Cog, name="Tags"):
                 `{user}` · `{username}` · `{userid}` · `{mention}` · `{nickname}`
                 `{avatar}` · `{server}` · `{serverid}` · `{channel}` · `{channelid}`
                 `{args}` · `{arg:0}` `{arg:1}` … (0-indexed) · `{arg:*}` (all) · `{argslen}`
-                `{args.1}` `{args.2}` … (1-indexed legacy)\
+                `{arg:0|fallback}` — with fallback if missing · `{arg:1+}` — all from index 1
+                `{args.1}` `{args.2}` … (1-indexed legacy)
+                `{iv}` / `{iv1}` · `{iv2}` · `{iv3}` … — 1st, 2nd, 3rd attachment URL\
             """),
             inline=False,
         )
@@ -672,6 +674,8 @@ class TagCog(commands.Cog, name="Tags"):
                 `{random:1:100}` / `{range:1|100}` — random int (use `.` for float)
                 `{choose:red|blue|green}` — random choice
                 `{get:var}` — read a stored variable
+                `{or:value|fallback}` — return value if non-empty, else fallback
+                `{replace:find|with|text}` — replace all occurrences in text
                 `{upper:x}` · `{lower:x}` · `{title:x}` · `{reverse:x}` · `{len:x}`
                 `{repeat:3|text}` / `{repeat:3:text}` · `{slice:0|5|text}`
                 `{substring:text|start}` · `{substring:text|start|end}`

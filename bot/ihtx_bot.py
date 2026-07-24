@@ -6949,11 +6949,32 @@ async def on_ready():
             print("VebCog loaded.")
         except Exception as _veb_exc:
             print(f"Warning: VebCog failed to load — {_veb_exc}")
-    # Slash command sync is triggered manually via th/sync (owner only).
-    # Automatic on_ready sync is intentionally omitted: discord.py's event
-    # loop swallows exceptions from on_ready before our try/except can
-    # print them, making silent failures impossible to debug here.
-    print("Bot ready. Run th/syncslash to register slash (/) commands.")
+    # Auto-sync slash commands in a background task so exceptions surface in
+    # the console and don't silently fail inside on_ready's exception handler.
+    async def _auto_sync_slash():
+        try:
+            _SYNC_RO = {"application_id", "version"}
+            _app_id = bot.application_id
+            _existing: list[dict] = await bot.http.get_global_commands(_app_id)
+            _eps: list[dict] = [
+                {k: v for k, v in c.items() if k not in _SYNC_RO}
+                for c in _existing
+                if c.get("type") == 4
+            ]
+            _payload: list[dict] = [
+                cmd.to_dict(bot.tree) for cmd in bot.tree._global_commands.values()
+            ]
+            _payload.extend(_eps)
+            _result: list[dict] = await bot.http.bulk_upsert_global_commands(
+                _app_id, payload=_payload
+            )
+            _slash = [c for c in _result if c.get("type") != 4]
+            print(f"[syncslash] {len(_slash)} slash command(s) registered globally.")
+        except Exception as exc:
+            print(f"[syncslash] Auto-sync failed: {exc}")
+
+    asyncio.ensure_future(_auto_sync_slash())
+    print("Bot ready. Slash commands syncing in background…")
 
 
 @bot.event

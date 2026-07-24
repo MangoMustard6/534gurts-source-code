@@ -423,13 +423,13 @@ class EconomyCog(commands.Cog, name="Economy"):
         effect="Preset (chaos, glitch, melt, …), or type your own pipe effects directly (e.g. negate,huehsv=0.5). Autocomplete available.",
         url="Direct URL to a media file (alternative to attaching).",
         attachment="Attach a video or image (slash only).",
-        pipe_effects="Comma/semicolon-separated pipe effects (e.g. huehsv 0.5,negate,multipitch=1|6|7).",
+        pipe_effects="Type any pipe effects freely (e.g. huehsv 0.5,negate,multipitch=1|6|7). No preset required.",
         repetitions="Export repetitions for pipe mode (default 1, max 100).",
         duration="Seconds or awk expr for pipe mode, e.g. 5 or vidlen/2 (default: full video).",
         no_trim="Skip trim in pipe mode.",
         export_fmt="Output container for pipe mode: mp4 (default), mkv, mov, avi.",
     )
-    @app_commands.autocomplete(effect=_preset_autocomplete, pipe_effects=_pipe_effect_autocomplete)
+    @app_commands.autocomplete(effect=_preset_autocomplete)
     async def ihtxgen(
         self,
         ctx: commands.Context,
