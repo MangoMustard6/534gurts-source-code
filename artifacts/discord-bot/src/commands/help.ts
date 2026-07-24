@@ -126,6 +126,7 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
           '`th/preview1280 [start] [dur]` *p1280* — 12-segment TV-simulator montage',
           '`th/oppositep1280 [start] [dur]` *op1280* — Inverse TV-simulator montage',
           '`th/preview1280with640x360resize` *p1280ff!3* — preview1280 locked to 640×360',
+          '`th/preview1280what [s] [dur] [len] [tempo]` *p1280what p1280fev8v2plus* — **28-segment** extended montage (v8 v2+); pass `true` for tempo-stretch',
           '`th/tvsim <curvature> [...]` *tv* — CRT/TV simulator (displacement map)',
           '`th/swirl <strength> [...]` *vortex* — Vortex/swirl distortion via geq',
           '`th/folkvalley` *fv folk* — Music swap + brightness boost + overlay',
