@@ -6949,6 +6949,14 @@ async def on_ready():
             print("VebCog loaded.")
         except Exception as _veb_exc:
             print(f"Warning: VebCog failed to load — {_veb_exc}")
+    # Load Bytebeat cog — th/bytebeat waveform generator
+    if "Bytebeat" not in bot.cogs:
+        try:
+            from bot.bytebeat_cog import setup as _bytebeat_setup
+            await _bytebeat_setup(bot)
+            print("BytebeatCog loaded.")
+        except Exception as _bb_exc:
+            print(f"Warning: BytebeatCog failed to load — {_bb_exc}")
     # Auto-sync slash commands in a background task so exceptions surface in
     # the console and don't silently fail inside on_ready's exception handler.
     async def _auto_sync_slash():
