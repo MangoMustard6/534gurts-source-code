@@ -1,0 +1,93 @@
+interface VocoderOptions {
+  showCode: boolean;
+  url: string;
+  bandwidth: number;
+  detection: string;
+  release: number;
+  attack: number;
+  ratio: number;
+  threshold: number;
+  makeup: number;
+  knee: number;
+  pitch: number;
+  range: number;
+  volume: number;
+}
+
+/**
+  * Parses arguments and generates the FFmpeg vocoder command structure.
+  * @param args - Array of command-line positional arguments (0-indexed)
+  * @param tagName - Name of the tag (defaults to current tag name)
+  */
+export function generateVocoderCommand(args: string[], tagName: string = "tagname"): string {
+  // Check argument length rule ({argslen} <= 1)
+  if (args.length <= 1) {
+    return .t ${tagName} ?<show_code> <url> <bandwidth> <detection> <release> <attack> <ratio> <threshold> <makeup> <knee> <pitch> <range> <volume>;
+  }
+
+  // Parse arguments with defaults matching the tag template
+  const opts: VocoderOptions = {
+    showCode: args[0] === "true",
+    url: (args[1] ?? "").replace(/https/g, 'https""'),
+    bandwidth: Number(args[2]) || 64,
+    detection: args[3] || "peak",
+    release: Number(args[4]) || 50,
+    attack: Number(args[5]) || 0.01,
+    ratio: Number(args[6]) || 2,
+    threshold: Number(args[7]) || 1,
+    makeup: Number(args[8]) || 1,
+    knee: Number(args[9]) || 8,
+    pitch: Number(args[10]) || 0,
+    range: Number(args[11]) || 0,
+    volume: Number(args[12]) || 1,
+  };
+
+  const { bandwidth: bw } = opts;
+
+  // Build pitch shifter filter if pitch != 0
+  const rubberbandFilter = opts.pitch !== 0
+    ? rubberband=pitch=2^(${opts.pitch}/12):phase=2.14748e+09/3:window=short,
+    : "";
+
+  // Dynamic FFmpeg filtergraph construction
+  const modSplit = "[mod]".repeat(bw);
+  const carrSplit = "[carr]".repeat(bw);
+
+  let filtergraph = [0]aformat=cl=mono,${rubberbandFilter}asplit=${bw}${modSplit};;
+  filtergraph += [1]aformat=cl=mono,asplit=${bw}${carrSplit};;
+
+  // Modulator firequalizer pass
+  for (let i = 1; i <= bw; i++) {
+    filtergraph += [mod]firequalizer=gain='if(between(f,(${i}-1)*(20000/${bw}),${i}*(20000/${bw})), 0, -INF)':accuracy=100:fft2=1,atrim=0.01[m${i}];;
+  }
+
+  // Carrier firequalizer pass
+  for (let i = 1; i <= bw; i++) {
+    filtergraph += [carr]firequalizer=gain='if(between(f,(${i}-1)*(20000/${bw}),${i}*(20000/${bw})), 0, -INF)':accuracy=100:fft2=1,atrim=0.01[c${i}];;
+  }
+
+  // Sidechaingate processing across bands
+  for (let i = 1; i <= bw; i++) {
+    filtergraph += [c${i}][m${i}]sidechaingate=ratio=${opts.ratio}:threshold=${opts.threshold}:range=${opts.range}:attack=${opts.attack}:release=${opts.release}:makeup=${opts.makeup}:knee=${opts.knee}:detection=${opts.detection}:level_sc=sqrt(${bw})[v${i}];;
+  }
+
+  // Mix streams together
+  for (let i = 1; i <= bw; i++) {
+    filtergraph += [v${i}];
+  }
+
+  filtergraph += amix=${bw}:normalize=0,crystalizer,alimiter=${opts.volume}:latency=1[a];
+
+  // Assemble full code string
+  const ffmpegArgs = -stream_loop -1 -i ${opts.url} -filter_complex "${filtergraph}" -map 0:v -map "[a]";
+
+  let output = "";
+
+  if (opts.showCode) {
+    output += ${ffmpegArgs}\n;
+  }
+
+  output += load \${av:0}\n\nffmpeg -i $FILE_1 ${ffmpegArgs} ./output/sidechaingate_vocoder.mp4;
+
+  return output;
+}
