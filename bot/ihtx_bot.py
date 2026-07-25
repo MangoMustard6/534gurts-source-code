@@ -7967,7 +7967,7 @@ async def preview1280what_command(
 
     start      = max(0.0, start)
     dur        = max(0.1, min(dur, 10.0))
-    target_len = max(1.0, min(target_len, 60.0))
+    target_len = max(0.1, min(target_len, 60.0))
     use_tempo_bool = use_tempo.lower() == "true"
 
     status_msg = await ctx.reply(
