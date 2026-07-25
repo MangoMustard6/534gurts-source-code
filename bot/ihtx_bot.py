@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-07-25: [Python] Replaced all .mov output generators with .mp4: bytebeat_cog.py (waveform render + discord.File filename), ihtx_bot.py get_output_ext(), pipe engine temp files, invlum, p1280, op1280, p1280r, preview1280what, multipitch, ssmp, mpb, repeat, concatenate, join. Added th/convert (alias: conv) — converts an attached video into video fmt + audio fmt + image fmt simultaneously (defaults: mp4/mp3/png); runs all three FFmpeg jobs in parallel; falls back to Catbox for oversized video output.
+- 2026-07-25: [Python] Added th/sidechaingate_vocoder (alias: th/scgv) and scgv pipe effect — ports TypeScript generateVocoderCommand() filtergraph to Python FFmpeg: firequalizer band-split (mod+carrier), sidechaingate per-band, amix+crystalizer+alimiter output; params: carrier_url, bw=64, ratio=2, threshold=1, release=50, attack=0.01, makeup=1, knee=8, detection=peak, range=0, volume=1, pitch=0. Fixed th/convert to use slash-separated format string (th/convert mov/png/flac) instead of three separate args. Replaced all .mov output generators with .mp4: bytebeat_cog.py (waveform render + discord.File filename), ihtx_bot.py get_output_ext(), pipe engine temp files, invlum, p1280, op1280, p1280r, preview1280what, multipitch, ssmp, mpb, repeat, concatenate, join. Added th/convert (alias: conv) — converts an attached video into video fmt + audio fmt + image fmt simultaneously (defaults: mp4/mp3/png); runs all three FFmpeg jobs in parallel; falls back to Catbox for oversized video output.
 - 2026-07-24: [Python] Added th/preview1280what (aliases: p1280what, p1280fev8v2plus) — 28-segment TV-simulator extended montage (preview1280 FFmpeg Extended v8 v2+). 4 full segs + 23 half segs + 1 looping long seg; optional use_tempo param for rubberband time-stretch. Output is .mov (pwhatextended). Added to th/ihtxhelp Fun section. Removed set_thumbnail from all command result embeds (p1280, op1280, p1280r, swirl, fzte, tvsim, folkvalley). Added gif thumbnail (_IHTX_SAP_FOOTER_ICON) to th/ihtxhelp overview and all section pages.
 - 2026-07-23: [Python] Removed preview1280/p1280, oppositep1280/op1280, preview1280with640x360resize/p1280ff!3/p1280w16:9r, and multipitch/mp/multi from HEAVY_COMMANDS (no longer rate-limited). Moved their _HELP_ENTRIES category from "heavy" to "fun". Updated th/help (TypeScript): moved preview1280/multipitch out of Heavy Effects into Video Tools section; added missing commands (tvsim, swirl, folkvalley, vocoder, download, videolength, bytebeat, wave, submiteffect, listeffects, invite); split Games into TS-only and Python-only subsections; added numguess, scramble, typerace, mathquiz to Python games; merged Info+Limits into one field.
 - 2026-07-23: [Python] Fixed `labadjust` output unplayable: switched to `-c:a copy` with no explicit video codec (matches huehsv/ccshue pattern exactly), so the output container/codec follows output_path extension. Updated `_concat_codec_args` formats (mkv/mxf/mov/mp4/avi) to use `-bufsize 16M -threads 0 -crf 25 -preset veryfast`; wired `export_format` through to final concat output in tagscript workflow (no longer hardcoded to mp4). Fixed `labadjust` haldclut "Failed to configure input pad" error: switched from `-filter_complex "[1:v][0:v]haldclut"` to `-vf "movie={lut_path},[in]haldclut,format=yuv420p"`. Added pipe-effect variables `$d` (duration alias for `$vd`), `$fr` (frame rate alias for `$f`), `$w` (video width px), `$h` (video height px).
@@ -2332,6 +2332,108 @@ def _run_vocoder(
         return ok, err if not ok else f"vocoder: {m} mode, {n_bands} bands, {duration:.1f}s"
 
 
+# ---------- Sidechaingate Vocoder (FFmpeg firequalizer + sidechaingate) ----------
+
+def _run_scgv(
+    input_path: str,
+    output_path: str,
+    carrier_url: str,
+    bandwidth: int = 64,
+    detection: str = "peak",
+    release: float = 50.0,
+    attack: float = 0.01,
+    ratio: float = 2.0,
+    threshold: float = 1.0,
+    makeup: float = 1.0,
+    knee: float = 8.0,
+    pitch: float = 0.0,
+    range_val: float = 0.0,
+    volume: float = 1.0,
+) -> tuple[bool, str]:
+    """Sidechaingate vocoder: shape a carrier with the frequency envelope of the modulator.
+
+    Ports the TypeScript generateVocoderCommand() filtergraph to Python FFmpeg.
+    - Input 0 (input_path): modulator (your video/audio)
+    - Input 1 (carrier_url, stream-looped): carrier (synth/pad)
+    - Output: video from input 0 + sidechaingate-vocoded audio
+    """
+    import urllib.request, ssl as _ssl
+
+    bw = max(1, min(int(bandwidth), 256))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Download carrier
+        carrier_ext = os.path.splitext(carrier_url.split("?")[0])[-1] or ".mp3"
+        carrier_dl = os.path.join(tmpdir, f"carrier{carrier_ext}")
+        try:
+            _ctx = _ssl.create_default_context()
+            _req = urllib.request.Request(carrier_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(_req, context=_ctx, timeout=60) as _resp:
+                with open(carrier_dl, "wb") as _fh:
+                    _fh.write(_resp.read())
+        except Exception as exc:
+            return False, f"scgv: failed to download carrier from {carrier_url}: {exc}"
+
+        # Build filtergraph
+        rubberband = (
+            f"rubberband=pitch=2^({pitch}/12):phase=2.14748e+09/3:window=short,"
+            if pitch != 0 else ""
+        )
+
+        mod_labels  = "".join(f"[mod{i}]" for i in range(1, bw + 1))
+        carr_labels = "".join(f"[carr{i}]" for i in range(1, bw + 1))
+
+        fg_parts: list[str] = []
+        fg_parts.append(f"[0:a]aformat=cl=mono,{rubberband}asplit={bw}{mod_labels}")
+        fg_parts.append(f"[1:a]aformat=cl=mono,asplit={bw}{carr_labels}")
+
+        for i in range(1, bw + 1):
+            lo = (i - 1) * 20000 / bw
+            hi = i * 20000 / bw
+            gain = f"if(between(f,{lo},{hi}),0,-INF)"
+            fg_parts.append(
+                f"[mod{i}]firequalizer=gain='{gain}':accuracy=100:fft2=1,atrim=0.01[m{i}]"
+            )
+
+        for i in range(1, bw + 1):
+            lo = (i - 1) * 20000 / bw
+            hi = i * 20000 / bw
+            gain = f"if(between(f,{lo},{hi}),0,-INF)"
+            fg_parts.append(
+                f"[carr{i}]firequalizer=gain='{gain}':accuracy=100:fft2=1,atrim=0.01[c{i}]"
+            )
+
+        for i in range(1, bw + 1):
+            fg_parts.append(
+                f"[c{i}][m{i}]sidechaingate="
+                f"ratio={ratio}:threshold={threshold}:range={range_val}:"
+                f"attack={attack}:release={release}:makeup={makeup}:"
+                f"knee={knee}:detection={detection}:level_sc=sqrt({bw})[v{i}]"
+            )
+
+        mix_inputs = "".join(f"[v{i}]" for i in range(1, bw + 1))
+        fg_parts.append(
+            f"{mix_inputs}amix={bw}:normalize=0,crystalizer,alimiter={volume}:latency=1[a]"
+        )
+
+        filtergraph = ";".join(fg_parts)
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-stream_loop", "-1", "-i", carrier_dl,
+            "-filter_complex", filtergraph,
+            "-map", "0:v?",
+            "-map", "[a]",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k",
+            "-shortest",
+            output_path,
+        ]
+        ok, err = _run_ffmpeg_raw(cmd, timeout=600)
+        return ok, err if not ok else f"scgv: {bw} bands, {detection} detection"
+
+
 # ---------- Swirl ----------
 
 def _run_swirl(
@@ -2683,6 +2785,7 @@ PIPE_EFFECT_NAMES = {
     "(=)",
     "(<>)",
     "geq",
+    "scgv", "sidechaingate_vocoder",
 }
 
 # ---------- User-submitted named pipe effects ----------
@@ -4272,6 +4375,36 @@ def _apply_pipe_effects(
                 ok, err = _run_vocoder(current, out, carrier_url=_vc_url, mode=_vc_mode, bandwidth=_vc_bw)
                 if not ok:
                     return False, f"vocoder failed: {err}"
+                current = out
+                continue
+
+            # scgv — sidechaingate vocoder (FFmpeg firequalizer + sidechaingate)
+            if name in ("scgv", "sidechaingate_vocoder"):
+                # Syntax: scgv=carrier_url[;bw[;ratio[;threshold[;release[;attack[;makeup[;knee[;detection[;range[;volume[;pitch]]]]]]]]]]]]
+                _scgv_url = params[0] if params else ""
+                if not _scgv_url:
+                    return False, "scgv pipe effect requires a carrier URL: `scgv=https://…`"
+                _scgv_bw        = int(_pfloat(params, 1, 64))
+                _scgv_ratio     = _pfloat(params, 2, 2.0)
+                _scgv_threshold = _pfloat(params, 3, 1.0)
+                _scgv_release   = _pfloat(params, 4, 50.0)
+                _scgv_attack    = _pfloat(params, 5, 0.01)
+                _scgv_makeup    = _pfloat(params, 6, 1.0)
+                _scgv_knee      = _pfloat(params, 7, 8.0)
+                _scgv_detection = params[8] if len(params) > 8 and params[8] else "peak"
+                _scgv_range     = _pfloat(params, 9, 0.0)
+                _scgv_volume    = _pfloat(params, 10, 1.0)
+                _scgv_pitch     = _pfloat(params, 11, 0.0)
+                ok, err = _run_scgv(
+                    current, out, carrier_url=_scgv_url,
+                    bandwidth=_scgv_bw, detection=_scgv_detection,
+                    release=_scgv_release, attack=_scgv_attack,
+                    ratio=_scgv_ratio, threshold=_scgv_threshold,
+                    makeup=_scgv_makeup, knee=_scgv_knee,
+                    pitch=_scgv_pitch, range_val=_scgv_range, volume=_scgv_volume,
+                )
+                if not ok:
+                    return False, f"scgv failed: {err}"
                 current = out
                 continue
 
@@ -11641,6 +11774,132 @@ async def vocoder_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Failed to upload result: {e}")
 
 
+@bot.command(name="sidechaingate_vocoder", aliases=["scgv"])
+async def scgv_command(ctx: commands.Context, *, args: str = ""):
+    """Sidechaingate vocoder — shape a carrier with the frequency envelope of your video/audio.
+
+    Usage:
+      th/scgv <carrier_url>
+      th/scgv <carrier_url> <bandwidth>
+      th/scgv <carrier_url> <bw> <ratio> <threshold> <release> <attack> <makeup> <knee> <detection> <range> <volume> <pitch>
+
+    Defaults: bw=64, ratio=2, threshold=1, release=50, attack=0.01, makeup=1, knee=8, detection=peak, range=0, volume=1, pitch=0
+
+    Pipe effect: scgv=https://carrier_url[;bw[;ratio[;threshold[;release[;attack[;makeup[;knee[;detection[;range[;volume[;pitch]]]]]]]]]]]]
+    """
+    parts = args.strip().split() if args.strip() else []
+
+    if not parts:
+        lines = [
+            "**th/scgv** — Sidechaingate Vocoder",
+            "Shape a carrier sound with the frequency envelope of your video/audio using FFmpeg `firequalizer` + `sidechaingate`.",
+            "",
+            "**Usage:**",
+            "`th/scgv <carrier_url>` — default params (64 bands)",
+            "`th/scgv <carrier_url> <bandwidth>` — custom band count",
+            "`th/scgv <carrier_url> <bw> <ratio> <threshold> <release> <attack> <makeup> <knee> <detection> <range> <volume> <pitch>`",
+            "",
+            "**Defaults:** bw=64 · ratio=2 · threshold=1 · release=50ms · attack=0.01ms · makeup=1 · knee=8 · detection=peak · range=0 · volume=1 · pitch=0",
+            "**Aliases:** `th/sidechaingate_vocoder`",
+            "**As pipe effect:** `scgv=https://carrier_url` · `scgv=url;bw;ratio;threshold;release;attack;makeup;knee;detection;range;volume;pitch`",
+        ]
+        await ctx.reply("\n".join(lines))
+        return
+
+    carrier_url = parts[0]
+
+    def _pf(idx: int, default: float) -> float:
+        try:
+            return float(parts[idx])
+        except (IndexError, ValueError):
+            return default
+
+    bandwidth  = int(_pf(1, 64))
+    ratio      = _pf(2, 2.0)
+    threshold  = _pf(3, 1.0)
+    release    = _pf(4, 50.0)
+    attack     = _pf(5, 0.01)
+    makeup     = _pf(6, 1.0)
+    knee       = _pf(7, 8.0)
+    detection  = parts[8] if len(parts) > 8 else "peak"
+    range_val  = _pf(9, 0.0)
+    volume     = _pf(10, 1.0)
+    pitch      = _pf(11, 0.0)
+
+    source = await _resolve_media_source(ctx)
+    if source is None:
+        await ctx.reply("❌ Attach or reply to a video/audio file.")
+        return
+
+    status_msg = await ctx.reply(
+        f"⚙️ **scgv** — {bandwidth} bands · ratio={ratio} · detection={detection}… this may take a while."
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        if isinstance(source, discord.Attachment):
+            suffix = Path(source.filename).suffix.lower() or ".mp4"
+            input_path = os.path.join(tmpdir, f"input{suffix}")
+            stem = Path(source.filename).stem
+            try:
+                await download_attachment(source, input_path)
+            except Exception as e:
+                await status_msg.edit(content=f"❌ Download failed: {e}")
+                return
+        else:
+            ext = os.path.splitext(source.split("?")[0])[-1].lower() or ".mp4"
+            input_path = os.path.join(tmpdir, f"input{ext}")
+            stem = "media"
+            try:
+                await download_url(source, input_path)
+            except Exception as e:
+                await status_msg.edit(content=f"❌ Download failed: {e}")
+                return
+
+        output_path = os.path.join(tmpdir, f"scgv_{stem}.mp4")
+
+        loop = asyncio.get_event_loop()
+        ok, err = await loop.run_in_executor(
+            None, _run_scgv, input_path, output_path, carrier_url,
+            bandwidth, detection, release, attack, ratio, threshold,
+            makeup, knee, pitch, range_val, volume,
+        )
+
+        if not ok:
+            await status_msg.edit(content=f"❌ scgv failed:\n```\n{err[-1500:]}\n```")
+            return
+
+        out_size = os.path.getsize(output_path)
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(content="⬆️ Output too large — uploading to Catbox…")
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ **scgv** done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
+            return
+
+        out_filename = f"scgv_{stem}.mp4"
+        try:
+            embed = discord.Embed(
+                title="IHTX Bot — th/scgv",
+                description=(
+                    f"Bands: `{bandwidth}` · Ratio: `{ratio}` · Threshold: `{threshold}` · "
+                    f"Detection: `{detection}`\n"
+                    f"Release: `{release}ms` · Attack: `{attack}ms` · Makeup: `{makeup}` · "
+                    f"Knee: `{knee}` · Volume: `{volume}`"
+                    + (f" · Pitch: `{pitch:+.2f}st`" if pitch != 0 else "")
+                ),
+                color=0x40E0D0,
+            )
+            embed.add_field(name="File Size", value=f"{out_size / (1024 * 1024):.2f} MB", inline=True)
+            embed.add_field(name="Carrier", value=carrier_url[:80], inline=False)
+            await ctx.reply(embed=embed, file=discord.File(output_path, filename=out_filename))
+            await status_msg.delete()
+        except discord.HTTPException as e:
+            await status_msg.edit(content=f"❌ Failed to upload result: {e}")
+
+
 @bot.command(name="presets", aliases=["effects", "list"])
 async def presets_command(ctx: commands.Context):
     """List all available IHTX presets."""
@@ -16163,24 +16422,21 @@ _CONVERT_VIDEO_INPUT_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".gif"}
 
 
 @bot.command(name="convert", aliases=["conv"])
-async def convert_command(
-    ctx: commands.Context,
-    video_fmt: str = "mp4",
-    audio_fmt: str = "mp3",
-    img_fmt: str = "png",
-):
+async def convert_command(ctx: commands.Context, *, formats: str = "mp4/mp3/png"):
     """Convert an attached video into video + audio + image formats simultaneously.
 
-    Usage: th/convert [video_fmt] [audio_fmt] [img_fmt]
-    Defaults: mp4, mp3, png
+    Usage: th/convert [video_fmt/audio_fmt/img_fmt]
+    Defaults: mp4/mp3/png
+    Example: th/convert mov/flac/jpg
 
     Video formats : mp4, mkv, webm, avi, mov
     Audio formats : mp3, wav, ogg, flac, aac, m4a, opus
     Image formats : png, jpg, webp
     """
-    video_fmt = video_fmt.lower().lstrip(".")
-    audio_fmt = audio_fmt.lower().lstrip(".")
-    img_fmt   = img_fmt.lower().lstrip(".")
+    _parts = [p.strip().lower().lstrip(".") for p in formats.split("/")]
+    video_fmt = _parts[0] if len(_parts) > 0 and _parts[0] else "mp4"
+    audio_fmt = _parts[1] if len(_parts) > 1 and _parts[1] else "mp3"
+    img_fmt   = _parts[2] if len(_parts) > 2 and _parts[2] else "png"
     if img_fmt == "jpeg":
         img_fmt = "jpg"
 
