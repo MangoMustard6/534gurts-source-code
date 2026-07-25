@@ -3490,7 +3490,7 @@ def _apply_pipe_effects(
 
         for i, (name, params) in enumerate(effects):
             is_last = (i == len(effects) - 1)
-            out = output_path if is_last else os.path.join(tmpdir, f"pipe_{i}.mp4")
+            out = output_path if is_last else os.path.join(tmpdir, f"pipe_{i}.mov")
 
             # ccshue — ImageMagick haldclut with hue/sat/gamma/gain/offset
             if name == "ccshue":
@@ -5127,9 +5127,8 @@ def _run_ihtx_tagscript_workflow(
 
     _SUPPORTED_FINAL_FORMATS = {"mp4", "mkv", "mxf", "mov", "avi"}
     _fmt_lower = export_format.lower()
-    if _fmt_lower in {"mkv", "mxf"}:
-        _fmt_lower = "mp4"
     extension = _fmt_lower if _fmt_lower in _SUPPORTED_FINAL_FORMATS else "mp4"
+    dual_render = _fmt_lower in {"mkv", "mxf"}
 
     with tempfile.TemporaryDirectory() as tmpdir:
         base = os.path.join(tmpdir, "0.mp4")
@@ -5192,6 +5191,15 @@ def _run_ihtx_tagscript_workflow(
         if not ok:
             return False, f"Concat failed: {err}"
         shutil.copyfile(final_output, output_path)
+        if dual_render:
+            _mp4_sidecar = output_path + ".render.mp4"
+            _run_ffmpeg_raw([
+                "ffmpeg", "-y", "-i", final_output,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart", "-pix_fmt", "yuv420p",
+                _mp4_sidecar,
+            ], timeout=180)
 
     return True, ""
 
