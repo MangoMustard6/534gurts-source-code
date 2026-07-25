@@ -440,7 +440,7 @@ class EconomyCog(commands.Cog, name="Economy"):
         repetitions: int = 1,
         duration: str = "vidlen",
         no_trim: bool = False,
-        export_fmt: str = "mp4",
+        export_fmt: str = "mov",
     ) -> None:
         use_pipe = bool(pipe_effects and pipe_effects.strip())
 
@@ -478,7 +478,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                     repetitions = _c_reps
                     duration = _c_dur
                     no_trim = _c_notrim.lower() in {"true", "yes"}
-                    export_fmt = _c_fmt or "mp4"
+                    export_fmt = _c_fmt or "mov"
                     pipe_effects = _c_pe
                     use_pipe = True
                 elif effect.strip() and not effect.strip().split()[0][:1].isdigit():
@@ -493,7 +493,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                     repetitions = 1
                     duration = "vidlen"
                     no_trim = False
-                    export_fmt = "mp4"
+                    export_fmt = "mov"
                     use_pipe = True
                 else:
                     preset_list = ", ".join(f"`{p}`" for p in sorted(PRESET_FILTERS.keys()))
@@ -690,7 +690,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                         input_path, output_path,
                         repetitions, duration,
                         "true" if no_trim else "-",
-                        export_fmt.lstrip(".") or "mp4",
+                        export_fmt.lstrip(".") or "mov",
                         pipe_effects,
                     )
                 else:
@@ -865,7 +865,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                 repetitions=reps,
                 duration=dur,
                 no_trim=notrim.lower() in {"true", "yes"},
-                export_fmt=fmt or "mp4",
+                export_fmt=fmt or "mov",
             )
         else:
             first = (args.split()[0] if args else "").lower()
@@ -885,7 +885,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                     repetitions=1,
                     duration="vidlen",
                     no_trim=False,
-                    export_fmt="mp4",
+                    export_fmt="mov",
                 )
             else:
                 await ctx.invoke(self.ihtxgen, effect=first or "chaos")
@@ -1053,7 +1053,7 @@ class EconomyCog(commands.Cog, name="Economy"):
         with tempfile.TemporaryDirectory() as tmpdir:
             suffix = Path(media_filename).suffix.lower() or ".mp4"
             input_path = os.path.join(tmpdir, f"input{suffix}")
-            output_path = os.path.join(tmpdir, "nparison_out.mp4")
+            output_path = os.path.join(tmpdir, "nparison_out.mov")
 
             # Download
             try:
@@ -1130,7 +1130,7 @@ class EconomyCog(commands.Cog, name="Economy"):
             )
 
             stem = Path(media_filename).stem
-            out_filename = f"nparison_{grid_str}_{stem}.mp4"
+            out_filename = f"nparison_{grid_str}_{stem}.mov"
 
             if out_size > CATBOX_THRESHOLD:
                 await _update("⬆️ Output exceeds 8 MB — uploading to Catbox…")
