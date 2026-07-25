@@ -340,7 +340,7 @@ def _expr_param(param: str | None, default: float) -> str:
 
 
 # Heavy command rate limiting
-HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "ihtxsap", "sap", "concatenate", "concat", "join", "multipitch_bungee", "mpb", "bmp", "multipitchbungee", "bungeemultipitch", "fileaa", "fa", "filebungee"}
+HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "ihtxsap", "sap", "concatenate", "concat", "join", "multipitch_bungee", "mpb", "bmp", "multipitchbungee", "bungeemultipitch"}
 HEAVY_LIMIT_DEFAULT = 20
 HEAVY_LIMIT_OWNER = 5340
 LIMITS_FILE = Path("bot/limits.json")
@@ -5773,7 +5773,7 @@ def _run_fileaa_bungee_segmented(
         return ok, err if not ok else f"fileaa segmented: {n_segs} seg × {seg_duration}s"
 
 
-def _run_multipitch_rb3(
+def _old_run_multipitch_rb3_placeholder(): pass  # placeholder removed below
     input_path: str,
     output_path: str,
     pitch_values: list[str],
@@ -9267,128 +9267,6 @@ async def mpb_command(ctx: commands.Context, *, args: str = "") -> None:
         else:
             await status_msg.edit(
                 content=f"✅ Multipitch Bungee done! `{pitch_display}`",
-                attachments=[discord.File(output_path, filename=out_name)],
-            )
-
-
-_FILEAA_USAGE = (
-    "**th/fileaa** — segmented fileaa bungee pitch-shifter\n"
-    "Usage: `th/fileaa [pitches] [seg=0.4]`\n"
-    "Pitches: space / semicolon / pipe / comma separated semitone values (e.g. `-7|7`).\n"
-    "`seg=N` overrides segment duration in seconds (default `0.4`).\n\n"
-    "Per-segment pipeline:\n"
-    "```\n"
-    "ffmpeg ... -preset ultrafast -qp 1 -c:a pcm_s16le  a$i.mp4\n"
-    "ffmpeg -i a$i.mp4  h$i.wav\n"
-    "fileaa  h$i.wav  out$i.wav  {pitches}  --bungee  --no-normalize\n"
-    "ffmpeg -i a$i.mp4 -i out$i.wav -map 0:v -map 1:a -c:a pcm_s16le -t {seg}s -qp 1  $i.mp4\n"
-    "```\n"
-    "Aliases: `th/fa` · `th/filebungee`"
-)
-
-
-@bot.command(name="fileaa", aliases=["fa", "filebungee"])
-async def fileaa_command(ctx: commands.Context, *, args: str = "") -> None:
-    """Segmented fileaa bungee pitch-shifter.
-
-    Usage: th/fileaa [pitches] [seg=0.4]
-    """
-    # Parse seg=N and pitch tokens from args
-    seg_duration = 0.4
-    pitch_parts: list[str] = []
-    for tok in args.strip().split():
-        if tok.lower().startswith("seg="):
-            try:
-                seg_duration = max(0.05, min(float(tok[4:]), 10.0))
-            except ValueError:
-                pass
-        else:
-            pitch_parts.append(tok)
-
-    pitch_str = " ".join(pitch_parts).strip() or "1.5"
-    pitch_values = [p.strip() for p in re.split(r"[;|,\s]+", pitch_str) if p.strip()]
-
-    if not pitch_values:
-        await ctx.reply(_FILEAA_USAGE)
-        return
-
-    try:
-        [float(v) for v in pitch_values]
-    except ValueError:
-        await ctx.reply(f"❌ Invalid pitch value.\n\n{_FILEAA_USAGE}")
-        return
-
-    source = await _resolve_media_source(ctx)
-    if source is None:
-        await ctx.reply(
-            "❌ No audio/video found. Attach one, reply to one, or have one in recent history.\n\n"
-            + _FILEAA_USAGE
-        )
-        return
-
-    pitch_display = " | ".join(pitch_values)
-    status_msg = await ctx.reply(
-        f"⏳ fileaa segmented — `{pitch_display}`, seg={seg_duration}s …"
-    )
-
-    async def _update(text: str) -> None:
-        try:
-            await status_msg.edit(content=text)
-        except Exception:
-            pass
-
-    if isinstance(source, discord.Attachment):
-        ext = source.filename.rsplit(".", 1)[-1].lower()
-    else:
-        ext = source.rsplit(".", 1)[-1].split("?")[0].lower() or "mp4"
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        input_path  = os.path.join(tmpdir, f"input.{ext}")
-        output_path = os.path.join(tmpdir, "fileaa_output.mp4")
-
-        await _update("⏳ Downloading…")
-        try:
-            await download_attachment(source, input_path)
-        except Exception as exc:
-            await _update(f"❌ Download failed: `{exc}`")
-            return
-
-        await _update(
-            f"⏳ Running fileaa segmented (`{pitch_display}`, seg={seg_duration}s)…"
-        )
-        loop = asyncio.get_event_loop()
-        ok, err = await loop.run_in_executor(
-            None, _run_fileaa_bungee_segmented,
-            input_path, output_path, pitch_values, seg_duration,
-        )
-        if not ok:
-            await _update(f"❌ fileaa segmented failed:\n```\n{err[-1200:]}\n```")
-            return
-
-        if not os.path.exists(output_path):
-            await _update("❌ Output file was not created.")
-            return
-
-        out_size = os.path.getsize(output_path)
-        safe = (
-            pitch_str
-            .replace("+", "p").replace("-", "n")
-            .replace("|", "_").replace(";", "_").replace(",", "_")
-        )
-        out_name = f"fileaa_{safe}.mp4"
-
-        if out_size > CATBOX_THRESHOLD:
-            await _update("⬆️ Output exceeds upload limit — uploading to Catbox…")
-            cat_url = await _upload_to_catbox(output_path)
-            if cat_url:
-                await _update(
-                    f"✅ fileaa segmented done! `{pitch_display}` · seg={seg_duration}s\n🔗 {cat_url}"
-                )
-            else:
-                await _update("❌ Output too large for Discord and Catbox upload failed.")
-        else:
-            await status_msg.edit(
-                content=f"✅ fileaa segmented done! `{pitch_display}` · seg={seg_duration}s",
                 attachments=[discord.File(output_path, filename=out_name)],
             )
 
