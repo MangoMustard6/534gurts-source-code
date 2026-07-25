@@ -9609,7 +9609,7 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
                 "-vf", f"setpts=1/{ratio:.10f}*PTS,fps={framerate}",
                 "-af", f"rubberband=tempo={ratio:.10f}",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-                "-c:a", "flac",
+                "-c:a", "alac",
                 "-movflags", "+faststart",
                 "-pix_fmt", "yuv420p",
                 output_path,
