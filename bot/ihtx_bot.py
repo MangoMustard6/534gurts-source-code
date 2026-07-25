@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-25: [Python] Added th/fileaa (aliases: fa, filebungee) — segmented fileaa bungee pipeline: splits input into seg_duration (default 0.4s) chunks, per segment: (1) encode ultrafast/qp1/pcm_s16le, (2) extract audio to WAV, (3) fileaa --bungee --no-normalize, (4) remux with pcm_s16le/t seg/qp1/ultrafast; concat all segments to final AAC/h264 output. `seg=N` arg overrides segment duration. Added to HEAVY_COMMANDS.
 - 2026-07-25: [Python] Added th/sidechaingate_vocoder (alias: th/scgv) and scgv pipe effect — ports TypeScript generateVocoderCommand() filtergraph to Python FFmpeg: firequalizer band-split (mod+carrier), sidechaingate per-band, amix+crystalizer+alimiter output; params: carrier_url, bw=64, ratio=2, threshold=1, release=50, attack=0.01, makeup=1, knee=8, detection=peak, range=0, volume=1, pitch=0. Fixed th/convert to use slash-separated format string (th/convert mov/png/flac) instead of three separate args. Replaced all .mov output generators with .mp4: bytebeat_cog.py (waveform render + discord.File filename), ihtx_bot.py get_output_ext(), pipe engine temp files, invlum, p1280, op1280, p1280r, preview1280what, multipitch, ssmp, mpb, repeat, concatenate, join. Added th/convert (alias: conv) — converts an attached video into video fmt + audio fmt + image fmt simultaneously (defaults: mp4/mp3/png); runs all three FFmpeg jobs in parallel; falls back to Catbox for oversized video output.
 - 2026-07-24: [Python] Added th/preview1280what (aliases: p1280what, p1280fev8v2plus) — 28-segment TV-simulator extended montage (preview1280 FFmpeg Extended v8 v2+). 4 full segs + 23 half segs + 1 looping long seg; optional use_tempo param for rubberband time-stretch. Output is .mov (pwhatextended). Added to th/ihtxhelp Fun section. Removed set_thumbnail from all command result embeds (p1280, op1280, p1280r, swirl, fzte, tvsim, folkvalley). Added gif thumbnail (_IHTX_SAP_FOOTER_ICON) to th/ihtxhelp overview and all section pages.
 - 2026-07-23: [Python] Removed preview1280/p1280, oppositep1280/op1280, preview1280with640x360resize/p1280ff!3/p1280w16:9r, and multipitch/mp/multi from HEAVY_COMMANDS (no longer rate-limited). Moved their _HELP_ENTRIES category from "heavy" to "fun". Updated th/help (TypeScript): moved preview1280/multipitch out of Heavy Effects into Video Tools section; added missing commands (tvsim, swirl, folkvalley, vocoder, download, videolength, bytebeat, wave, submiteffect, listeffects, invite); split Games into TS-only and Python-only subsections; added numguess, scramble, typerace, mathquiz to Python games; merged Info+Limits into one field.
@@ -339,7 +340,7 @@ def _expr_param(param: str | None, default: float) -> str:
 
 
 # Heavy command rate limiting
-HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "ihtxsap", "sap", "concatenate", "concat", "join", "multipitch_bungee", "mpb", "bmp", "multipitchbungee", "bungeemultipitch"}
+HEAVY_COMMANDS = {"ihtxgen", "ihtx", "effect", "destroy", "ihtxcustom", "icustom", "ihtxsap", "sap", "concatenate", "concat", "join", "multipitch_bungee", "mpb", "bmp", "multipitchbungee", "bungeemultipitch", "fileaa", "fa", "filebungee"}
 HEAVY_LIMIT_DEFAULT = 20
 HEAVY_LIMIT_OWNER = 5340
 LIMITS_FILE = Path("bot/limits.json")
@@ -5620,6 +5621,158 @@ def _run_multipitch_bungee(
     return True, ""
 
 
+def _run_fileaa_bungee_segmented(
+    input_path: str,
+    output_path: str,
+    pitch_values: list[str],
+    seg_duration: float = 0.4,
+) -> tuple[bool, str]:
+    """Segmented fileaa bungee pipeline.
+
+    For each seg_duration-second chunk of the input:
+      1. ffmpeg ... -preset ultrafast -qp 1 -c:v libx264 -c:a pcm_s16le  a{i}.mp4
+      2. ffmpeg -i a{i}.mp4  h{i}.wav
+      3. fileaa  h{i}.wav  out{i}.wav  {pitches}  --bungee  --no-normalize
+      4. ffmpeg -i a{i}.mp4 -i out{i}.wav  -map 0:v -map 1:a
+               -c:a pcm_s16le -t {seg_duration} -preset ultrafast -qp 1  {i}.mp4
+    All segments are finally concatenated into output_path.
+    """
+    # ── Parse pitches ────────────────────────────────────────────────────────
+    flattened: list[str] = []
+    for pv in pitch_values:
+        flattened.extend(
+            v.strip()
+            for v in re.split(r"[;|,\s]+", pv)
+            if v.strip() and v.strip().lower() not in ("bungee", "--bungee")
+        )
+    if not flattened:
+        return False, "❌ No pitch values specified."
+    try:
+        semitones = [float(v) for v in flattened]
+    except ValueError as exc:
+        return False, f"❌ Invalid pitch value: {exc}"
+    if not _ensure_multipitch_bin():
+        return False, "❌ fileaa binary unavailable (x86-64 only)."
+
+    pitch_arg = ",".join(
+        str(int(s)) if s == int(s) else str(s)
+        for s in semitones
+    )
+
+    # ── Probe input ──────────────────────────────────────────────────────────
+    dur_raw = _ffprobe(
+        input_path,
+        "-show_entries", "format=duration",
+        "-of", "default=nw=1:nk=1",
+    ).strip()
+    try:
+        total_duration = float(dur_raw)
+    except (ValueError, TypeError):
+        return False, "❌ Could not probe input duration."
+
+    has_video = bool(_ffprobe(
+        input_path,
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_type",
+        "-of", "default=nw=1:nk=1",
+    ).strip())
+
+    n_segs = max(1, math.ceil(total_duration / seg_duration))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        seg_paths: list[str] = []
+
+        for i in range(n_segs):
+            t_start = i * seg_duration
+
+            # Step 1: extract segment — ultrafast / qp 1 / pcm_s16le
+            a_path = os.path.join(tmpdir, f"a{i}.mp4")
+            cmd1: list[str] = [
+                "ffmpeg", "-y",
+                "-ss", str(t_start), "-t", str(seg_duration),
+                "-i", input_path,
+            ]
+            if has_video:
+                cmd1 += [
+                    "-c:v", "libx264", "-preset", "ultrafast",
+                    "-qp", "1", "-pix_fmt", "yuv420p",
+                ]
+            cmd1 += ["-c:a", "pcm_s16le", a_path]
+            ok, err = _run_ffmpeg_raw(cmd1, timeout=60)
+            if not ok:
+                return False, f"segment {i}: extract failed: {err}"
+
+            # Step 2: extract audio to WAV
+            h_path = os.path.join(tmpdir, f"h{i}.wav")
+            ok, err = _run_ffmpeg_raw(
+                ["ffmpeg", "-y", "-i", a_path, h_path],
+                timeout=60,
+            )
+            if not ok:
+                return False, f"segment {i}: audio extract failed: {err}"
+
+            # Step 3: fileaa --bungee --no-normalize
+            out_wav = os.path.join(tmpdir, f"out{i}.wav")
+            res = subprocess.run(
+                [_MULTIPITCH_BIN, h_path, out_wav, pitch_arg, "--bungee", "--no-normalize"],
+                capture_output=True, timeout=120,
+            )
+            if res.returncode != 0:
+                stderr_note = res.stderr.decode(errors="replace")[-300:] if res.stderr else ""
+                return False, f"segment {i}: fileaa failed: {stderr_note}"
+
+            # Step 4: remux processed audio back onto segment video
+            seg_out = os.path.join(tmpdir, f"{i}.mp4")
+            if has_video:
+                cmd4 = [
+                    "ffmpeg", "-y",
+                    "-i", a_path, "-i", out_wav,
+                    "-map", "0:v", "-map", "1:a",
+                    "-c:v", "libx264", "-preset", "ultrafast",
+                    "-qp", "1", "-pix_fmt", "yuv420p",
+                    "-c:a", "pcm_s16le",
+                    "-t", str(seg_duration),
+                    seg_out,
+                ]
+            else:
+                cmd4 = [
+                    "ffmpeg", "-y",
+                    "-i", out_wav,
+                    "-c:a", "pcm_s16le",
+                    "-t", str(seg_duration),
+                    seg_out,
+                ]
+            ok, err = _run_ffmpeg_raw(cmd4, timeout=60)
+            if not ok:
+                return False, f"segment {i}: remux failed: {err}"
+
+            seg_paths.append(seg_out)
+
+        # ── Concatenate all segments ─────────────────────────────────────────
+        concat_list = os.path.join(tmpdir, "concat.txt")
+        with open(concat_list, "w") as f:
+            for sp in seg_paths:
+                f.write(f"file '{sp}'\n")
+
+        # Encode to Discord/Catbox-compatible output (AAC audio)
+        concat_cmd: list[str] = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0", "-i", concat_list,
+        ]
+        if has_video:
+            concat_cmd += [
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k",
+            ]
+        else:
+            concat_cmd += ["-c:a", "aac", "-b:a", "192k"]
+        concat_cmd.append(output_path)
+
+        ok, err = _run_ffmpeg_raw(concat_cmd, timeout=300)
+        return ok, err if not ok else f"fileaa segmented: {n_segs} seg × {seg_duration}s"
+
+
 def _run_multipitch_rb3(
     input_path: str,
     output_path: str,
@@ -9114,6 +9267,128 @@ async def mpb_command(ctx: commands.Context, *, args: str = "") -> None:
         else:
             await status_msg.edit(
                 content=f"✅ Multipitch Bungee done! `{pitch_display}`",
+                attachments=[discord.File(output_path, filename=out_name)],
+            )
+
+
+_FILEAA_USAGE = (
+    "**th/fileaa** — segmented fileaa bungee pitch-shifter\n"
+    "Usage: `th/fileaa [pitches] [seg=0.4]`\n"
+    "Pitches: space / semicolon / pipe / comma separated semitone values (e.g. `-7|7`).\n"
+    "`seg=N` overrides segment duration in seconds (default `0.4`).\n\n"
+    "Per-segment pipeline:\n"
+    "```\n"
+    "ffmpeg ... -preset ultrafast -qp 1 -c:a pcm_s16le  a$i.mp4\n"
+    "ffmpeg -i a$i.mp4  h$i.wav\n"
+    "fileaa  h$i.wav  out$i.wav  {pitches}  --bungee  --no-normalize\n"
+    "ffmpeg -i a$i.mp4 -i out$i.wav -map 0:v -map 1:a -c:a pcm_s16le -t {seg}s -qp 1  $i.mp4\n"
+    "```\n"
+    "Aliases: `th/fa` · `th/filebungee`"
+)
+
+
+@bot.command(name="fileaa", aliases=["fa", "filebungee"])
+async def fileaa_command(ctx: commands.Context, *, args: str = "") -> None:
+    """Segmented fileaa bungee pitch-shifter.
+
+    Usage: th/fileaa [pitches] [seg=0.4]
+    """
+    # Parse seg=N and pitch tokens from args
+    seg_duration = 0.4
+    pitch_parts: list[str] = []
+    for tok in args.strip().split():
+        if tok.lower().startswith("seg="):
+            try:
+                seg_duration = max(0.05, min(float(tok[4:]), 10.0))
+            except ValueError:
+                pass
+        else:
+            pitch_parts.append(tok)
+
+    pitch_str = " ".join(pitch_parts).strip() or "1.5"
+    pitch_values = [p.strip() for p in re.split(r"[;|,\s]+", pitch_str) if p.strip()]
+
+    if not pitch_values:
+        await ctx.reply(_FILEAA_USAGE)
+        return
+
+    try:
+        [float(v) for v in pitch_values]
+    except ValueError:
+        await ctx.reply(f"❌ Invalid pitch value.\n\n{_FILEAA_USAGE}")
+        return
+
+    source = await _resolve_media_source(ctx)
+    if source is None:
+        await ctx.reply(
+            "❌ No audio/video found. Attach one, reply to one, or have one in recent history.\n\n"
+            + _FILEAA_USAGE
+        )
+        return
+
+    pitch_display = " | ".join(pitch_values)
+    status_msg = await ctx.reply(
+        f"⏳ fileaa segmented — `{pitch_display}`, seg={seg_duration}s …"
+    )
+
+    async def _update(text: str) -> None:
+        try:
+            await status_msg.edit(content=text)
+        except Exception:
+            pass
+
+    if isinstance(source, discord.Attachment):
+        ext = source.filename.rsplit(".", 1)[-1].lower()
+    else:
+        ext = source.rsplit(".", 1)[-1].split("?")[0].lower() or "mp4"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path  = os.path.join(tmpdir, f"input.{ext}")
+        output_path = os.path.join(tmpdir, "fileaa_output.mp4")
+
+        await _update("⏳ Downloading…")
+        try:
+            await download_attachment(source, input_path)
+        except Exception as exc:
+            await _update(f"❌ Download failed: `{exc}`")
+            return
+
+        await _update(
+            f"⏳ Running fileaa segmented (`{pitch_display}`, seg={seg_duration}s)…"
+        )
+        loop = asyncio.get_event_loop()
+        ok, err = await loop.run_in_executor(
+            None, _run_fileaa_bungee_segmented,
+            input_path, output_path, pitch_values, seg_duration,
+        )
+        if not ok:
+            await _update(f"❌ fileaa segmented failed:\n```\n{err[-1200:]}\n```")
+            return
+
+        if not os.path.exists(output_path):
+            await _update("❌ Output file was not created.")
+            return
+
+        out_size = os.path.getsize(output_path)
+        safe = (
+            pitch_str
+            .replace("+", "p").replace("-", "n")
+            .replace("|", "_").replace(";", "_").replace(",", "_")
+        )
+        out_name = f"fileaa_{safe}.mp4"
+
+        if out_size > CATBOX_THRESHOLD:
+            await _update("⬆️ Output exceeds upload limit — uploading to Catbox…")
+            cat_url = await _upload_to_catbox(output_path)
+            if cat_url:
+                await _update(
+                    f"✅ fileaa segmented done! `{pitch_display}` · seg={seg_duration}s\n🔗 {cat_url}"
+                )
+            else:
+                await _update("❌ Output too large for Discord and Catbox upload failed.")
+        else:
+            await status_msg.edit(
+                content=f"✅ fileaa segmented done! `{pitch_display}` · seg={seg_duration}s",
                 attachments=[discord.File(output_path, filename=out_name)],
             )
 
