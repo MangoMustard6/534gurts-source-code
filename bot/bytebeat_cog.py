@@ -187,7 +187,7 @@ def _pcm_to_waveform_video(
     ffmpeg_fmt = fmt_map[mode]
 
     raw_path = os.path.join(tmp, "input.raw")
-    out_path = os.path.join(tmp, "bytebeat.mov")
+    out_path = os.path.join(tmp, "bytebeat.mp4")
 
     with open(raw_path, "wb") as f:
         f.write(pcm_bytes)
@@ -316,14 +316,14 @@ class BytebeatCog(commands.Cog, name="Bytebeat"):
                 await status_msg.delete()
                 await ctx.reply(
                     content=label,
-                    file=discord.File(io.BytesIO(video_bytes), filename="bytebeat.mov"),
+                    file=discord.File(io.BytesIO(video_bytes), filename="bytebeat.mp4"),
                 )
             else:
                 await status_msg.edit(
                     content="📦 File too large for Discord — uploading to catbox.moe…"
                 )
                 # Write to tmp file so _upload_to_catbox can read it
-                video_path = os.path.join(tmp, "bytebeat.mov")
+                video_path = os.path.join(tmp, "bytebeat.mp4")
                 with open(video_path, "wb") as f:
                     f.write(video_bytes)
                 from bot.ihtx_bot import _upload_to_catbox

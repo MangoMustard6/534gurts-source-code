@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-25: [Python] Replaced all .mov output generators with .mp4: bytebeat_cog.py (waveform render + discord.File filename), ihtx_bot.py get_output_ext(), pipe engine temp files, invlum, p1280, op1280, p1280r, preview1280what, multipitch, ssmp, mpb, repeat, concatenate, join. Added th/convert (alias: conv) — converts an attached video into video fmt + audio fmt + image fmt simultaneously (defaults: mp4/mp3/png); runs all three FFmpeg jobs in parallel; falls back to Catbox for oversized video output.
 - 2026-07-24: [Python] Added th/preview1280what (aliases: p1280what, p1280fev8v2plus) — 28-segment TV-simulator extended montage (preview1280 FFmpeg Extended v8 v2+). 4 full segs + 23 half segs + 1 looping long seg; optional use_tempo param for rubberband time-stretch. Output is .mov (pwhatextended). Added to th/ihtxhelp Fun section. Removed set_thumbnail from all command result embeds (p1280, op1280, p1280r, swirl, fzte, tvsim, folkvalley). Added gif thumbnail (_IHTX_SAP_FOOTER_ICON) to th/ihtxhelp overview and all section pages.
 - 2026-07-23: [Python] Removed preview1280/p1280, oppositep1280/op1280, preview1280with640x360resize/p1280ff!3/p1280w16:9r, and multipitch/mp/multi from HEAVY_COMMANDS (no longer rate-limited). Moved their _HELP_ENTRIES category from "heavy" to "fun". Updated th/help (TypeScript): moved preview1280/multipitch out of Heavy Effects into Video Tools section; added missing commands (tvsim, swirl, folkvalley, vocoder, download, videolength, bytebeat, wave, submiteffect, listeffects, invite); split Games into TS-only and Python-only subsections; added numguess, scramble, typerace, mathquiz to Python games; merged Info+Limits into one field.
 - 2026-07-23: [Python] Fixed `labadjust` output unplayable: switched to `-c:a copy` with no explicit video codec (matches huehsv/ccshue pattern exactly), so the output container/codec follows output_path extension. Updated `_concat_codec_args` formats (mkv/mxf/mov/mp4/avi) to use `-bufsize 16M -threads 0 -crf 25 -preset veryfast`; wired `export_format` through to final concat output in tagscript workflow (no longer hardcoded to mp4). Fixed `labadjust` haldclut "Failed to configure input pad" error: switched from `-filter_complex "[1:v][0:v]haldclut"` to `-vf "movie={lut_path},[in]haldclut,format=yuv420p"`. Added pipe-effect variables `$d` (duration alias for `$vd`), `$fr` (frame rate alias for `$f`), `$w` (video width px), `$h` (video height px).
@@ -793,7 +794,7 @@ PRESET_FILTERS: dict[str, dict] = {
         "maps": ["[outv]", "[outa]"],
         "audio_codec": "flac",
         "extra_codec_args": ["-preset", "ultrafast"],
-        "output_ext": ".mov",
+        "output_ext": ".mp4",
     },
 }
 
@@ -1366,7 +1367,7 @@ def run_ffmpeg(input_path: str, output_path: str, preset: str, is_video: bool) -
 
 
 def get_output_ext(input_ext: str, is_video: bool) -> str:
-    return ".mov" if is_video else ".gif"
+    return ".mp4" if is_video else ".gif"
 
 # ---------- HueHSV (ImageMagick haldclut) ----------
 
@@ -3490,7 +3491,7 @@ def _apply_pipe_effects(
 
         for i, (name, params) in enumerate(effects):
             is_last = (i == len(effects) - 1)
-            out = output_path if is_last else os.path.join(tmpdir, f"pipe_{i}.mov")
+            out = output_path if is_last else os.path.join(tmpdir, f"pipe_{i}.mp4")
 
             # ccshue — ImageMagick haldclut with hue/sat/gamma/gain/offset
             if name == "ccshue":
@@ -7148,7 +7149,7 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{suffix}")
-        output_path = os.path.join(tmpdir, "invlum_out.mov")
+        output_path = os.path.join(tmpdir, "invlum_out.mp4")
 
         try:
             if isinstance(source, discord.Attachment):
@@ -7174,7 +7175,7 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
             return
 
         if pipe_effects:
-            pipe_out = os.path.join(tmpdir, "invlum_pipe.mov")
+            pipe_out = os.path.join(tmpdir, "invlum_pipe.mp4")
             ok, err = await loop.run_in_executor(
                 None,
                 lambda: _apply_pipe_effects(output_path, pipe_out, pipe_effects),
@@ -7195,7 +7196,7 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"invlum_{Path(source.filename).stem}.mov"
+        out_filename = f"invlum_{Path(source.filename).stem}.mp4"
         try:
             await ctx.reply(
                 content=f"✅ **invlum** done! `{powers}` power(s), `{duration}s` each.",
@@ -7586,7 +7587,7 @@ async def preview1280_command(ctx: commands.Context, start: float = 1.85, durati
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"p1280_{Path(source.filename).stem}.mov"
+        out_filename = f"p1280_{Path(source.filename).stem}.mp4"
         try:
             embed_p1280 = discord.Embed(
                 title="Preview 1280 - FFmpeg command originally made by `MWTVE7691` then transported to typescript:",
@@ -7679,7 +7680,7 @@ async def oppositep1280_command(ctx: commands.Context, start: float = 1.85, dura
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"op1280_{Path(source.filename).stem}.mov"
+        out_filename = f"op1280_{Path(source.filename).stem}.mp4"
         try:
             embed_op1280 = discord.Embed(
                 title="Opposite 1280 - Inverse TV-simulator montage",
@@ -7774,7 +7775,7 @@ async def preview1280_640x360resize_command(ctx: commands.Context, start: float 
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"p1280_640x360_{Path(source.filename).stem}.mov"
+        out_filename = f"p1280_640x360_{Path(source.filename).stem}.mp4"
         try:
             embed_p1280r = discord.Embed(
                 title="Preview 1280 (640×360 output) — FFmpeg command originally by `yodelaiihiiho`:",
@@ -7844,7 +7845,7 @@ async def preview1280what_command(
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path  = os.path.join(tmpdir, f"input{suffix}")
-        output_path = os.path.join(tmpdir, "pwhatextended.mov")
+        output_path = os.path.join(tmpdir, "pwhatextended.mp4")
 
         try:
             await download_attachment(source, input_path)
@@ -7879,7 +7880,7 @@ async def preview1280what_command(
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"p1280what_{Path(source.filename).stem}.mov"
+        out_filename = f"p1280what_{Path(source.filename).stem}.mp4"
         try:
             embed = discord.Embed(
                 title="Preview 1280 FFmpeg Extended v8 v2+ (preview1280what??)",
@@ -7989,7 +7990,7 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{suffix}")
-        output_path = os.path.join(tmpdir, "output_multipitch.mov")
+        output_path = os.path.join(tmpdir, "output_multipitch.mp4")
 
         try:
             await download_attachment(source, input_path)
@@ -8019,7 +8020,7 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
             return
 
         safe_pitch_str = pitch_str.replace(";", "_")
-        out_filename = f"multipitch_{safe_pitch_str}_{Path(source.filename).stem}.mov"
+        out_filename = f"multipitch_{safe_pitch_str}_{Path(source.filename).stem}.mp4"
         try:
             await ctx.reply(
                 content=f"✅ **IHTX multipitch** ({pitch_str}) applied!",
@@ -8111,7 +8112,7 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{suffix}")
-        output_path = os.path.join(tmpdir, "output_ssmp.mov")
+        output_path = os.path.join(tmpdir, "output_ssmp.mp4")
 
         try:
             await download_attachment(source, input_path)
@@ -8141,7 +8142,7 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
             return
 
         safe_pitch_str = pitch_str.replace(";", "_")
-        out_filename = f"ssmp_{safe_pitch_str}_{Path(source.filename).stem}.mov"
+        out_filename = f"ssmp_{safe_pitch_str}_{Path(source.filename).stem}.mp4"
         try:
             await ctx.reply(
                 content=f"✅ **SoundStretch multipitch** ({pitch_str}) applied!",
@@ -8944,7 +8945,7 @@ async def mpb_command(ctx: commands.Context, *, args: str = "") -> None:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input.{ext}")
-        output_path = os.path.join(tmpdir, "mpb_output.mov")
+        output_path = os.path.join(tmpdir, "mpb_output.mp4")
 
         await _update("⏳ Downloading…")
         try:
@@ -8968,7 +8969,7 @@ async def mpb_command(ctx: commands.Context, *, args: str = "") -> None:
 
         out_size = os.path.getsize(output_path)
         safe = pitch_str.replace("+", "p").replace("-", "n").replace("|", "_").replace(";", "_").replace(",", "_")
-        out_name = f"mpb_{safe}.mov"
+        out_name = f"mpb_{safe}.mp4"
 
         if out_size > CATBOX_THRESHOLD:
             await _update("⬆️ Output exceeds upload limit — uploading to Catbox…")
@@ -9706,7 +9707,7 @@ async def repeat_command(ctx: commands.Context, *, args: str = ""):
                     with open(inp, "wb") as f:
                         f.write(await resp.read())
 
-        out_ext = ".mov" if ext in {".mp4", ".mov", ".webm", ".mkv", ".gif"} else ext
+        out_ext = ".mp4" if ext in {".mp4", ".mov", ".webm", ".mkv", ".gif"} else ext
         out = os.path.join(tmpdir, f"repeat_{base}{out_ext}")
         concat_list = os.path.join(tmpdir, "concat.txt")
         safe_inp = inp.replace("'", "'\\''")
@@ -9854,7 +9855,7 @@ async def concatenate_command(ctx: commands.Context, *, args: str = ""):
             )
             return
 
-        out_ext = _CONCAT_FORMAT_TOKENS.get(format_override, ".mov" if is_video else ".mp3")
+        out_ext = _CONCAT_FORMAT_TOKENS.get(format_override, ".mp4" if is_video else ".mp3")
         if format_override:
             override_is_audio = out_ext in _CONCAT_AUDIO_EXTS
             if override_is_audio != is_audio:
@@ -10074,7 +10075,7 @@ async def join_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content="❌ Cannot mix video and audio-only sources.")
             return
 
-        output_path = os.path.join(tmpdir, f"joined{'.mov' if is_video else exts[0]}")
+        output_path = os.path.join(tmpdir, f"joined{'.mp4' if is_video else exts[0]}")
 
         if is_video:
             infos = [await loop.run_in_executor(None, _ffprobe_video_info, p) for p in input_paths]
@@ -10185,7 +10186,7 @@ async def join_command(ctx: commands.Context, *, args: str = ""):
             return
 
         layout_name = "vertical" if vertical else "horizontal"
-        out_ext = ".mov" if is_video else exts[0]
+        out_ext = ".mp4" if is_video else exts[0]
         out_filename = f"join_{layout_name}{out_ext}"
         try:
             await ctx.reply(
@@ -16151,6 +16152,191 @@ async def guesseffect(ctx: commands.Context):
             color=0x40E0D0,
         )
         await ctx.send(embed=timeout_embed)
+
+
+# ---------- th/convert — convert video to video fmt + audio fmt + image fmt ----------
+
+_CONVERT_VIDEO_FMTS = {"mp4", "mkv", "webm", "avi", "mov"}
+_CONVERT_AUDIO_FMTS = {"mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"}
+_CONVERT_IMAGE_FMTS = {"png", "jpg", "jpeg", "webp"}
+_CONVERT_VIDEO_INPUT_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".gif"}
+
+
+@bot.command(name="convert", aliases=["conv"])
+async def convert_command(
+    ctx: commands.Context,
+    video_fmt: str = "mp4",
+    audio_fmt: str = "mp3",
+    img_fmt: str = "png",
+):
+    """Convert an attached video into video + audio + image formats simultaneously.
+
+    Usage: th/convert [video_fmt] [audio_fmt] [img_fmt]
+    Defaults: mp4, mp3, png
+
+    Video formats : mp4, mkv, webm, avi, mov
+    Audio formats : mp3, wav, ogg, flac, aac, m4a, opus
+    Image formats : png, jpg, webp
+    """
+    video_fmt = video_fmt.lower().lstrip(".")
+    audio_fmt = audio_fmt.lower().lstrip(".")
+    img_fmt   = img_fmt.lower().lstrip(".")
+    if img_fmt == "jpeg":
+        img_fmt = "jpg"
+
+    if video_fmt not in _CONVERT_VIDEO_FMTS:
+        await ctx.reply(
+            f"❌ Unknown video format `{video_fmt}`. "
+            f"Choose from: {', '.join(sorted(_CONVERT_VIDEO_FMTS))}"
+        )
+        return
+    if audio_fmt not in _CONVERT_AUDIO_FMTS:
+        await ctx.reply(
+            f"❌ Unknown audio format `{audio_fmt}`. "
+            f"Choose from: {', '.join(sorted(_CONVERT_AUDIO_FMTS))}"
+        )
+        return
+    if img_fmt not in _CONVERT_IMAGE_FMTS:
+        await ctx.reply(
+            f"❌ Unknown image format `{img_fmt}`. "
+            f"Choose from: {', '.join(sorted(_CONVERT_IMAGE_FMTS))}"
+        )
+        return
+
+    # Resolve source attachment (direct or via reply)
+    source: discord.Attachment | None = None
+    if ctx.message.attachments:
+        source = ctx.message.attachments[0]
+    elif ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref.attachments:
+                source = ref.attachments[0]
+        except Exception:
+            pass
+    if source is None:
+        await ctx.reply("❌ Attach or reply to a video file.")
+        return
+
+    suffix = Path(source.filename).suffix.lower()
+    if suffix not in _CONVERT_VIDEO_INPUT_EXTS:
+        await ctx.reply(
+            f"❌ `th/convert` requires a video file. Got `{suffix}`.\n"
+            f"Supported inputs: {', '.join(sorted(_CONVERT_VIDEO_INPUT_EXTS))}"
+        )
+        return
+
+    stem = Path(source.filename).stem
+    status_msg = await ctx.reply(
+        f"⚙️ Converting `{source.filename}` → "
+        f"`.{video_fmt}` / `.{audio_fmt}` / `.{img_fmt}`…"
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = os.path.join(tmpdir, f"input{suffix}")
+        video_out  = os.path.join(tmpdir, f"{stem}.{video_fmt}")
+        audio_out  = os.path.join(tmpdir, f"{stem}.{audio_fmt}")
+        image_out  = os.path.join(tmpdir, f"{stem}.{img_fmt}")
+
+        try:
+            await download_attachment(source, input_path)
+        except Exception as e:
+            await status_msg.edit(content=f"❌ Download failed: {e}")
+            return
+
+        loop = asyncio.get_event_loop()
+
+        # Probe duration for mid-point thumbnail
+        info = await loop.run_in_executor(None, _ffprobe_video_info, input_path)
+        try:
+            thumb_time = max(0.0, float(info.get("duration") or 0) / 2)
+        except (TypeError, ValueError):
+            thumb_time = 0.0
+
+        def _convert_video():
+            if video_fmt == "webm":
+                cmd = [
+                    "ffmpeg", "-y", "-i", input_path,
+                    "-c:v", "libvpx-vp9", "-crf", "33", "-b:v", "0",
+                    "-c:a", "libopus", "-b:a", "128k",
+                    video_out,
+                ]
+            else:
+                cmd = [
+                    "ffmpeg", "-y", "-i", input_path,
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-movflags", "+faststart",
+                    video_out,
+                ]
+            return _run_ffmpeg_raw(cmd, timeout=300)
+
+        def _convert_audio():
+            return _run_ffmpeg_raw(
+                ["ffmpeg", "-y", "-i", input_path, "-vn", audio_out],
+                timeout=180,
+            )
+
+        def _convert_image():
+            return _run_ffmpeg_raw(
+                [
+                    "ffmpeg", "-y",
+                    "-ss", str(thumb_time),
+                    "-i", input_path,
+                    "-frames:v", "1",
+                    "-q:v", "2",
+                    image_out,
+                ],
+                timeout=60,
+            )
+
+        results = await asyncio.gather(
+            loop.run_in_executor(None, _convert_video),
+            loop.run_in_executor(None, _convert_audio),
+            loop.run_in_executor(None, _convert_image),
+        )
+
+        labels = [f"video (.{video_fmt})", f"audio (.{audio_fmt})", f"image (.{img_fmt})"]
+        paths  = [video_out, audio_out, image_out]
+        errors: list[str] = []
+        files:  list[discord.File] = []
+
+        for (ok, err), label, path in zip(results, labels, paths):
+            if ok and os.path.exists(path) and os.path.getsize(path) > 0:
+                files.append(discord.File(path, filename=os.path.basename(path)))
+            else:
+                errors.append(f"`{label}`: {err[-300:] if err else 'no output'}")
+
+        if not files:
+            await status_msg.edit(
+                content="❌ All conversions failed:\n" + "\n".join(errors)
+            )
+            return
+
+        summary = (
+            f"✅ Converted `{source.filename}` → "
+            + ", ".join(f"`.{f}`" for f in [video_fmt, audio_fmt, img_fmt])
+        )
+        if errors:
+            summary += "\n⚠️ Some outputs failed: " + "; ".join(errors)
+
+        try:
+            await ctx.reply(content=summary, files=files)
+            await status_msg.delete()
+        except discord.HTTPException:
+            # Too large — upload video to Catbox, send audio+image directly
+            await status_msg.edit(
+                content="⬆️ Output too large for Discord — uploading video to Catbox…"
+            )
+            cat_url = await _upload_to_catbox(video_out)
+            small_files = [f for f in files if not f.filename.endswith(f".{video_fmt}")]
+            cat_line = f"\n🎬 Video: {cat_url}" if cat_url else ""
+            try:
+                await ctx.reply(content=summary + cat_line, files=small_files)
+                await status_msg.delete()
+            except discord.HTTPException:
+                await status_msg.edit(content=summary + cat_line)
 
 
 # ---------- Error handling & run ----------
