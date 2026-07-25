@@ -709,6 +709,11 @@ class EconomyCog(commands.Cog, name="Economy"):
                 await _update(f"❌ FFmpeg failed:\n```\n{err[-1200:]}\n```", 0xED4245)
                 return
 
+            # Sidecar mp4 render path (written by _run_ihtx_tagscript_workflow when
+            # export fmt is mkv or mxf — produced alongside the requested format).
+            _render_mp4 = output_path + ".render.mp4"
+            _has_render = os.path.exists(_render_mp4)
+
             # Persist the last export for th/lexg re-use.
             os.makedirs("output", exist_ok=True)
             last_export_ext = out_final_ext
@@ -777,6 +782,16 @@ class EconomyCog(commands.Cog, name="Economy"):
                     await status_msg.edit(embed=result_embed)
                 else:
                     await _update("❌ Output too large for Discord and Catbox upload failed.", 0xED4245)
+                if _has_render:
+                    _render_stem = Path(media_filename).stem
+                    _render_fn = f"ihtx_pipe_{_render_stem}_render.mp4"
+                    _render_size = os.path.getsize(_render_mp4)
+                    if _render_size <= CATBOX_THRESHOLD:
+                        await ctx.send(content="🎬 MP4 render:", file=discord.File(_render_mp4, filename=_render_fn))
+                    else:
+                        _cb2 = await _upload_to_catbox(_render_mp4)
+                        if _cb2:
+                            await ctx.send(f"🎬 MP4 render: {_cb2}")
                 return
 
             stem = Path(media_filename).stem
@@ -811,6 +826,16 @@ class EconomyCog(commands.Cog, name="Economy"):
             except discord.HTTPException:
                 await status_msg.edit(embed=result_embed)
                 await ctx.send(file=discord.File(output_path, filename=out_filename))
+            if _has_render:
+                _render_stem = Path(media_filename).stem
+                _render_fn = f"ihtx_pipe_{_render_stem}_render.mp4"
+                _render_size = os.path.getsize(_render_mp4)
+                if _render_size <= CATBOX_THRESHOLD:
+                    await ctx.send(content="🎬 MP4 render:", file=discord.File(_render_mp4, filename=_render_fn))
+                else:
+                    _cb2 = await _upload_to_catbox(_render_mp4)
+                    if _cb2:
+                        await ctx.send(f"🎬 MP4 render: {_cb2}")
 
     # -----------------------------------------------------------------------
     # roxi ihtx / roxi effect / roxi destroy — prefix-only alias that consumes the
