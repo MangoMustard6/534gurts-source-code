@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-26: [Python] Added multipitchsox/mpsox pipe effect — sox bend multi-voice pitch shift; single pitch: bend→highpass=5 remux; multi-pitch: bend per voice→amix+highpass=17.5 remux. Ports TypeScript renderPitchBentVideo() pipeline.
 - 2026-07-25: [Python] Added bot/fileaa_seg standalone binary — segmented fileaa video pipeline; splits video into --seg N second chunks (default 0.4s), per segment: extract ultrafast/qp1/pcm_s16le, extract WAV, run fileaa with any pitch engine flag (--bungee/--backend/--soundtouch/--basic/--rubberband-args/--preserve-formants/--no-normalize), remux, then concatenate all segments. Removed th/fileaa Discord command (same pipeline now lives in the binary).
 - 2026-07-25: [Python] Added th/sidechaingate_vocoder (alias: th/scgv) and scgv pipe effect — ports TypeScript generateVocoderCommand() filtergraph to Python FFmpeg: firequalizer band-split (mod+carrier), sidechaingate per-band, amix+crystalizer+alimiter output; params: carrier_url, bw=64, ratio=2, threshold=1, release=50, attack=0.01, makeup=1, knee=8, detection=peak, range=0, volume=1, pitch=0. Fixed th/convert to use slash-separated format string (th/convert mov/png/flac) instead of three separate args. Replaced all .mov output generators with .mp4: bytebeat_cog.py (waveform render + discord.File filename), ihtx_bot.py get_output_ext(), pipe engine temp files, invlum, p1280, op1280, p1280r, preview1280what, multipitch, ssmp, mpb, repeat, concatenate, join. Added th/convert (alias: conv) — converts an attached video into video fmt + audio fmt + image fmt simultaneously (defaults: mp4/mp3/png); runs all three FFmpeg jobs in parallel; falls back to Catbox for oversized video output.
 - 2026-07-24: [Python] Added th/preview1280what (aliases: p1280what, p1280fev8v2plus) — 28-segment TV-simulator extended montage (preview1280 FFmpeg Extended v8 v2+). 4 full segs + 23 half segs + 1 looping long seg; optional use_tempo param for rubberband time-stretch. Output is .mov (pwhatextended). Added to th/ihtxhelp Fun section. Removed set_thumbnail from all command result embeds (p1280, op1280, p1280r, swirl, fzte, tvsim, folkvalley). Added gif thumbnail (_IHTX_SAP_FOOTER_ICON) to th/ihtxhelp overview and all section pages.
@@ -2747,6 +2748,7 @@ PIPE_EFFECT_NAMES = {
     "oppositep1280", "op1280",
     "earthquake", "nbfx",
     "ssmp", "soundstretchmultipitch",
+    "multipitchsox", "mpsox",
     "folkvalley", "fv",
     "labadjust", "labadj",
     "vocoder", "ilvocodex", "orangevocoder", "4ormulator", "audacity", "magix",
@@ -3665,6 +3667,14 @@ def _apply_pipe_effects(
             # SoundTouch soundstretch multipitch
             if name in ("ssmp", "soundstretchmultipitch"):
                 ok, err = _run_soundstretch_multipitch(current, out, params)
+                if not ok:
+                    return False, err
+                current = out
+                continue
+
+            # sox bend multipitch
+            if name in ("multipitchsox", "mpsox"):
+                ok, err = _run_multipitch_sox(current, out, params)
                 if not ok:
                     return False, err
                 current = out
@@ -6062,6 +6072,165 @@ def _run_soundstretch_multipitch(
 
         if not ok:
             return False, f"Remux failed: {err}"
+
+    return True, ""
+
+
+def _run_multipitch_sox(
+    input_path: str,
+    output_path: str,
+    pitch_values: list[str],
+) -> tuple[bool, str]:
+    """Multi-voice pitch bend using sox ``bend`` + FFmpeg highpass/amix.
+
+    Ports the TypeScript ``renderPitchBentVideo()`` pipeline:
+
+      1. Re-encode source audio to pcm_s16le (rawVideo).
+      2. Extract audio track as WAV (rawAudio).
+      3a. Single pitch: sox bend once → ffmpeg highpass=5 + remux.
+      3b. Multi pitch: sox bend per voice → ffmpeg amix=normalize=0,highpass=17.5 + remux.
+
+    Params: semicolon / pipe / comma-separated semitone values (e.g. ``-7|7``).
+    """
+    # ── 1. Flatten & parse pitch values ──────────────────────────────────────
+    flattened: list[str] = []
+    for pv in pitch_values:
+        flattened.extend(v.strip() for v in re.split(r"[;|,\s]+", pv) if v.strip())
+
+    if not flattened:
+        return False, "❌ No pitch values specified (e.g. `mpsox=-7|7`)."
+    if len(flattened) > MAX_PITCHES:
+        return False, f"❌ Too many pitch values (maximum: {MAX_PITCHES})."
+
+    semitones: list[float] = []
+    seen: set[float] = set()
+    for raw in flattened:
+        try:
+            val = float(raw)
+            if not math.isfinite(val):
+                raise ValueError
+        except ValueError:
+            return False, f"❌ Invalid pitch value: {raw!r} — must be a finite number in semitones."
+        if val not in seen:
+            seen.add(val)
+            semitones.append(val)
+
+    # ── 2. Check sox ──────────────────────────────────────────────────────────
+    sox_bin = shutil.which("sox")
+    if not sox_bin:
+        return False, "❌ sox binary not found (sox package required)."
+
+    # ── 3. Probe input ────────────────────────────────────────────────────────
+    has_video = bool(_ffprobe(
+        input_path,
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_type",
+        "-of", "default=nw=1:nk=1",
+    ).strip())
+
+    actual_dur = _ffprobe_duration(input_path)
+    cap = str(int(min(actual_dur, MAX_DURATION)) + 1) if actual_dur > 0 else str(MAX_DURATION)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        raw_video = os.path.join(tmpdir, "a_raw.mp4")
+        raw_audio = os.path.join(tmpdir, "b_raw.wav")
+
+        # ── 4. Re-encode audio to pcm_s16le ──────────────────────────────────
+        ok, err = _run_ffmpeg_raw([
+            "ffmpeg", "-y",
+            "-t", cap, "-i", input_path,
+            "-c:v", "copy", "-c:a", "pcm_s16le",
+            raw_video,
+        ], timeout=120)
+        if not ok:
+            return False, f"Re-encode failed: {err}"
+
+        # ── 5. Extract audio track ────────────────────────────────────────────
+        ok, err = _run_ffmpeg_raw([
+            "ffmpeg", "-y", "-i", raw_video, "-vn", raw_audio,
+        ], timeout=60)
+        if not ok:
+            return False, f"Audio extraction failed: {err}"
+
+        if len(semitones) == 1:
+            # ── Single-pitch branch ───────────────────────────────────────────
+            bent_audio = os.path.join(tmpdir, "bent_0.wav")
+            result = subprocess.run(
+                [sox_bin, raw_audio, bent_audio,
+                 "bend", "-f", "30",
+                 f"0,{semitones[0] * 100},0.001",
+                 "trim", "0.023"],
+                capture_output=True, text=True, timeout=300,
+            )
+            if result.returncode != 0:
+                return False, f"❌ sox bend failed: {(result.stderr or result.stdout)[-600:]}"
+
+            if has_video:
+                ok, err = _run_ffmpeg_raw([
+                    "ffmpeg", "-y",
+                    "-i", raw_video,
+                    "-i", bent_audio,
+                    "-filter_complex", "[1:a]highpass=5[ineger]",
+                    "-map", "0:v",
+                    "-map", "[ineger]",
+                    "-c:v", "copy", "-c:a", "pcm_s16le",
+                    output_path,
+                ], timeout=300)
+            else:
+                ok, err = _run_ffmpeg_raw([
+                    "ffmpeg", "-y",
+                    "-i", bent_audio,
+                    "-af", "highpass=5",
+                    "-c:a", "aac", "-b:a", "192k",
+                    output_path,
+                ], timeout=180)
+            if not ok:
+                return False, f"Remux failed: {err}"
+
+        else:
+            # ── Multi-pitch branch ────────────────────────────────────────────
+            bent_files: list[str] = []
+            for idx, st in enumerate(semitones):
+                bent = os.path.join(tmpdir, f"bent_{idx}.wav")
+                result = subprocess.run(
+                    [sox_bin, raw_audio, bent,
+                     "bend", "-f", "30",
+                     f"0,{st * 100},0.001",
+                     "trim", "0.021"],
+                    capture_output=True, text=True, timeout=300,
+                )
+                if result.returncode != 0:
+                    return False, (
+                        f"❌ sox bend failed (voice {idx}, pitch {st:+}st): "
+                        f"{(result.stderr or result.stdout)[-600:]}"
+                    )
+                bent_files.append(bent)
+
+            # Build amix command; input 0 = raw_video, inputs 1..N = bent wavs.
+            mix_labels = "".join(f"[{idx + 1}]" for idx in range(len(bent_files)))
+            filter_complex = f"{mix_labels}amix={len(bent_files)}:normalize=0,highpass=17.5"
+
+            mix_cmd = ["ffmpeg", "-y", "-i", raw_video]
+            for bf in bent_files:
+                mix_cmd += ["-i", bf]
+
+            if has_video:
+                mix_cmd += [
+                    "-filter_complex", filter_complex,
+                    "-map", "0:v",
+                    "-c:v", "copy", "-c:a", "pcm_s16le",
+                    output_path,
+                ]
+            else:
+                mix_cmd += [
+                    "-filter_complex", filter_complex,
+                    "-c:a", "aac", "-b:a", "192k",
+                    output_path,
+                ]
+
+            ok, err = _run_ffmpeg_raw(mix_cmd, timeout=300)
+            if not ok:
+                return False, f"amix/remux failed: {err}"
 
     return True, ""
 
@@ -13836,7 +14005,7 @@ Heavy/effects commands:
     areverse, vreverse, channelblend=b|g|r, huehsv=val, multipitch=semis, mp=semis,
     lut=url, syncaudio, speed=factor, wave[=preset], tvsim[=params], tv,
     swirl=amount[;radius;xc;yc;fallout;is1to1], sierpinskiransomware/srw,
-    preview1280/p1280, oppositep1280/op1280, earthquake/nbfx, ssmp, folkvalley/fv,
+    preview1280/p1280, oppositep1280/op1280, earthquake/nbfx, ssmp, mpsox/multipitchsox, folkvalley/fv,
     vocoder, alimiter, freakzinga, fzgm156, multipitch2/mp2, multipitch3/mp3,
     jitter, randomjitter/rj, trim=start|end, leftsplit, rightsplit, ripple, scroll, pan,
     tile, watermark, ring, miui, reddit, caption, orb, deorb, chromashift,
@@ -14011,7 +14180,7 @@ Heavy (media processing):
       channelblend=b|g|r, huehsv=val, multipitch/mp=semis, lut=url, syncaudio,
       speed=factor, wave[=preset], tvsim[=params], swirl=amount[;radius;xc;yc;fallout;is1to1],
       sierpinskiransomware/srw, preview1280/p1280, oppositep1280/op1280, earthquake/nbfx,
-      ssmp, folkvalley/fv, vocoder, alimiter, freakzinga, fzgm156,
+      ssmp, mpsox/multipitchsox, folkvalley/fv, vocoder, alimiter, freakzinga, fzgm156,
       multipitch2/mp2, multipitch3/mp3, jitter, randomjitter/rj, trim=start|end,
       leftsplit, rightsplit, ripple, scroll, pan, tile, watermark, ring, miui,
       reddit, caption, orb, deorb, chromashift, wave2, wmm3dripple/wmm, timecode,
