@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-26: [Python] th/ffmpeg: substitute $sr/$fr/$f/$d/$vd/$w/$h/$fc with ffprobe values before shlex.split (uses _gather_media_metadata; skipped if no $ vars present).
 - 2026-07-26: [Python] mpsox: pad audio back to original duration (apad=whole_dur + -t) to prevent sox bend trim from shortening the video by a few milliseconds.
 - 2026-07-26: [Python] Added multipitchsox/mpsox pipe effect — sox bend multi-voice pitch shift; single pitch: bend→highpass=5 remux; multi-pitch: bend per voice→amix+highpass=17.5 remux. Ports TypeScript renderPitchBentVideo() pipeline.
 - 2026-07-25: [Python] Added bot/fileaa_seg standalone binary — segmented fileaa video pipeline; splits video into --seg N second chunks (default 0.4s), per segment: extract ultrafast/qp1/pcm_s16le, extract WAV, run fileaa with any pitch engine flag (--bungee/--backend/--soundtouch/--basic/--rubberband-args/--preserve-formants/--no-normalize), remux, then concatenate all segments. Removed th/fileaa Discord command (same pipeline now lives in the binary).
@@ -9347,6 +9348,34 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
         except Exception as e:
             await status_msg.edit(content=f"❌ Download failed: {e}")
             return
+
+        # Substitute media variables ($sr $fr $f $d $vd $w $h $fc) in args.
+        if any(v in args for v in ("$sr", "$fr", "$f", "$d", "$vd", "$w", "$h", "$fc")):
+            meta = await _gather_media_metadata(input_path)
+
+            def _eval_fps(raw: str) -> str:
+                try:
+                    if "/" in raw:
+                        n, d = raw.split("/", 1)
+                        return f"{int(n) / int(d):.10g}"
+                    return f"{float(raw):.10g}"
+                except Exception:
+                    return raw
+
+            _fps_str = _eval_fps(meta.get("frameRate", "N/A"))
+            _var_map = [
+                ("$sr",  meta.get("sampleRate", "N/A")),
+                ("$fr",  _fps_str),
+                ("$f",   _fps_str),
+                ("$vd",  meta.get("duration", "N/A")),
+                ("$d",   meta.get("duration", "N/A")),
+                ("$w",   meta.get("width", "N/A")),
+                ("$h",   meta.get("height", "N/A")),
+                ("$fc",  meta.get("frameCount", "N/A")),
+            ]
+            for _var, _val in _var_map:
+                if _val and _val != "N/A":
+                    args = args.replace(_var, _val)
 
         try:
             user_args = shlex.split(args)
