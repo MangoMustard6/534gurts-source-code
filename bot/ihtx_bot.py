@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-26: [Python] ffmpeg() pipe effect: apply _preprocess_math_expr to raw args before shlex.split so $fc/$vd/$d/$sr/$fr/$f/$w/$h are substituted (effect is in _RAW_ARG_EFFECTS so _preprocess_param was skipped).
 - 2026-07-26: [Python] th/ffmpeg: substitute $sr/$fr/$f/$d/$vd/$w/$h/$fc with ffprobe values before shlex.split (uses _gather_media_metadata; skipped if no $ vars present).
 - 2026-07-26: [Python] mpsox: pad audio back to original duration (apad=whole_dur + -t) to prevent sox bend trim from shortening the video by a few milliseconds.
 - 2026-07-26: [Python] Added multipitchsox/mpsox pipe effect — sox bend multi-voice pitch shift; single pitch: bend→highpass=5 remux; multi-pitch: bend per voice→amix+highpass=17.5 remux. Ports TypeScript renderPitchBentVideo() pipeline.
@@ -3801,6 +3802,8 @@ def _apply_pipe_effects(
                 raw_args = params[0] if params else ""
                 if not raw_args:
                     return False, "ffmpeg() pipe step requires args inside the parentheses."
+                # Substitute $fc/$vd/$d/$sr/$fr/$f/$w/$h before tokenising.
+                raw_args = _preprocess_math_expr(raw_args, frame_count, media_vars)
                 try:
                     user_args = shlex.split(raw_args)
                 except ValueError as e:
