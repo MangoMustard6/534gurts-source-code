@@ -176,5 +176,21 @@
     "guild_id": "1496091892067209307",
     "guild_name": "the challenge",
     "submitted_at": "2026-07-22T11:35:21.705796+00:00"
+  },
+  "gmajor100wave": {
+    "effects": "ffmpeg(-vf scale=640:640),wave=custom:0;5.4;2;0;0;5.4;2;0,ffmpeg(-vf scale=640:360)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "the challenge",
+    "submitted_at": "2026-07-26T01:20:43.308666+00:00"
+  },
+  "youwiggledxwave": {
+    "effects": "ffmpeg(-vf scale=640:640),wave=custom:0;10;0.45;0.0533;0;10;0.45;0.0533,ffmpeg(-vf scale=640:360)",
+    "author_id": "1355759019330895973",
+    "author_name": "thatoneguynobodyinvited",
+    "guild_id": "1496091892067209307",
+    "guild_name": "the challenge",
+    "submitted_at": "2026-07-26T08:10:57.122978+00:00"
   }
 }
