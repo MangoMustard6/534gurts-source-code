@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-26: [Python] mpsox: pad audio back to original duration (apad=whole_dur + -t) to prevent sox bend trim from shortening the video by a few milliseconds.
 - 2026-07-26: [Python] Added multipitchsox/mpsox pipe effect — sox bend multi-voice pitch shift; single pitch: bend→highpass=5 remux; multi-pitch: bend per voice→amix+highpass=17.5 remux. Ports TypeScript renderPitchBentVideo() pipeline.
 - 2026-07-25: [Python] Added bot/fileaa_seg standalone binary — segmented fileaa video pipeline; splits video into --seg N second chunks (default 0.4s), per segment: extract ultrafast/qp1/pcm_s16le, extract WAV, run fileaa with any pitch engine flag (--bungee/--backend/--soundtouch/--basic/--rubberband-args/--preserve-formants/--no-normalize), remux, then concatenate all segments. Removed th/fileaa Discord command (same pipeline now lives in the binary).
 - 2026-07-25: [Python] Added th/sidechaingate_vocoder (alias: th/scgv) and scgv pipe effect — ports TypeScript generateVocoderCommand() filtergraph to Python FFmpeg: firequalizer band-split (mod+carrier), sidechaingate per-band, amix+crystalizer+alimiter output; params: carrier_url, bw=64, ratio=2, threshold=1, release=50, attack=0.01, makeup=1, knee=8, detection=peak, range=0, volume=1, pitch=0. Fixed th/convert to use slash-separated format string (th/convert mov/png/flac) instead of three separate args. Replaced all .mov output generators with .mp4: bytebeat_cog.py (waveform render + discord.File filename), ihtx_bot.py get_output_ext(), pipe engine temp files, invlum, p1280, op1280, p1280r, preview1280what, multipitch, ssmp, mpb, repeat, concatenate, join. Added th/convert (alias: conv) — converts an attached video into video fmt + audio fmt + image fmt simultaneously (defaults: mp4/mp3/png); runs all three FFmpeg jobs in parallel; falls back to Catbox for oversized video output.
@@ -6152,6 +6153,10 @@ def _run_multipitch_sox(
         if not ok:
             return False, f"Audio extraction failed: {err}"
 
+        # apad target: restore any milliseconds lost to sox trim
+        dur_flag = f"{actual_dur:.6f}" if actual_dur > 0 else cap
+        apad = f",apad=whole_dur={dur_flag}" if actual_dur > 0 else ""
+
         if len(semitones) == 1:
             # ── Single-pitch branch ───────────────────────────────────────────
             bent_audio = os.path.join(tmpdir, "bent_0.wav")
@@ -6170,17 +6175,19 @@ def _run_multipitch_sox(
                     "ffmpeg", "-y",
                     "-i", raw_video,
                     "-i", bent_audio,
-                    "-filter_complex", "[1:a]highpass=5[ineger]",
+                    "-filter_complex", f"[1:a]highpass=5{apad}[ineger]",
                     "-map", "0:v",
                     "-map", "[ineger]",
                     "-c:v", "copy", "-c:a", "pcm_s16le",
+                    "-t", dur_flag,
                     output_path,
                 ], timeout=300)
             else:
                 ok, err = _run_ffmpeg_raw([
                     "ffmpeg", "-y",
                     "-i", bent_audio,
-                    "-af", "highpass=5",
+                    "-af", f"highpass=5{apad}",
+                    "-t", dur_flag,
                     "-c:a", "aac", "-b:a", "192k",
                     output_path,
                 ], timeout=180)
@@ -6208,7 +6215,7 @@ def _run_multipitch_sox(
 
             # Build amix command; input 0 = raw_video, inputs 1..N = bent wavs.
             mix_labels = "".join(f"[{idx + 1}]" for idx in range(len(bent_files)))
-            filter_complex = f"{mix_labels}amix={len(bent_files)}:normalize=0,highpass=17.5"
+            filter_complex = f"{mix_labels}amix={len(bent_files)}:normalize=0,highpass=17.5{apad}"
 
             mix_cmd = ["ffmpeg", "-y", "-i", raw_video]
             for bf in bent_files:
@@ -6219,11 +6226,13 @@ def _run_multipitch_sox(
                     "-filter_complex", filter_complex,
                     "-map", "0:v",
                     "-c:v", "copy", "-c:a", "pcm_s16le",
+                    "-t", dur_flag,
                     output_path,
                 ]
             else:
                 mix_cmd += [
                     "-filter_complex", filter_complex,
+                    "-t", dur_flag,
                     "-c:a", "aac", "-b:a", "192k",
                     output_path,
                 ]
