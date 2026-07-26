@@ -25,6 +25,7 @@ outputType = "console"
 
 [[workflows.workflow]]
 name = "IHTX Discord Bot (TypeScript)"
+mode = "sequential"
 author = "agent"
 
 [[workflows.workflow.tasks]]
@@ -39,9 +40,8 @@ name = "Pipeline Visualizer"
 author = "agent"
 
 [[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "PORT=8099 node public/serve.mjs"
-waitForPort = 8099
+task = "workflow.run"
+args = "IHTX Discord Bot (TypeScript)"
 
 [workflows.workflow.metadata]
 outputType = "console"
