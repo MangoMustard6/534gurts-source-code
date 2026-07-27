@@ -295,6 +295,10 @@ def _preprocess_math_expr(
         if 'vd' in media_vars:
             expr = expr.replace('$vd', f"{media_vars['vd']:.10g}")
             expr = expr.replace('$d', f"{media_vars['vd']:.10g}")
+            # $T — normalized time 0→1 over the video (expands to FFmpeg expression t/<vd>)
+            _vd = media_vars['vd']
+            _T_expr = f"(t/{_vd:.10g})" if _vd and _vd > 0 else "t"
+            expr = re.sub(r'\$T(?![a-zA-Z0-9_])', _T_expr, expr)
         if 'sr' in media_vars:
             expr = expr.replace('$sr', str(media_vars['sr']))
         if 'fps' in media_vars:
@@ -7512,7 +7516,7 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"invlum_{Path(source.filename).stem}.mp4"
+        out_filename = "534gurts_invlum.mp4"
         try:
             await ctx.reply(
                 content=f"✅ **invlum** done! `{powers}` power(s), `{duration}s` each.",
@@ -7605,7 +7609,7 @@ async def pipetest_command(ctx: commands.Context, *, effects: str = ""):
                 await status_msg.edit(content="❌ Output too large and Catbox upload failed.")
             return
 
-        out_filename = f"pipetest_{Path(source.filename).stem}{suffix}"
+        out_filename = f"534gurts_pipetest{suffix}"
         try:
             await ctx.reply(
                 content=f"✅ **pipetest** — `{effect_label}`",
@@ -7903,7 +7907,7 @@ async def preview1280_command(ctx: commands.Context, start: float = 1.85, durati
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"p1280_{Path(source.filename).stem}.mp4"
+        out_filename = "534gurts_p1280.mp4"
         try:
             embed_p1280 = discord.Embed(
                 title="Preview 1280 - FFmpeg command originally made by `MWTVE7691` then transported to typescript:",
@@ -7996,7 +8000,7 @@ async def oppositep1280_command(ctx: commands.Context, start: float = 1.85, dura
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"op1280_{Path(source.filename).stem}.mp4"
+        out_filename = "534gurts_op1280.mp4"
         try:
             embed_op1280 = discord.Embed(
                 title="Opposite 1280 - Inverse TV-simulator montage",
@@ -8091,7 +8095,7 @@ async def preview1280_640x360resize_command(ctx: commands.Context, start: float 
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"p1280_640x360_{Path(source.filename).stem}.mp4"
+        out_filename = "534gurts_p1280_640x360.mp4"
         try:
             embed_p1280r = discord.Embed(
                 title="Preview 1280 (640×360 output) — FFmpeg command originally by `yodelaiihiiho`:",
@@ -8196,7 +8200,7 @@ async def preview1280what_command(
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"p1280what_{Path(source.filename).stem}.mp4"
+        out_filename = "534gurts_p1280what.mp4"
         try:
             embed = discord.Embed(
                 title="Preview 1280 FFmpeg Extended v8 v2+ (preview1280what??)",
@@ -8336,7 +8340,7 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
             return
 
         safe_pitch_str = pitch_str.replace(";", "_")
-        out_filename = f"multipitch_{safe_pitch_str}_{Path(source.filename).stem}.mp4"
+        out_filename = f"534gurts_multipitch_{safe_pitch_str}.mp4"
         try:
             await ctx.reply(
                 content=f"✅ **IHTX multipitch** ({pitch_str}) applied!",
@@ -8458,7 +8462,7 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
             return
 
         safe_pitch_str = pitch_str.replace(";", "_")
-        out_filename = f"ssmp_{safe_pitch_str}_{Path(source.filename).stem}.mp4"
+        out_filename = f"534gurts_ssmp_{safe_pitch_str}.mp4"
         try:
             await ctx.reply(
                 content=f"✅ **SoundStretch multipitch** ({pitch_str}) applied!",
@@ -9189,7 +9193,7 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
             return
 
         safe_pitches = pitch_str.replace("+", "p").replace("-", "n").replace(";", "_")
-        out_name     = f"ihtxsap_{safe_pitches}_{opts['reps']}x.mp3"
+        out_name     = f"534gurts_ihtxsap_{safe_pitches}_{opts['reps']}x.mp3"
         result_embed = _make_embed()
         result_embed.add_field(name="Pitches:", value=f"`{pitch_str}`", inline=True)
         result_embed.add_field(name="Reps:", value=f"`{opts['reps']}×`", inline=True)
@@ -9285,7 +9289,7 @@ async def mpb_command(ctx: commands.Context, *, args: str = "") -> None:
 
         out_size = os.path.getsize(output_path)
         safe = pitch_str.replace("+", "p").replace("-", "n").replace("|", "_").replace(";", "_").replace(",", "_")
-        out_name = f"mpb_{safe}.mp4"
+        out_name = f"534gurts_mpb_{safe}.mp4"
 
         if out_size > CATBOX_THRESHOLD:
             await _update("⬆️ Output exceeds upload limit — uploading to Catbox…")
@@ -9344,7 +9348,7 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
     with tempfile.TemporaryDirectory() as tmpdir:
         suffix = Path(source.filename).suffix.lower()
         input_path = os.path.join(tmpdir, f"input{suffix}")
-        output_path = os.path.join(tmpdir, source.filename)
+        output_path = os.path.join(tmpdir, f"534gurts_ffmpeg{suffix}")
 
         try:
             await download_attachment(source, input_path)
@@ -9352,8 +9356,8 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Download failed: {e}")
             return
 
-        # Substitute media variables ($sr $fr $f $d $vd $w $h $fc) in args.
-        if any(v in args for v in ("$sr", "$fr", "$f", "$d", "$vd", "$w", "$h", "$fc")):
+        # Substitute media variables ($sr $fr $f $d $vd $w $h $fc $T) in args.
+        if any(v in args for v in ("$sr", "$fr", "$f", "$d", "$vd", "$w", "$h", "$fc", "$T")):
             meta = await _gather_media_metadata(input_path)
 
             def _eval_fps(raw: str) -> str:
@@ -9366,19 +9370,25 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
                     return raw
 
             _fps_str = _eval_fps(meta.get("frameRate", "N/A"))
+            _raw_vd = meta.get("duration", "N/A")
+            try:
+                _T_expr = f"(t/{float(_raw_vd):.10g})" if _raw_vd != "N/A" else "t"
+            except (ValueError, TypeError):
+                _T_expr = "t"
             _var_map = [
                 ("$sr",  meta.get("sampleRate", "N/A")),
                 ("$fr",  _fps_str),
                 ("$f",   _fps_str),
-                ("$vd",  meta.get("duration", "N/A")),
-                ("$d",   meta.get("duration", "N/A")),
+                ("$vd",  _raw_vd),
+                ("$d",   _raw_vd),
                 ("$w",   meta.get("width", "N/A")),
                 ("$h",   meta.get("height", "N/A")),
                 ("$fc",  meta.get("frameCount", "N/A")),
+                ("$T",   _T_expr),
             ]
             for _var, _val in _var_map:
                 if _val and _val != "N/A":
-                    args = args.replace(_var, _val)
+                    args = re.sub(re.escape(_var) + r'(?![a-zA-Z0-9_])', _val, args) if _var == "$T" else args.replace(_var, _val)
 
         try:
             user_args = shlex.split(args)
@@ -9425,7 +9435,7 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
         try:
             await ctx.reply(
                 content=footer,
-                file=discord.File(output_path, filename=source.filename),
+                file=discord.File(output_path, filename=os.path.basename(output_path)),
             )
             await status_msg.delete()
         except discord.HTTPException as e:
@@ -9523,7 +9533,7 @@ async def ffmpeg_process_command(ctx: commands.Context, *, args: str = ""):
     with tempfile.TemporaryDirectory() as tmpdir:
         suffix = Path(source.filename).suffix.lower()
         input_path = os.path.join(tmpdir, f"input{suffix}")
-        output_path = os.path.join(tmpdir, source.filename)
+        output_path = os.path.join(tmpdir, f"534gurts_ffmpegprocess{suffix}")
 
         try:
             await download_attachment(source, input_path)
@@ -9598,7 +9608,7 @@ async def ffmpeg_process_command(ctx: commands.Context, *, args: str = ""):
         try:
             await ctx.reply(
                 content=footer,
-                file=discord.File(output_path, filename=source.filename),
+                file=discord.File(output_path, filename=os.path.basename(output_path)),
             )
             await status_msg.delete()
         except discord.HTTPException as e:
@@ -9825,7 +9835,7 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
         stem = Path(src_name).stem
         safe_s = str(t_start).replace(".", "_")
         safe_e = str(t_end).replace(".", "_")
-        out_filename = f"trim_{safe_s}-{safe_e}_{stem}{suffix}"
+        out_filename = f"534gurts_trim_{safe_s}-{safe_e}{suffix}"
 
         try:
             await ctx.reply(
@@ -9977,7 +9987,7 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
             return
 
         stem = Path(src_name).stem
-        out_filename = f"stl_{target_duration:.4f}s_{stem}{out_suffix}"
+        out_filename = f"534gurts_stl_{target_duration:.4f}s{out_suffix}"
 
         try:
             await ctx.reply(
@@ -10077,7 +10087,7 @@ async def repeat_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Repeat failed:\n```\n{err}\n```")
             return
 
-        out_name = f"repeat_{base}{out_ext}"
+        out_name = f"534gurts_repeat{out_ext}"
         file_size = os.stat(out).st_size
         if file_size <= CATBOX_THRESHOLD:
             await status_msg.edit(content=f"✅ Repeated {n}×!")
@@ -10320,7 +10330,7 @@ async def concatenate_command(ctx: commands.Context, *, args: str = ""):
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"concat_{len(sources)}files{out_ext}"
+        out_filename = f"534gurts_concat_{len(sources)}files{out_ext}"
         try:
             await ctx.reply(
                 content=f"✅ Concatenated {len(sources)} files into one `{out_ext.lstrip('.')}`",
@@ -10531,7 +10541,7 @@ async def join_command(ctx: commands.Context, *, args: str = ""):
 
         layout_name = "vertical" if vertical else "horizontal"
         out_ext = ".mp4" if is_video else exts[0]
-        out_filename = f"join_{layout_name}{out_ext}"
+        out_filename = f"534gurts_join_{layout_name}{out_ext}"
         try:
             await ctx.reply(
                 content=f"✅ Joined 2 files `{layout_name}`",
@@ -10660,7 +10670,7 @@ async def autotune_command(ctx: commands.Context, *, args: str = ""):
             return
 
         stem = Path(src_name).stem
-        out_filename = f"autotune_{stem}{suffix}"
+        out_filename = f"534gurts_autotune{suffix}"
         pitch_line = f"\n> {info}" if info else ""
 
         try:
@@ -10825,7 +10835,7 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
             return
 
         stem = Path(src_name).stem
-        out_filename = f"addsource_{grid_str}_pos{pos}_{stem}.mp4"
+        out_filename = f"534gurts_addsource_{grid_str}_pos{pos}.mp4"
         if trim_duration is not None:
             audio_note = f"base audio, trimmed to {trim_duration}s"
         else:
@@ -11006,7 +11016,7 @@ async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str =
             return
 
         stem = Path(src_name).stem
-        out_filename = f"mirror_{preset_key}_{stem}{out_suffix}"
+        out_filename = f"534gurts_mirror_{preset_key}{out_suffix}"
 
         try:
             await ctx.reply(
@@ -11110,7 +11120,7 @@ async def huehsv_command(
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"huehsv_{hue}_{Path(source.filename).stem}{out_ext}"
+        out_filename = f"534gurts_huehsv_{hue}{out_ext}"
         try:
             await ctx.reply(
                 content=f"✅ **IHTX huehsv** (hue={hue} sat={sat} lightness={lightness} cs={colorspace}{bf_label}) applied!",
@@ -11223,7 +11233,7 @@ async def png2lut_cmd(ctx: commands.Context, *, args: str = ""):
         try:
             await ctx.reply(
                 content=f"✅ **png2lut** done! LUT size: {lut_size}³",
-                file=discord.File(cube_path, filename=f"{stem}.cube"),
+                file=discord.File(cube_path, filename="534gurts_png2lut.cube"),
             )
             await status_msg.delete()
         except discord.HTTPException as e:
@@ -11348,7 +11358,7 @@ async def lut2png_cmd(ctx: commands.Context, cube_url: str = ""):
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"lut2png_{Path(media_att.filename).stem}{out_ext}"
+        out_filename = f"534gurts_lut2png{out_ext}"
         try:
             await ctx.reply(
                 content="✅ **lut2png** — LUT applied!",
@@ -11439,7 +11449,7 @@ async def syncaudio_command(ctx: commands.Context, mode: str = ""):
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"syncaudio_{Path(source.filename).stem}.mp4"
+        out_filename = "534gurts_syncaudio.mp4"
         try:
             await ctx.reply(
                 content=f"✅ **IHTX syncaudio** ({mode_label}) applied!\n```\n{info}\n```",
@@ -11559,7 +11569,7 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"swirl_{Path(source.filename).stem}{out_suffix}"
+        out_filename = f"534gurts_swirl{out_suffix}"
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/swirl",
@@ -11646,7 +11656,7 @@ async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = "")
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"freakzinga_test_{Path(source.filename).stem}.mp4"
+        out_filename = "534gurts_freakzinga_test.mp4"
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/freakzingatesteffect",
@@ -11773,7 +11783,7 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
                 await status_msg.edit(content="❌ Output too large for Discord (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"tvsim_{Path(source.filename).stem}.mp4"
+        out_filename = "534gurts_tvsim.mp4"
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/tvsim",
@@ -11857,7 +11867,7 @@ async def folkvalley_command(ctx: commands.Context):
                 await status_msg.edit(content="❌ Output too large for Discord (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"folkvalley_{Path(source.filename).stem}.mp4"
+        out_filename = "534gurts_folkvalley.mp4"
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/folkvalley",
@@ -11940,7 +11950,7 @@ async def vocoder_command(ctx: commands.Context, *, args: str = ""):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, source.filename)
-        output_path = os.path.join(tmpdir, f"vocoder_{Path(source.filename).stem}.mp4")
+        output_path = os.path.join(tmpdir, "534gurts_vocoder.mp4")
 
         try:
             file_bytes = await attachment.read()
@@ -11970,7 +11980,7 @@ async def vocoder_command(ctx: commands.Context, *, args: str = ""):
                 await status_msg.edit(content="❌ Output too large for Discord (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"vocoder_{Path(source.filename).stem}.mp4"
+        out_filename = "534gurts_vocoder.mp4"
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/vocoder",
@@ -12066,7 +12076,7 @@ async def scgv_command(ctx: commands.Context, *, args: str = ""):
                 await status_msg.edit(content=f"❌ Download failed: {e}")
                 return
 
-        output_path = os.path.join(tmpdir, f"scgv_{stem}.mp4")
+        output_path = os.path.join(tmpdir, "534gurts_scgv.mp4")
 
         loop = asyncio.get_event_loop()
         ok, err = await loop.run_in_executor(
@@ -12090,7 +12100,7 @@ async def scgv_command(ctx: commands.Context, *, args: str = ""):
                 await status_msg.edit(content="❌ Output too large (>25 MB) and Catbox upload failed.")
             return
 
-        out_filename = f"scgv_{stem}.mp4"
+        out_filename = "534gurts_scgv.mp4"
         try:
             embed = discord.Embed(
                 title="IHTX Bot — th/scgv",
@@ -12943,7 +12953,7 @@ async def klaskycsupo_command(ctx: commands.Context):
         dest = os.path.join(tmpdir, "klaskycsupo.mp4")
         try:
             await download_url(_KLASKYCSUPO_URL, dest)
-            await ctx.reply(embed=embed, file=discord.File(dest, filename="klaskycsupo.mp4"))
+            await ctx.reply(embed=embed, file=discord.File(dest, filename="534gurts_klaskycsupo.mp4"))
         except Exception:
             embed.description += f"\n{_KLASKYCSUPO_URL}"
             await ctx.reply(embed=embed)
@@ -13182,7 +13192,7 @@ async def _lexg_run_ffmpeg(
             await status_msg.edit(content="❌ Output too large for Discord and Catbox upload failed.")
         return
 
-    out_filename = f"lec_{Path(input_filename).stem}.mp4"
+    out_filename = "534gurts_lexg.mp4"
     try:
         await ctx.reply(
             content=f"✅ Last **{dur:.2f}s** grabbed!",
@@ -13397,7 +13407,7 @@ async def _lexg_upload_result(
             await status_msg.edit(content="❌ Output too large for Discord and Catbox upload failed.")
         return
 
-    out_filename = f"{prefix}_{Path(input_filename).stem}.mp4"
+    out_filename = f"534gurts_{prefix}.mp4"
     try:
         await ctx.reply(
             content="✅ Done!",
@@ -16701,9 +16711,9 @@ async def convert_command(ctx: commands.Context, *, formats: str = "mp4/mp3/png"
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{suffix}")
-        video_out  = os.path.join(tmpdir, f"{stem}.{video_fmt}")
-        audio_out  = os.path.join(tmpdir, f"{stem}.{audio_fmt}")
-        image_out  = os.path.join(tmpdir, f"{stem}.{img_fmt}")
+        video_out  = os.path.join(tmpdir, f"534gurts_convert.{video_fmt}")
+        audio_out  = os.path.join(tmpdir, f"534gurts_convert.{audio_fmt}")
+        image_out  = os.path.join(tmpdir, f"534gurts_convert.{img_fmt}")
 
         try:
             await download_attachment(source, input_path)

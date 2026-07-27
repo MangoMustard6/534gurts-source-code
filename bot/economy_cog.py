@@ -795,7 +795,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                 return
 
             stem = Path(media_filename).stem
-            out_filename = f"ihtx_{'pipe' if use_pipe else effect}_{stem}{out_final_ext}"
+            out_filename = f"534gurts_ihtx_{'pipe' if use_pipe else effect}{out_final_ext}"
             _elapsed = time.monotonic() - _start_time
             _size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{out_size / 1024:.2f} KB"
             result_embed = _make_base_embed()
@@ -1130,7 +1130,7 @@ class EconomyCog(commands.Cog, name="Economy"):
             )
 
             stem = Path(media_filename).stem
-            out_filename = f"nparison_{grid_str}_{stem}.mov"
+            out_filename = f"534gurts_nparison_{grid_str}.mov"
 
             if out_size > CATBOX_THRESHOLD:
                 await _update("⬆️ Output exceeds 8 MB — uploading to Catbox…")
