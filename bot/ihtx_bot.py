@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-27: [Python] Fixed `_preprocess_math_expr` collapsing colon-separated FFmpeg values (e.g. `scale=$w:$h` → `640:640` → incorrectly collapsed to `640640`): `_MathParser` is now only called when the expression is pure math (matches `_PURE_MATH_RE = ^[\d\s+\-*/^%().]+$`); strings containing `:`, `=`, letters, etc. are returned as-is after variable substitution.
 - 2026-07-27: [Python] All output filenames now include bot-prefix: `534gurts_` → `534gurts_th` (e.g. `534gurts_thpipetest.mp4`, `534gurts_thffmpeg.mp4`). Added `*T` as alias for `$T` (normalized time 0→1) in pipe-effect math expressions and in th/ffmpeg raw arg substitution — use `*T` anywhere `$T` works (e.g. `frei0r=distort0r:*T`).
 - 2026-07-26: [Python] ffmpeg() pipe effect: apply _preprocess_math_expr to raw args before shlex.split so $fc/$vd/$d/$sr/$fr/$f/$w/$h are substituted (effect is in _RAW_ARG_EFFECTS so _preprocess_param was skipped).
 - 2026-07-26: [Python] th/ffmpeg: substitute $sr/$fr/$f/$d/$vd/$w/$h/$fc with ffprobe values before shlex.split (uses _gather_media_metadata; skipped if no $ vars present).
@@ -226,6 +227,11 @@ _FFMPEG_EXPR_SYMBOLS = {
 _FFMPEG_EXPR_RE = re.compile(
     r'(?<![A-Za-z0-9_])(' + '|'.join(re.escape(s) for s in _FFMPEG_EXPR_SYMBOLS) + r')(?![A-Za-z0-9_])'
 )
+# Matches expressions that contain ONLY characters valid in a math expression.
+# Used to guard _MathParser: strings with ':', '=', letters etc. must not be
+# collapsed because _MathParser._TOK silently strips those chars, causing e.g.
+# "640:640" to be tokenised as the single number 640640.
+_PURE_MATH_RE = re.compile(r'^[\d\s+\-*/^%().]+$')
 
 
 def _split_top_level(s: str, delim: str) -> list[str]:
@@ -311,7 +317,7 @@ def _preprocess_math_expr(
         if 'h' in media_vars:
             expr = expr.replace('$h', str(media_vars['h']))
     expr = _expand_lerp(expr)
-    if not _FFMPEG_EXPR_RE.search(expr):
+    if not _FFMPEG_EXPR_RE.search(expr) and _PURE_MATH_RE.match(expr):
         try:
             val = _MathParser(expr).parse()
             if val == int(val) and abs(val) < 1e15:
