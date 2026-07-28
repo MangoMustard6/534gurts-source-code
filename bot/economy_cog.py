@@ -817,7 +817,11 @@ class EconomyCog(commands.Cog, name="Economy"):
                 value=f"{_size_str}, took {_elapsed:.2f} seconds",
                 inline=False,
             )
-            result_embed.set_image(url=f"attachment://{out_filename}")
+            # Only embed images inline — Discord can't play video inside set_image().
+            # For video outputs, attach without set_image so Discord renders a native player.
+            _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff"}
+            if out_final_ext.lower() in _IMAGE_EXTS:
+                result_embed.set_image(url=f"attachment://{out_filename}")
             try:
                 await status_msg.edit(
                     embed=result_embed,
