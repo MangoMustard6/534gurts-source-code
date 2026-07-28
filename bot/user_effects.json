@@ -194,11 +194,11 @@
     "submitted_at": "2026-07-26T08:10:57.122978+00:00"
   },
   "lumagmajor": {
-    "effects": "10 0.4 - mov lut=https://file.garden/ab6uHvs0Jxmsr-NG/Afternoon%20Major.cube,huehsv=0.5,invert,tvsim=0.8;4,mp=-12;-11.9;0;0.1;12;12.1;4;4.1;-5;-4.9;7;7.1,ffmpeg(-f mp4 -filter_complex \"[0]volume=1.4,bass=g=1.25[a1];[a1]amix=1,highpass=12.5[a]\" -map 0:v -map \"[a]\" -c:a flac)",
+    "effects": "lut=https://file.garden/ab6uHvs0Jxmsr-NG/Afternoon%20Major.cube,huehsv=0.5,invert,tvsim=0.8;4,mp=-12;-11.9;0;0.1;12;12.1;4;4.1;-5;-4.9;7;7.1,ffmpeg(-f mp4 -filter_complex \"[0]volume=1.4,bass=g=1.25[a1];[a1]amix=1,highpass=12.5[a]\" -map 0:v -map \"[a]\" -c:a flac)",
     "author_id": "1355759019330895973",
     "author_name": "thatoneguynobodyinvited",
     "guild_id": "1496091892067209307",
     "guild_name": "the challenge",
-    "submitted_at": "2026-07-27T00:06:01.984798+00:00"
+    "submitted_at": "2026-07-27T13:03:19.125478+00:00"
   }
 }

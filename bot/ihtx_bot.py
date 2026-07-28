@@ -137,6 +137,18 @@ except ImportError:
     _PIL_Image = None
 
 try:
+    from bot.smiley_preview import (
+        generate_smiley as _smiley_generate,
+        ensure_previews as _smiley_ensure_previews,
+        load_cache as _smiley_load_cache,
+    )
+    _smiley_preview_available = True
+except Exception:
+    _smiley_preview_available = False
+
+_preview_cache: dict[str, str] = {}
+
+try:
     import groq as _groq_lib
     _groq_api_key = os.environ.get("GROQ_API_KEY")
     if _groq_api_key:

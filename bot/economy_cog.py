@@ -817,7 +817,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                 value=f"{_size_str}, took {_elapsed:.2f} seconds",
                 inline=False,
             )
-
+            result_embed.set_image(url=f"attachment://{out_filename}")
             try:
                 await status_msg.edit(
                     embed=result_embed,
