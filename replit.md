@@ -4,12 +4,14 @@ A Discord bot that applies destructive visual and audio effects to videos and im
 
 ## Run & Operate
 
-- Run button starts three workflows in parallel: `IHTX Discord Bot` (Python, `python3 main.py`), `IHTX Discord Bot (TypeScript)` (`pnpm --filter @workspace/discord-bot run dev`), and `Pipeline Visualizer` (static server on port 8099)
-- Required secret: `DISCORD_TOKEN` — your Discord bot token (set via Replit Secrets); used by both the Python and TypeScript bots
-- Required secret: `BOT_OWNER_ID` — your Discord user ID (both bots exit at startup if missing; no hardcoded default)
-- Required secret: `CATBOX_USERHASH` — Catbox.moe userhash for uploads
-- Optional secrets: `GROQ_API_KEY` (AI chat via Llama), `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `FAL_KEY`, `REPLICATE_API_TOKEN`
-- ⚠️ Both bots currently log in with the same `DISCORD_TOKEN` and both register the same `th/` prefix + slash commands, so a running server will get duplicate responses. `todo.md` indicates a Python→TypeScript migration is in progress; until one is retired, only enable one bot workflow at a time in a live server.
+- Start both bots via the **Run** button (or individually from the Workflows panel):
+  - `IHTX Discord Bot` — Python bot (`python3 main.py`)
+  - `IHTX Discord Bot (TypeScript)` — TypeScript bot (`pnpm --filter @workspace/discord-bot run dev`)
+- Required secrets (set via Replit Secrets):
+  - `DISCORD_TOKEN` — Python bot token
+  - `DISCORD_TOKEN_TS` — TypeScript bot token (separate Discord app so both can run simultaneously)
+  - `BOT_OWNER_ID` — your Discord user ID (both bots exit at startup if missing)
+- Optional secrets: `GROQ_API_KEY` (AI chat on Python bot), `GEMINI_API_KEY` (AI chat on TS bot), `CATBOX_USERHASH` (links Catbox uploads to your account)
 
 ## Stack
 

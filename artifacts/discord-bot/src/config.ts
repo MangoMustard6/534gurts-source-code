@@ -1,4 +1,4 @@
-export const BOT_TOKEN = (process.env.DISCORD_TOKEN ?? process.env.DISCORD_TOKEN_TS ?? '').trim();
+export const BOT_TOKEN = (process.env.DISCORD_TOKEN_TS ?? process.env.DISCORD_TOKEN ?? '').trim();
 export const BOT_OWNER_ID = process.env.BOT_OWNER_ID ?? '';
 export const PREFIX = 'th/';
 
