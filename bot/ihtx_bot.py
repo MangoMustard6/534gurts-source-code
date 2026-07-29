@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-29: [Python/TypeScript] Added a Utility category to th/bothelp with klaskycsupo, klaskysource, presets, and bothelp entries. Added Python th/klaskysource (alias klasky) and updated both bots to use the new Discord CDN Project_Name .mov URL.
 - 2026-07-29: [Python] Fixed th/bothelp category and pagination interaction failures by deferring Discord component interactions immediately before preparing local preview attachments, then editing the original response; errors now use follow-up messages after defer.
 - 2026-07-29: [Python] Restored a clearly visible th/bothelp home embed after removing the broken smiley: added separate Heavy, Fun, Games, and Owner category fields with counts and descriptions; kept the smiley fully removed.
 - 2026-07-29: [Python] Removed the broken Python smiley reference from th/bothelp completely: no home image, no smiley attachment on Home navigation, and no smiley fallback for effects without dedicated previews. Dedicated local effect PNG/GIF previews remain enabled.
@@ -12646,6 +12647,27 @@ _HELP_ENTRIES: list[dict] = [
         "name": "th/randomlist  (aliases: rlist, randlist)",
         "value": "Show an embed of every random-pool item and who/guild added it.",
     },
+    # ── Utility ──
+    {
+        "cat": "utility",
+        "name": "th/klaskycsupo",
+        "value": "Reveal the Klasky Csupo video.",
+    },
+    {
+        "cat": "utility",
+        "name": "th/klaskysource  (alias: klasky)",
+        "value": "Download and attach the current Klasky source clip.",
+    },
+    {
+        "cat": "utility",
+        "name": "th/presets  (aliases: effects, list)",
+        "value": "List all available IHTX presets and usage information.",
+    },
+    {
+        "cat": "utility",
+        "name": "th/bothelp  (alias: ihtxhelp)",
+        "value": "Show this interactive command reference.",
+    },
     # ── Owner ──
     {
         "cat": "owner",
@@ -12800,6 +12822,7 @@ _HELP_CATS = {
     "heavy": ("⚙️ Heavy Commands", discord.Color(0x40E0D0)),
     "fun":   ("🎉 Fun",            discord.Color(0x40E0D0)),
     "games": ("🎮 Games",          discord.Color(0x40E0D0)),
+    "utility": ("🧰 Utility",      discord.Color(0x40E0D0)),
     "owner": ("🔒 Owner",          discord.Color(0x40E0D0)),
 }
 
@@ -12887,6 +12910,11 @@ def _build_home_embed() -> discord.Embed:
         inline=False,
     )
     embed.add_field(
+        name=f"🧰 Utility · {counts['utility']} entries",
+        value="Klasky media, presets, and this help reference.",
+        inline=False,
+    )
+    embed.add_field(
         name=f"🔒 Owner · {counts['owner']} entries",
         value="Bot administration and owner/moderator tools.",
         inline=False,
@@ -12905,6 +12933,8 @@ class _HelpSelect(discord.ui.Select):
                                  description="huehsv, trim, dl, catbox, tag, chat, ask…"),
             discord.SelectOption(label="🎮 Games",          value="games",
                                  description="8ball, coinflip, dice, slots, trivia, numguess…"),
+            discord.SelectOption(label="🧰 Utility",         value="utility",
+                                 description="klaskycsupo, klaskysource, presets, bothelp…"),
             discord.SelectOption(label="🔒 Owner",          value="owner",
                                  description="blockuser, autoreply, warn, say, setlimit…"),
             discord.SelectOption(label="🏠 Home",            value="home",
@@ -13045,6 +13075,11 @@ async def invite_command(ctx: commands.Context):
 
 
 _KLASKYCSUPO_URL = "https://files.catbox.moe/ij1lsn.mp4"
+_KLASKYSOURCE_URL = (
+    "https://cdn.discordapp.com/attachments/1124758906376302632/"
+    "1531978800936784003/Project_Name_9.36268c57.mov?"
+    "ex=6a6b2df0&is=6a69dc70&hm=22e44ff512fc2151cf2c05933f4b9672a0c0bb6503323f22166c8be1797682de&"
+)
 
 
 @bot.command(name="klaskycsupo")
@@ -13063,6 +13098,26 @@ async def klaskycsupo_command(ctx: commands.Context):
         except Exception:
             embed.description += f"\n{_KLASKYCSUPO_URL}"
             await ctx.reply(embed=embed)
+
+
+@bot.command(name="klaskysource", aliases=["klasky"])
+async def klaskysource_command(ctx: commands.Context):
+    """Download and attach the current Klasky source clip."""
+    embed = discord.Embed(
+        description="🎬 Here is the current Klasky source clip!",
+        color=0x40E0D0,
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dest = os.path.join(tmpdir, "klaskysource.mov")
+        try:
+            await download_url(_KLASKYSOURCE_URL, dest)
+            await ctx.reply(
+                embed=embed,
+                file=discord.File(dest, filename="klaskysource.mov"),
+            )
+        except Exception as exc:
+            await ctx.reply(f"❌ Failed to fetch klaskysource: `{str(exc)[:500]}`")
 
 
 @bot.command(name="ihtxhelp", aliases=["bothelp"])

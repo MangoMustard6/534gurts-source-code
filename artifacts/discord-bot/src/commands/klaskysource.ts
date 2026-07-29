@@ -5,7 +5,7 @@ import { getUploadLimitBytes, formatBytes } from '../utils/limits.js';
 import { _upload_to_catbox } from '../utils/catbox.js';
 
 const KLASKY_URL =
-  'https://cdn.discordapp.com/attachments/1522748365509754970/1526836867860008990/snip.5d8ea87e.mp4?ex=6a587924&is=6a5727a4&hm=f22e312730d0018586fa93b7d33585214e929c5d06074129ec1ccc34bec3ffd5&';
+  'https://cdn.discordapp.com/attachments/1124758906376302632/1531978800936784003/Project_Name_9.36268c57.mov?ex=6a6b2df0&is=6a69dc70&hm=22e44ff512fc2151cf2c05933f4b9672a0c0bb6503323f22166c8be1797682de&';
 
 export async function handleKlaskysource(message: Message): Promise<void> {
   const tmpDir = makeTempDir('klaskysource');
