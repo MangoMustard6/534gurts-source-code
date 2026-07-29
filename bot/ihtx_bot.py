@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-29: [Python] th/bothelp effect previews now use the generated local PNG/GIF files in bot/help_previews and attach the selected preview directly to Discord, replacing unreliable zero-byte Catbox URLs. Category selection and Prev/Next navigation replace the attachment and embed image together.
 - 2026-07-29: [Python] Fixed the missing th/bothelp smiley preview by attaching the local bot/help_previews/smiley_reference.png directly to the Discord help message and using attachment://smiley_reference.png instead of the zero-byte Catbox URL.
 - 2026-07-29: [Python] Removed the remaining bothelp thumbnail image so the help embed uses only its configured main image/preview.
 - 2026-07-29: [Python] Added th/set <user_id> owner|mod|remove — owner-only command to grant/revoke owner or moderator status. Mods (is_mod=True in xp_data) can now use th/say, th/sayembed, th/sendmsg (all three switched from _is_owner to _is_bot_mod). _is_bot_mod now reads from in-memory _xp_data instead of re-reading file on every check. Removed th/ban, th/unban, th/kick, th/timeout, th/untimeout, th/purge, th/slowmode from help entries. Fixed th/bothelp home embed: moved bot icon to footer icon_url so set_image(smiley_ref) is the sole embed image and renders correctly in Discord.
@@ -12165,29 +12166,46 @@ _SMILEY_REF_PATH = Path("bot/help_previews/smiley_reference.png")
 _SMILEY_REF_FILENAME = "smiley_reference.png"
 _SMILEY_REF_URL = f"attachment://{_SMILEY_REF_FILENAME}"
 
-# Maps a substring of an entry "name" → Catbox preview URL.
+# Maps a substring of an entry "name" → local preview filename.
 # Matched with `any(k in entry["name"] for k in ...)`.
 _HELP_ENTRY_PREVIEWS: dict[str, str] = {
     # presets / ihtx
-    "th/ihtx [preset]":              "https://files.catbox.moe/qw3hm1.gif",  # chaos
-    "glitch":                        "https://files.catbox.moe/xzxw3y.gif",
+    "th/ihtx [preset]":              "chaos.gif",
+    "glitch":                        "glitch.gif",
     # pipe effects
-    "wave pipe":                     "https://files.catbox.moe/njm3w0.gif",
-    "shake pipe":                    "https://files.catbox.moe/ufnnzd.gif",
-    "ripple pipe":                   "https://files.catbox.moe/s2rzj7.gif",
-    "pan pipe":                      "https://files.catbox.moe/fv3pww.png",
-    "tile pipe":                     "https://files.catbox.moe/hht1b5.png",
-    "scroll pipe":                   "https://files.catbox.moe/fv3pww.png",
-    "leftsplit":                     "https://files.catbox.moe/8n0v63.png",
-    "zoom pipe":                     "https://files.catbox.moe/5l43mm.png",
-    "th/swirl":                      "https://files.catbox.moe/mikxi0.png",
-    "swirl pipe":                    "https://files.catbox.moe/mikxi0.png",
-    "th/tvsim":                      "https://files.catbox.moe/y9s9k5.gif",
-    "th/invlum":                     "https://files.catbox.moe/owx933.png",
-    "th/huehsv":                     "https://files.catbox.moe/vwtmre.png",
-    "th/mirror":                     "https://files.catbox.moe/8n0v63.png",
-    "th/folkvalley":                 _SMILEY_REF_URL,
+    "wave pipe":                     "wave.gif",
+    "shake pipe":                    "shake_pipe.gif",
+    "ripple pipe":                   "ripple.gif",
+    "pan pipe":                      "pan.png",
+    "tile pipe":                     "tile.png",
+    "scroll pipe":                   "pan.png",
+    "leftsplit":                     "mirror.png",
+    "zoom pipe":                     "zoom.png",
+    "th/swirl":                      "swirl.png",
+    "swirl pipe":                    "swirl.png",
+    "th/tvsim":                      "corrupt.gif",
+    "th/invlum":                     "invlum.png",
+    "th/huehsv":                     "saturation.png",
+    "th/mirror":                     "mirror.png",
 }
+
+_HELP_PREVIEW_DIR = Path("bot/help_previews")
+
+
+def _help_preview_filename(entry_name: str, cat: str | None) -> str:
+    """Return the local preview filename for an entry, or the reference image."""
+    return next(
+        (filename for key, filename in _HELP_ENTRY_PREVIEWS.items() if key in entry_name),
+        _SMILEY_REF_FILENAME if cat in ("heavy", "fun") else "",
+    )
+
+
+def _help_preview_file(entry_name: str, cat: str | None) -> discord.File | None:
+    filename = _help_preview_filename(entry_name, cat)
+    path = _HELP_PREVIEW_DIR / filename if filename else None
+    if path is not None and path.exists():
+        return discord.File(str(path), filename=filename)
+    return None
 
 # ── Help data ─────────────────────────────────────────────────────────────────
 # Each entry: {"name": str, "value": str, "cat": "heavy"|"fun"|"owner"}
@@ -12831,14 +12849,9 @@ def _build_help_embed(
     # category that has no specific preview falls back to the smiley reference.
     if _browsing and page_entries:
         entry_name = page_entries[0]["name"]
-        preview_url: str | None = next(
-            (url for key, url in _HELP_ENTRY_PREVIEWS.items() if key in entry_name),
-            None,
-        )
-        if preview_url is None and cat in ("heavy", "fun"):
-            preview_url = _SMILEY_REF_URL
-        if preview_url:
-            embed.set_image(url=preview_url)
+        preview_filename = _help_preview_filename(entry_name, cat)
+        if preview_filename:
+            embed.set_image(url=f"attachment://{preview_filename}")
 
     footer_parts: list[str] = []
     if cat == "heavy":
@@ -12906,13 +12919,32 @@ class _HelpSelect(discord.ui.Select):
                 view._page = 0
                 embed = _build_home_embed()
                 view._update_nav_buttons(1)
-                await interaction.response.edit_message(embed=embed, view=view)
+                smiley = (
+                    discord.File(str(_SMILEY_REF_PATH), filename=_SMILEY_REF_FILENAME)
+                    if _SMILEY_REF_PATH.exists()
+                    else None
+                )
+                await interaction.response.edit_message(
+                    embed=embed,
+                    view=view,
+                    attachments=[smiley] if smiley else [],
+                )
             else:
                 view._cat = choice
                 view._page = 0
                 embed, _, total = _build_help_embed(choice, page=0)
                 view._update_nav_buttons(total)
-                await interaction.response.edit_message(embed=embed, view=view)
+                category_entries = [e for e in _HELP_ENTRIES if e["cat"] == choice]
+                preview = (
+                    _help_preview_file(category_entries[0]["name"], choice)
+                    if category_entries
+                    else None
+                )
+                await interaction.response.edit_message(
+                    embed=embed,
+                    view=view,
+                    attachments=[preview] if preview else [],
+                )
         except Exception as exc:
             try:
                 await interaction.response.send_message(
@@ -12938,7 +12970,22 @@ class _HelpNavButton(discord.ui.Button):
         try:
             embed, view._page, total = _build_help_embed(view._cat, page=view._page)
             view._update_nav_buttons(total)
-            await interaction.response.edit_message(embed=embed, view=view)
+            category_entries = [e for e in _HELP_ENTRIES if e["cat"] == view._cat]
+            page_entry = (
+                category_entries[view._page]
+                if category_entries and view._page < len(category_entries)
+                else None
+            )
+            preview = (
+                _help_preview_file(page_entry["name"], view._cat)
+                if page_entry
+                else None
+            )
+            await interaction.response.edit_message(
+                embed=embed,
+                view=view,
+                attachments=[preview] if preview else [],
+            )
         except Exception as exc:
             try:
                 await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
