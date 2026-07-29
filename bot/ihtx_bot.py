@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-29: [Python] Added th/set <user_id> owner|mod|remove — owner-only command to grant/revoke owner or moderator status. Mods (is_mod=True in xp_data) can now use th/say, th/sayembed, th/sendmsg (all three switched from _is_owner to _is_bot_mod). _is_bot_mod now reads from in-memory _xp_data instead of re-reading file on every check. Removed th/ban, th/unban, th/kick, th/timeout, th/untimeout, th/purge, th/slowmode from help entries. Fixed th/bothelp home embed: moved bot icon to footer icon_url so set_image(smiley_ref) is the sole embed image and renders correctly in Discord.
 - 2026-07-28: [Python] th/bothelp: home embed now shows smiley-face reference image (Python-art PNG on Catbox); category browsing switched to 1 entry per page so each effect shows its Catbox preview image (GIF for animated, PNG for static) via set_image(). Added _SMILEY_REF_URL and _HELP_ENTRY_PREVIEWS dict. economy_cog.py: video outputs no longer use set_image(attachment://…) — only image outputs (.png/.jpg/.gif/.webp etc.) set the embed image; video files attach without set_image so Discord renders a native video player in the same message.
 - 2026-07-27: [Python] Fixed `_preprocess_math_expr` collapsing colon-separated FFmpeg values (e.g. `scale=$w:$h` → `640:640` → incorrectly collapsed to `640640`): `_MathParser` is now only called when the expression is pure math (matches `_PURE_MATH_RE = ^[\d\s+\-*/^%().]+$`); strings containing `:`, `=`, letters, etc. are returned as-is after variable substitution.
 - 2026-07-27: [Python] All output filenames now include bot-prefix: `534gurts_` → `534gurts_th` (e.g. `534gurts_thpipetest.mp4`, `534gurts_thffmpeg.mp4`). Added `*T` as alias for `$T` (normalized time 0→1) in pipe-effect math expressions and in th/ffmpeg raw arg substitution — use `*T` anywhere `$T` works (e.g. `frei0r=distort0r:*T`).
@@ -208,20 +209,14 @@ def _is_owner_by_id(user_id: int) -> bool:
 
 
 def _is_bot_mod(ctx: commands.Context) -> bool:
-    """True if the user is an owner OR has reached max XP level (bot moderator)."""
+    """True if the user is an owner OR has been set as bot moderator via th/set."""
     if ctx.author.id in owner_ids:
         return True
+    # _xp_data is loaded at module level later; safe to reference at call time.
     try:
-        from pathlib import Path as _Path
-        import json as _json
-        _xp_file = _Path("bot/xp_data.json")
-        if _xp_file.exists():
-            with _xp_file.open() as _f:
-                _xd = _json.load(_f)
-            return bool(_xd.get(str(ctx.author.id), {}).get("is_mod", False))
+        return bool(_xp_data.get(str(ctx.author.id), {}).get("is_mod", False))
     except Exception:
-        pass
-    return False
+        return False
 
 _load_owner_ids()
 
@@ -12696,9 +12691,19 @@ _HELP_ENTRIES: list[dict] = [
     {
         "cat": "owner",
         "name": "th/sendmsg <channel_id> <message>  (aliases: msgsend)",
-        "value": "Send a message to any channel by ID.",
+        "value": "Send a message to any channel by ID. Available to owners and bot moderators.",
     },
-    # ── Moderation ──
+    {
+        "cat": "owner",
+        "name": "th/set <user_id> owner|mod|remove",
+        "value": (
+            "Set a user's bot role. `owner` — full owner access. "
+            "`mod` — moderator access (`th/say`, `th/sayembed`, `th/sendmsg`). "
+            "`remove` — strip all special roles (cannot remove the primary BOT_OWNER_ID owner). "
+            "Example: `th/set 123456789012345678 mod`"
+        ),
+    },
+    # ── Pipe effects (continued) ──
     {
         "cat": "heavy",
         "name": "alimiter [level_in] [limit] [attack] [release] [latency]",
@@ -12708,41 +12713,6 @@ _HELP_ENTRIES: list[dict] = [
         "cat": "heavy",
         "name": "fzgm156 [sr]  (aliases: freakzinga)",
         "value": "Pipe effect — Freakzinga G Major 156. Creates a video palindrome (forward half + reversed half) with Hald CLUT hue shift and blue boost, then applies dual-voice pitch shifts (+0.5/+4.5 and -0.5/-4.5 semitones) mixed with the second track reversed and bass boosted. Optional sr param sets sample rate (default 44100).",
-    },
-    {
-        "cat": "owner",
-        "name": "th/ban @user [reason]",
-        "value": "Ban a user from the server. Works with mentions, usernames, or user IDs.",
-    },
-    {
-        "cat": "owner",
-        "name": "th/unban <user_id> [reason]",
-        "value": "Unban a user by their numeric Discord ID.",
-    },
-    {
-        "cat": "owner",
-        "name": "th/kick @member [reason]",
-        "value": "Kick a member from the server. They must currently be in the server.",
-    },
-    {
-        "cat": "owner",
-        "name": "th/timeout @member <minutes> [reason]  (aliases: mute)",
-        "value": "Timeout (mute) a member for 1–40320 minutes (max 28 days). Prevents sending messages and joining VCs.",
-    },
-    {
-        "cat": "owner",
-        "name": "th/untimeout @member [reason]  (aliases: unmute)",
-        "value": "Remove an active timeout from a member immediately.",
-    },
-    {
-        "cat": "owner",
-        "name": "th/purge <count> [@member]  (aliases: clear)",
-        "value": "Bulk-delete 2–100 messages in the current channel. Optionally filter to a specific member's messages.",
-    },
-    {
-        "cat": "owner",
-        "name": "th/slowmode [seconds]",
-        "value": "Set channel slowmode delay (0–21600 seconds). Use `th/slowmode 0` or just `th/slowmode` to disable.",
     },
     # ── Games ──
     {
@@ -12898,9 +12868,8 @@ def _build_home_embed() -> discord.Embed:
         ),
         color=0x40E0D0,
     )
-    embed.set_thumbnail(url=_IHTX_SAP_FOOTER_ICON)
     embed.set_image(url=_SMILEY_REF_URL)
-    embed.set_footer(text="I Hate The X — FFmpeg logo destruction bot")
+    embed.set_footer(text="I Hate The X — FFmpeg logo destruction bot", icon_url=_IHTX_SAP_FOOTER_ICON)
     return embed
 
 
@@ -13645,7 +13614,7 @@ async def keywordblockremove(ctx: commands.Context, keyword: str, channel: str =
 
 
 @bot.command(name="say")
-@commands.check(_is_owner)
+@commands.check(_is_bot_mod)
 async def say(ctx: commands.Context, *, message: str):
     """Owner-only: make the bot send a plain message in the current channel."""
     try:
@@ -13657,7 +13626,7 @@ async def say(ctx: commands.Context, *, message: str):
 
 
 @bot.command(name="sayembed")
-@commands.check(_is_owner)
+@commands.check(_is_bot_mod)
 async def sayembed(ctx: commands.Context, *, content: str):
     """
     Owner-only: send an embed.
@@ -13987,7 +13956,7 @@ async def setactivity(ctx: commands.Context, activity_type: str, *, text: str):
 # ---------- Owner: cross-server messaging ----------
 
 @bot.command(name="sendmsg", aliases=["msgsend"])
-@commands.check(_is_owner)
+@commands.check(_is_bot_mod)
 async def sendmsg(ctx: commands.Context, channel_id: str, *, text: str):
     """Owner-only: send a message to any channel the bot can access, by channel ID.
 
@@ -14024,6 +13993,66 @@ async def sendmsg(ctx: commands.Context, channel_id: str, *, text: str):
         await ctx.reply("❌ Bot lacks permission to send messages in that channel.")
     except discord.HTTPException as e:
         await ctx.reply(f"❌ Failed to send: {e}")
+
+
+@bot.command(name="set")
+@commands.check(_is_owner)
+async def set_role_command(ctx: commands.Context, user_id_str: str, role: str = ""):
+    """Owner-only: assign or remove a bot role for a user.
+
+    Usage:
+      th/set <user_id> owner   — full owner access
+      th/set <user_id> mod     — moderator access (th/say, th/sayembed, th/sendmsg)
+      th/set <user_id> remove  — strip all special roles
+    """
+    try:
+        user_id = int(user_id_str.strip("<@!>"))
+    except ValueError:
+        await ctx.reply("❌ Provide a valid user ID or mention.")
+        return
+
+    role = role.strip().lower()
+    if role not in ("owner", "mod", "remove"):
+        await ctx.reply("❌ Role must be `owner`, `mod`, or `remove`.\nUsage: `th/set <user_id> owner|mod|remove`")
+        return
+
+    if role == "owner":
+        if user_id in owner_ids:
+            await ctx.reply(f"⚠️ `{user_id}` is already an owner.")
+            return
+        owner_ids.add(user_id)
+        _save_owner_ids()
+        await ctx.reply(f"✅ `{user_id}` is now a **bot owner** (full access).")
+
+    elif role == "mod":
+        if user_id in owner_ids:
+            await ctx.reply(f"⚠️ `{user_id}` is already an owner — owner access includes all mod permissions.")
+            return
+        key = str(user_id)
+        if key not in _xp_data:
+            _xp_data[key] = {"xp": 0, "level": 1}
+        _xp_data[key]["is_mod"] = True
+        _save_xp_data()
+        await ctx.reply(f"✅ `{user_id}` is now a **bot moderator** — can use `th/say`, `th/sayembed`, `th/sendmsg`.")
+
+    elif role == "remove":
+        if user_id == OWNER_ID:
+            await ctx.reply("❌ Cannot remove the primary owner (set via `BOT_OWNER_ID` env var).")
+            return
+        changed: list[str] = []
+        if user_id in owner_ids:
+            owner_ids.discard(user_id)
+            _save_owner_ids()
+            changed.append("owner")
+        key = str(user_id)
+        if _xp_data.get(key, {}).get("is_mod"):
+            _xp_data[key]["is_mod"] = False
+            _save_xp_data()
+            changed.append("mod")
+        if changed:
+            await ctx.reply(f"✅ Removed **{' + '.join(changed)}** role(s) from `{user_id}`.")
+        else:
+            await ctx.reply(f"⚠️ `{user_id}` has no special bot roles to remove.")
 
 
 @bot.command(name="listservers", aliases=["servers", "guilds"])
