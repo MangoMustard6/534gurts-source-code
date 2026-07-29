@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-29: [Python] Removed the remaining bothelp thumbnail image so the help embed uses only its configured main image/preview.
 - 2026-07-29: [Python] Added th/set <user_id> owner|mod|remove — owner-only command to grant/revoke owner or moderator status. Mods (is_mod=True in xp_data) can now use th/say, th/sayembed, th/sendmsg (all three switched from _is_owner to _is_bot_mod). _is_bot_mod now reads from in-memory _xp_data instead of re-reading file on every check. Removed th/ban, th/unban, th/kick, th/timeout, th/untimeout, th/purge, th/slowmode from help entries. Fixed th/bothelp home embed: moved bot icon to footer icon_url so set_image(smiley_ref) is the sole embed image and renders correctly in Discord.
 - 2026-07-28: [Python] th/bothelp: home embed now shows smiley-face reference image (Python-art PNG on Catbox); category browsing switched to 1 entry per page so each effect shows its Catbox preview image (GIF for animated, PNG for static) via set_image(). Added _SMILEY_REF_URL and _HELP_ENTRY_PREVIEWS dict. economy_cog.py: video outputs no longer use set_image(attachment://…) — only image outputs (.png/.jpg/.gif/.webp etc.) set the embed image; video files attach without set_image so Discord renders a native video player in the same message.
 - 2026-07-27: [Python] Fixed `_preprocess_math_expr` collapsing colon-separated FFmpeg values (e.g. `scale=$w:$h` → `640:640` → incorrectly collapsed to `640640`): `_MathParser` is now only called when the expression is pure math (matches `_PURE_MATH_RE = ^[\d\s+\-*/^%().]+$`); strings containing `:`, `=`, letters, etc. are returned as-is after variable substitution.
@@ -12815,7 +12816,6 @@ def _build_help_embed(
         title, color = "🔍 Search Results", discord.Color.gold()
 
     embed = discord.Embed(title=title, color=color)
-    embed.set_thumbnail(url=_IHTX_SAP_FOOTER_ICON)
     for entry in page_entries:
         copyable_value = f"`{entry['name']}`\n{entry['value']}"
         if len(copyable_value) > 1024:
