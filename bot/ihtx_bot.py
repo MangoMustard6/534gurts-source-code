@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-29: [Python] Fixed th/bothelp category and pagination interaction failures by deferring Discord component interactions immediately before preparing local preview attachments, then editing the original response; errors now use follow-up messages after defer.
 - 2026-07-29: [Python] Restored a clearly visible th/bothelp home embed after removing the broken smiley: added separate Heavy, Fun, Games, and Owner category fields with counts and descriptions; kept the smiley fully removed.
 - 2026-07-29: [Python] Removed the broken Python smiley reference from th/bothelp completely: no home image, no smiley attachment on Home navigation, and no smiley fallback for effects without dedicated previews. Dedicated local effect PNG/GIF previews remain enabled.
 - 2026-07-29: [Python] th/bothelp effect previews now use the generated local PNG/GIF files in bot/help_previews and attach the selected preview directly to Discord, replacing unreliable zero-byte Catbox URLs. Category selection and Prev/Next navigation replace the attachment and embed image together.
@@ -12919,12 +12920,15 @@ class _HelpSelect(discord.ui.Select):
         try:
             choice = self.values[0]
             view: _HelpView = self.view  # type: ignore
+            # Acknowledge immediately; preparing/attaching a local preview can
+            # otherwise exceed Discord's interaction response deadline.
+            await interaction.response.defer()
             if choice == "home":
                 view._cat = None
                 view._page = 0
                 embed = _build_home_embed()
                 view._update_nav_buttons(1)
-                await interaction.response.edit_message(
+                await interaction.edit_original_response(
                     embed=embed,
                     view=view,
                     attachments=[],
@@ -12940,16 +12944,21 @@ class _HelpSelect(discord.ui.Select):
                     if category_entries
                     else None
                 )
-                await interaction.response.edit_message(
+                await interaction.edit_original_response(
                     embed=embed,
                     view=view,
                     attachments=[preview] if preview else [],
                 )
         except Exception as exc:
             try:
-                await interaction.response.send_message(
+                if interaction.response.is_done():
+                    await interaction.followup.send(
+                        f"❌ Help menu error: {exc}", ephemeral=True
+                    )
+                else:
+                    await interaction.response.send_message(
                     f"❌ Help menu error: {exc}", ephemeral=True
-                )
+                    )
             except Exception:
                 pass
 
@@ -12968,6 +12977,8 @@ class _HelpNavButton(discord.ui.Button):
         view: _HelpView = self.view  # type: ignore
         view._page = max(0, view._page + self._direction)
         try:
+            # Acknowledge before preparing the preview attachment.
+            await interaction.response.defer()
             embed, view._page, total = _build_help_embed(view._cat, page=view._page)
             view._update_nav_buttons(total)
             category_entries = [e for e in _HELP_ENTRIES if e["cat"] == view._cat]
@@ -12981,14 +12992,17 @@ class _HelpNavButton(discord.ui.Button):
                 if page_entry
                 else None
             )
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 embed=embed,
                 view=view,
                 attachments=[preview] if preview else [],
             )
         except Exception as exc:
             try:
-                await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+                if interaction.response.is_done():
+                    await interaction.followup.send(f"❌ {exc}", ephemeral=True)
+                else:
+                    await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
             except Exception:
                 pass
 
