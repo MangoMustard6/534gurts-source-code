@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-29: [Python] Restored a clearly visible th/bothelp home embed after removing the broken smiley: added separate Heavy, Fun, Games, and Owner category fields with counts and descriptions; kept the smiley fully removed.
 - 2026-07-29: [Python] Removed the broken Python smiley reference from th/bothelp completely: no home image, no smiley attachment on Home navigation, and no smiley fallback for effects without dedicated previews. Dedicated local effect PNG/GIF previews remain enabled.
 - 2026-07-29: [Python] th/bothelp effect previews now use the generated local PNG/GIF files in bot/help_previews and attach the selected preview directly to Discord, replacing unreliable zero-byte Catbox URLs. Category selection and Prev/Next navigation replace the attachment and embed image together.
 - 2026-07-29: [Python] Fixed the missing th/bothelp smiley preview by attaching the local bot/help_previews/smiley_reference.png directly to the Discord help message and using attachment://smiley_reference.png instead of the zero-byte Catbox URL.
@@ -12866,15 +12867,28 @@ def _build_home_embed() -> discord.Embed:
     counts = {c: sum(1 for e in _HELP_ENTRIES if e["cat"] == c) for c in _HELP_CATS}
     embed = discord.Embed(
         title="IHTX Bot — Help",
-        description=(
-            "Pick a category from the dropdown below, or run:\n"
-            "`th/ihtxhelp <query>` to search all commands.\n\n"
-            f"⚙️ **Heavy Commands** — {counts['heavy']} entries\n"
-            f"🎉 **Fun** — {counts['fun']} entries\n"
-            f"🎮 **Games** — {counts['games']} entries\n"
-            f"🔒 **Owner** — {counts['owner']} entries"
-        ),
+        description="Pick a category from the dropdown below, or run `th/ihtxhelp <query>` to search all commands.",
         color=0x40E0D0,
+    )
+    embed.add_field(
+        name=f"⚙️ Heavy Commands · {counts['heavy']} entries",
+        value="FFmpeg effects, video tools, and media processing.",
+        inline=False,
+    )
+    embed.add_field(
+        name=f"🎉 Fun · {counts['fun']} entries",
+        value="Creative commands, downloads, chat, and utilities.",
+        inline=False,
+    )
+    embed.add_field(
+        name=f"🎮 Games · {counts['games']} entries",
+        value="Games and interactive commands.",
+        inline=False,
+    )
+    embed.add_field(
+        name=f"🔒 Owner · {counts['owner']} entries",
+        value="Bot administration and owner/moderator tools.",
+        inline=False,
     )
     embed.set_footer(text="I Hate The X — FFmpeg logo destruction bot", icon_url=_IHTX_SAP_FOOTER_ICON)
     return embed
