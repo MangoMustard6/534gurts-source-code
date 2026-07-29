@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-07-29: [Python/TypeScript] Updated th/klaskycsupo to the new Discord CDN youtube-Jv5OyY_GJDY.mp4 clip and th/klaskysource to the new convert.mp4 clip in both bot implementations.
 - 2026-07-29: [Python/TypeScript] Added a Utility category to th/bothelp with klaskycsupo, klaskysource, presets, and bothelp entries. Added Python th/klaskysource (alias klasky) and updated both bots to use the new Discord CDN Project_Name .mov URL.
 - 2026-07-29: [Python] Fixed th/bothelp category and pagination interaction failures by deferring Discord component interactions immediately before preparing local preview attachments, then editing the original response; errors now use follow-up messages after defer.
 - 2026-07-29: [Python] Restored a clearly visible th/bothelp home embed after removing the broken smiley: added separate Heavy, Fun, Games, and Owner category fields with counts and descriptions; kept the smiley fully removed.
@@ -13074,11 +13075,15 @@ async def invite_command(ctx: commands.Context):
     await ctx.reply(embed=embed)
 
 
-_KLASKYCSUPO_URL = "https://files.catbox.moe/ij1lsn.mp4"
+_KLASKYCSUPO_URL = (
+    "https://cdn.discordapp.com/attachments/1124758906376302632/"
+    "1531986903182872786/youtube-Jv5OyY_GJDY.212709db.mp4?"
+    "ex=6a6b357c&is=6a69e3fc&hm=e76d9d352a160331b0a22ef95cd59e89e931c9794ec2922c700bba46abaf10ef&"
+)
 _KLASKYSOURCE_URL = (
     "https://cdn.discordapp.com/attachments/1124758906376302632/"
-    "1531978800936784003/Project_Name_9.36268c57.mov?"
-    "ex=6a6b2df0&is=6a69dc70&hm=22e44ff512fc2151cf2c05933f4b9672a0c0bb6503323f22166c8be1797682de&"
+    "1531987508928446505/convert.33ff0215.mp4?"
+    "ex=6a6b360d&is=6a69e48d&hm=3b36ef2ce3b5f06e6895c0e127efdeba5cd0d36855cb38a9e344847825898329&"
 )
 
 
