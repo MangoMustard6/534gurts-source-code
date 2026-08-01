@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-01: [Python] Increased owner Bash tag execution to a 300-second media-safe timeout and suppressed FFmpeg build banners so long Bash/FFmpeg tags return useful output instead of a truncated banner.
 - 2026-08-01: [Python] Made Bash tag execution translate legacy `load {iv}` media directives into a downloaded `FILE_1` input instead of passing `load` to Bash.
 - 2026-08-01: [Python] Fixed th/tag Bash blocks to execute through `bash -lc` instead of Python's `/bin/sh` shell path, preserving Bash syntax for multiline owner-only tags.
 - 2026-08-01: [Python] Updated the custom th/ihtx completion footer to “th/ihtx is ready!” and added a one-time author mention when generation reaches its halfway stage.
