@@ -627,7 +627,7 @@ class EconomyCog(commands.Cog, name="Economy"):
         def _make_base_embed(color: int = _IHTX_COLOR) -> discord.Embed:
             e = discord.Embed(color=color, timestamp=discord.utils.utcnow())
             e.set_author(name=_user_tag, icon_url=_avatar_url)
-            e.set_footer(text="IHTX Custom FFmpeg+", icon_url=_IHTX_FOOTER_ICON)
+            e.set_footer(text="th/ihtx is ready!", icon_url=_IHTX_FOOTER_ICON)
             return e
 
         loading_embed = _make_base_embed()
@@ -668,6 +668,17 @@ class EconomyCog(commands.Cog, name="Economy"):
             # Process — with a background ticker showing elapsed seconds
             loop = asyncio.get_event_loop()
             _done_evt = asyncio.Event()
+            _halfway_evt = asyncio.Event()
+
+            def _on_progress(completed: int, total: int) -> None:
+                if total > 0 and completed / total >= 0.5:
+                    loop.call_soon_threadsafe(_halfway_evt.set)
+
+            async def _halfway_notice() -> None:
+                await _halfway_evt.wait()
+                await ctx.send(
+                    f"{ctx.author.mention} ⏳ **th/ihtx** is halfway done generating your IHTX."
+                )
 
             async def _tick() -> None:
                 while not _done_evt.is_set():
@@ -683,6 +694,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                         pass
 
             _tick_task = asyncio.create_task(_tick())
+            _halfway_notice_task = asyncio.create_task(_halfway_notice())
             try:
                 if use_pipe:
                     ok, err = await loop.run_in_executor(
@@ -692,6 +704,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                         "true" if no_trim else "-",
                         export_fmt.lstrip(".") or "mov",
                         pipe_effects,
+                        _on_progress,
                     )
                 else:
                     ok, err = await loop.run_in_executor(
@@ -704,6 +717,20 @@ class EconomyCog(commands.Cog, name="Economy"):
                     await _tick_task
                 except asyncio.CancelledError:
                     pass
+                # Give a very fast job one event-loop turn to deliver the
+                # halfway callback before deciding there is no notice to send.
+                await asyncio.sleep(0)
+                if _halfway_evt.is_set():
+                    try:
+                        await _halfway_notice_task
+                    except asyncio.CancelledError:
+                        pass
+                else:
+                    _halfway_notice_task.cancel()
+                    try:
+                        await _halfway_notice_task
+                    except asyncio.CancelledError:
+                        pass
 
             if not ok:
                 await _update(f"❌ FFmpeg failed:\n```\n{err[-1200:]}\n```", 0xED4245)

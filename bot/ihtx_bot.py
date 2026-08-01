@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-01: [Python] Updated the custom th/ihtx completion footer to “th/ihtx is ready!” and added a one-time author mention when generation reaches its halfway stage.
 - 2026-07-29: [Python/TypeScript] Updated th/klaskycsupo to the new Discord CDN youtube-Jv5OyY_GJDY.mp4 clip and th/klaskysource to the new convert.mp4 clip in both bot implementations.
 - 2026-07-29: [Python/TypeScript] Added a Utility category to th/bothelp with klaskycsupo, klaskysource, presets, and bothelp entries. Added Python th/klaskysource (alias klasky) and updated both bots to use the new Discord CDN Project_Name .mov URL.
 - 2026-07-29: [Python] Fixed th/bothelp category and pagination interaction failures by deferring Discord component interactions immediately before preparing local preview attachments, then editing the original response; errors now use follow-up messages after defer.
@@ -5279,6 +5280,7 @@ def _run_ihtx_tagscript_workflow(
     no_trim: str,
     export_format: str,
     pipe_effects_str: str,
+    progress_callback=None,
 ) -> tuple[bool, str]:
     """Run custom IHTX using the TagScript-style shell workflow with pipe effects.
 
@@ -5307,6 +5309,7 @@ def _run_ihtx_tagscript_workflow(
     _fmt_lower = export_format.lower()
     extension = _fmt_lower if _fmt_lower in _SUPPORTED_FINAL_FORMATS else "mp4"
     dual_render = _fmt_lower in {"mkv", "mxf"}
+    total_exports = abs(exports)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         base = os.path.join(tmpdir, "0.mp4")
@@ -5328,9 +5331,10 @@ def _run_ihtx_tagscript_workflow(
         ], timeout=180)
         if not ok:
             return False, f"Base render failed: {err}"
+        if progress_callback:
+            progress_callback(1, total_exports + 2)
 
         no_trim_enabled = no_trim.lower() in {"true", "yes"}
-        total_exports = abs(exports)
         # Per-rep timeout scaling: base 180s + 6s per rep (so 1000 reps gets ~6180s)
         _per_rep_timeout = 180 + (total_exports * 6)
         previous = base
@@ -5352,6 +5356,8 @@ def _run_ihtx_tagscript_workflow(
             if probe == "0":
                 return False, f"Export {i} has no video frames (likely a filter or codec issue with format '{export_format}')."
             previous = current
+            if progress_callback:
+                progress_callback(i + 1, total_exports + 2)
 
         concat_list = os.path.join(tmpdir, "concat.txt")
         sequence = range(total_exports, 0, -1) if exports < 0 else range(1, total_exports + 1)
