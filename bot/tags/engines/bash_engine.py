@@ -6,7 +6,7 @@ Aliases: bash, sh
 SECURITY: Restricted to bot owners only.
 
 Limits:
-  Timeout : 5 seconds
+  Timeout : 300 seconds
   Output  : 4 000 characters max
   Stderr  : merged into stdout
 
@@ -31,7 +31,7 @@ from urllib.parse import urlparse
 import aiohttp
 from . import BaseEngine, EngineResult
 
-_TIMEOUT = 5.0
+_TIMEOUT = 300.0
 _MAX_OUTPUT = 4_000
 _MAX_INPUT_BYTES = 150 * 1024 * 1024
 
@@ -95,6 +95,13 @@ class BashEngine(BaseEngine):
                 cmd = "\n".join(lines).strip()
                 if not cmd:
                     return EngineResult(error="bash: no command provided after load")
+
+            # FFmpeg writes a large build/configuration banner to stderr
+            # before doing any work. Since stderr is intentionally merged into
+            # the tag result, hide that banner while preserving real errors.
+            # A shell function covers every ffmpeg invocation in the script,
+            # including commands inside loops and conditionals.
+            cmd = 'ffmpeg() { command ffmpeg -hide_banner "$@"; }\n' + cmd
 
             # Do not use create_subprocess_shell here: Python delegates that
             # API to /bin/sh, even though this engine is explicitly called
