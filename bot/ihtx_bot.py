@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-01: [Python] Implemented th/ihtx no_trim argument after duration: true/yes/+ preserves full-length source and exports; false/no/- loops and trims each step to duration.
 - 2026-08-01: [Python] Added optional overlay start offset to th/addsource; the fifth positional value snips the overlay from its beginning, e.g. `th/addsource URL 3x3 5 0.5 0.4`.
 - 2026-08-01: [Python] Added a startup notification in the configured Discord channel after each bot process restart, reporting the newest update-log change or restart reason.
 - 2026-08-01: [Python] Preserved Bash `${...}` parameter expansions while resolving nested TagScript placeholders, preventing generated filenames such as `$.mov`.
@@ -5215,7 +5216,9 @@ def _parse_ihtx_custom_args(args: str) -> tuple[int, str, str, str, str] | None:
     if exports == 0:
         return None
     duration_expr = parts[1]
-    no_trim = parts[2]
+    no_trim = parts[2].lower()
+    if no_trim not in {"true", "yes", "+", "false", "no", "-"}:
+        return None
     export_format = parts[3].lstrip(".") or "mp4"
     # Extract pipe_effects from the ORIGINAL raw string so quoted groups
     # (e.g. "-color-matrix \"0 1 0 1 0 0 0 0 1\"") are preserved verbatim.
@@ -5342,18 +5345,25 @@ def _run_ihtx_tagscript_workflow(
             "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-an", "-t", "0.03", warmup,
         ], timeout=60)
 
-        ok, err = _run_ffmpeg_raw([
-            "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-            "-stream_loop", "-1", "-i", input_path,
+        no_trim_enabled = no_trim.lower() in {"true", "yes", "+"}
+        if no_trim.lower() not in {"true", "yes", "+", "false", "no", "-"}:
+            return False, "no_trim must be one of: true, yes, +, false, no, -."
+
+        base_cmd = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
+        base_cmd += ["-i", input_path] if no_trim_enabled else ["-stream_loop", "-1", "-i", input_path]
+        base_cmd += [
             "-c:v", "libx264", "-preset", "ultrafast", "-b:v", "16M",
-            "-c:a", "flac", "-t", dur, "-movflags", "+faststart", base,
-        ], timeout=180)
+            "-c:a", "flac",
+        ]
+        if not no_trim_enabled:
+            base_cmd += ["-t", dur]
+        base_cmd += ["-movflags", "+faststart", base]
+        ok, err = _run_ffmpeg_raw(base_cmd, timeout=180)
         if not ok:
             return False, f"Base render failed: {err}"
         if progress_callback:
             progress_callback(1, total_exports + 2)
 
-        no_trim_enabled = no_trim.lower() in {"true", "yes"}
         # Per-rep timeout scaling: base 180s + 6s per rep (so 1000 reps gets ~6180s)
         _per_rep_timeout = 180 + (total_exports * 6)
         previous = base
@@ -5362,6 +5372,23 @@ def _run_ihtx_tagscript_workflow(
             ok, err = _apply_pipe_effects(previous, current, effects, step_timeout=_per_rep_timeout)
             if not ok:
                 return False, f"Export {i} failed: {err}"
+            if not no_trim_enabled:
+                # The trim-enabled branch mirrors the original shell loop:
+                # loop each processed export and cap it at the requested duration.
+                trimmed = os.path.join(tmpdir, f"{i}.trimmed.{extension}")
+                trim_cmd = [
+                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                    "-stream_loop", "-1", "-i", current,
+                    "-t", dur,
+                    "-map", "0:v?", "-map", "0:a?",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                    "-movflags", "+faststart", trimmed,
+                ]
+                ok, err = _run_ffmpeg_raw(trim_cmd, timeout=_per_rep_timeout)
+                if not ok:
+                    return False, f"Export {i} trim failed: {err}"
+                os.replace(trimmed, current)
             # Validate output is non-empty and has video frames before next iteration
             if not os.path.exists(current) or os.path.getsize(current) < 64:
                 return False, f"Export {i} produced an empty or invalid file."
@@ -14337,7 +14364,7 @@ Heavy/effects commands:
   PIPE mode: th/ihtx <exports> <duration> <no_trim> <format> <effects>  (attach media)
     - exports      — how many times to apply the chain (negative = reverse each pass, e.g. -3)
     - duration     — clip length in seconds or awk expr using `vidlen` (e.g. 0.5, vidlen/2, vidlen*0.75)
-    - no_trim      — `-` to keep full length; any other value trims to duration
+     - no_trim      — `true`, `yes`, or `+` keeps full length; `false`, `no`, or `-` trims to duration
     - format       — output container: mp4, mkv, gif, avi, mov, etc.
     - effects      — semicolon-separated effect chain (see below)
 
@@ -14517,7 +14544,7 @@ Heavy (media processing):
     PIPE:    th/ihtx <exports> <duration> <no_trim> <format> <effects>
       • exports   — repetitions; negative reverses each pass (e.g. -3)
       • duration  — seconds or awk expr with vidlen (e.g. 0.5, vidlen/2)
-      • no_trim   — `-` keeps full length, else trims to duration
+      • no_trim   — `true`/`yes`/`+` keeps full length; `false`/`no`/`-` trims to duration
       • format    — mp4, mkv, gif, avi, mov, …
       • effects   — semicolon-separated chain, params after = or space
     Example: th/ihtx 3 0.483 - mp4 huehsv=0.5;negate;multipitch=1|6|7

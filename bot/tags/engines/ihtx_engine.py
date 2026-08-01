@@ -12,7 +12,7 @@ Examples:
 Parameters:
     repetitions — integer number of processing passes
     duration    — duration expression (supports decimals, awk math)
-    noTrim      — "true" or "false"
+    noTrim      — true/yes/+ preserves full length; false/no/- trims to duration
     format      — output format: mp4, gif, webm, mov, etc.
     pipe_effects — standard IHTX comma-delimited effect chain
 

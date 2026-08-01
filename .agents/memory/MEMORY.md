@@ -5,3 +5,4 @@
 - [Discord Entry Point sync workaround](discord-entry-point-sync.md) — tree.sync() breaks with error 50240 when app has Entry Point (type=4); use t!syncslash instead (bulk_upsert + preserved EPs).
 - [Building missing frei0r plugins on Nix](frei0r-plugin-build.md) — the Nix frei0r package may omit newer plugins like mirr0r; build from source and install to ~/.frei0r-1/lib/ so FFmpeg discovers them.
 - [Help preview attachments](help-preview-attachments.md) — use local PNG/GIF Discord attachments for bothelp previews; Catbox returned zero-byte image bodies.
+- [IHTX no-trim flags](ihtx-no-trim-flags.md) — `true`/`yes`/`+` preserves full length; `false`/`no`/`-` loops and trims to duration.
