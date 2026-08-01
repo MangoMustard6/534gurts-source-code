@@ -60,6 +60,15 @@ class BashEngine(BaseEngine):
 
         temp_dir: tempfile.TemporaryDirectory[str] | None = None
         try:
+            # Brace blocks inside a Bash script are tag syntax, not Bash
+            # syntax. The outer parser extracts `{sh:...}` as one engine
+            # block, so resolve the inner `{iv}`, `{arg:0}`, `{arg:5+}`, etc.
+            # here before handing the script to Bash.
+            from bot.tags.parser import resolve_blocks, resolve_variables
+
+            cmd = resolve_variables(cmd, tag_ctx)
+            cmd, _ = resolve_blocks(cmd, tag_ctx)
+
             # Translate the legacy media preamble into the FILE_1 convention
             # used by the IHTX Bash tags. The `load` line must never reach
             # Bash: it is a tag-engine directive, not a shell builtin.
@@ -101,7 +110,7 @@ class BashEngine(BaseEngine):
             # the tag result, hide that banner while preserving real errors.
             # A shell function covers every ffmpeg invocation in the script,
             # including commands inside loops and conditionals.
-            cmd = 'ffmpeg() { command ffmpeg -hide_banner "$@"; }\n' + cmd
+            cmd = 'ffmpeg() { command ffmpeg -hide_banner -loglevel error "$@"; }\n' + cmd
 
             # Do not use create_subprocess_shell here: Python delegates that
             # API to /bin/sh, even though this engine is explicitly called
