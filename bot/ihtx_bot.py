@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-01: [Python] Fixed Bash tags so nested TagScript variables and argument blocks resolve before execution; FFmpeg wrappers now emit errors only instead of leaking input metadata.
 - 2026-08-01: [Python] Increased owner Bash tag execution to a 300-second media-safe timeout and suppressed FFmpeg build banners so long Bash/FFmpeg tags return useful output instead of a truncated banner.
 - 2026-08-01: [Python] Made Bash tag execution translate legacy `load {iv}` media directives into a downloaded `FILE_1` input instead of passing `load` to Bash.
 - 2026-08-01: [Python] Fixed th/tag Bash blocks to execute through `bash -lc` instead of Python's `/bin/sh` shell path, preserving Bash syntax for multiline owner-only tags.
