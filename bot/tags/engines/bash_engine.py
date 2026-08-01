@@ -39,6 +39,7 @@ _MAX_INPUT_BYTES = 150 * 1024 * 1024
 # belongs to ImageScript/MediaScript, but those tags were sometimes stored as
 # Bash blocks and then leaked into the shell as a literal `load` command.
 _LOAD_LINE_RE = re.compile(r"^\s*load(?:_attachment)?(?:\s+(\S+))?(?:\s+\w+)?\s*$", re.IGNORECASE)
+_BASH_PARAM_RE = re.compile(r"\$\{[^{}\r\n]*\}")
 
 
 class BashEngine(BaseEngine):
@@ -66,8 +67,21 @@ class BashEngine(BaseEngine):
             # here before handing the script to Bash.
             from bot.tags.parser import resolve_blocks, resolve_variables
 
+            # Preserve Bash parameter expansion (`${prev}`, `${FILE_1##*.}`,
+            # etc.). Without this guard, the TagScript `{name}` resolver sees
+            # the braces inside `${name}` and turns the shell expression into
+            # an empty/invalid filename such as `$.mov`.
+            bash_params: list[str] = []
+
+            def _protect_bash_param(match: re.Match[str]) -> str:
+                bash_params.append(match.group(0))
+                return f"__TAG_BASH_PARAM_{len(bash_params) - 1}__"
+
+            cmd = _BASH_PARAM_RE.sub(_protect_bash_param, cmd)
             cmd = resolve_variables(cmd, tag_ctx)
             cmd, _ = resolve_blocks(cmd, tag_ctx)
+            for index, expression in enumerate(bash_params):
+                cmd = cmd.replace(f"__TAG_BASH_PARAM_{index}__", expression)
 
             # Translate the legacy media preamble into the FILE_1 convention
             # used by the IHTX Bash tags. The `load` line must never reach
