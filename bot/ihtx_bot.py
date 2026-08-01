@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-01: [Python] Added a startup notification in the configured Discord channel after each bot process restart, reporting the newest update-log change or restart reason.
 - 2026-08-01: [Python] Preserved Bash `${...}` parameter expansions while resolving nested TagScript placeholders, preventing generated filenames such as `$.mov`.
 - 2026-08-01: [Python] Fixed Bash tags so nested TagScript variables and argument blocks resolve before execution; FFmpeg wrappers now emit errors only instead of leaking input metadata.
 - 2026-08-01: [Python] Increased owner Bash tag execution to a 300-second media-safe timeout and suppressed FFmpeg build banners so long Bash/FFmpeg tags return useful output instead of a truncated banner.
@@ -7230,6 +7231,39 @@ def _run_preview1280what(
 
 # ---------- Bot events & commands ----------
 
+_STARTUP_NOTICE_CHANNEL_ID = 1496114769458106509
+_startup_notice_sent = False
+
+
+def _latest_update_reason() -> str:
+    """Return the newest update-log entry for the restart notification."""
+    for line in (__doc__ or "").splitlines():
+        line = line.strip()
+        if line.startswith("- ") and len(line) > 2:
+            return line[2:].strip()
+    return "Routine restart."
+
+
+async def _send_startup_notice():
+    global _startup_notice_sent
+    if _startup_notice_sent:
+        return
+    # Mark the attempt before awaiting so a reconnect/on_ready race cannot
+    # send duplicate notices.
+    _startup_notice_sent = True
+    try:
+        channel = bot.get_channel(_STARTUP_NOTICE_CHANNEL_ID)
+        if channel is None:
+            channel = await bot.fetch_channel(_STARTUP_NOTICE_CHANNEL_ID)
+        await channel.send(
+            "✅ **IHTX Bot restarted successfully.**\n"
+            f"**Change/reason:** {_latest_update_reason()}"
+        )
+        print(f"[startup] Restart notice sent to channel {_STARTUP_NOTICE_CHANNEL_ID}.")
+    except Exception as exc:
+        print(f"[startup] Could not send restart notice: {exc}")
+
+
 @tasks.loop(seconds=5)
 async def _process_pending_resets():
     """Poll bot/pending_resets.json and clear usage for requested users."""
@@ -7350,6 +7384,7 @@ async def on_ready():
 
     asyncio.ensure_future(_auto_sync_slash())
     print("Bot ready. Slash commands syncing in background…")
+    await _send_startup_notice()
 
 
 @bot.event
