@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-01: [Python] Fixed th/tag Bash blocks to execute through `bash -lc` instead of Python's `/bin/sh` shell path, preserving Bash syntax for multiline owner-only tags.
 - 2026-08-01: [Python] Updated the custom th/ihtx completion footer to “th/ihtx is ready!” and added a one-time author mention when generation reaches its halfway stage.
 - 2026-07-29: [Python/TypeScript] Updated th/klaskycsupo to the new Discord CDN youtube-Jv5OyY_GJDY.mp4 clip and th/klaskysource to the new convert.mp4 clip in both bot implementations.
 - 2026-07-29: [Python/TypeScript] Added a Utility category to th/bothelp with klaskycsupo, klaskysource, presets, and bothelp entries. Added Python th/klaskysource (alias klasky) and updated both bots to use the new Discord CDN Project_Name .mov URL.

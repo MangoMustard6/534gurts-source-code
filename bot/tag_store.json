@@ -147,6 +147,16 @@
         "aliases": [],
         "allowed_roles": [],
         "denied_users": []
+      },
+      "ihtx_custom_ffmpeg": {
+        "name": "ihtx_custom_ffmpeg",
+        "content": "{sh:\nload {iv}\n\n# arguments:\n\npower={arg:0}\nduration={arg:1}\nNO_TRIM={arg:2}\n\nif [ \"{arg:3}\" = \"default\" ]; then\n   input_format=\"${FILE_1##*.}\"\nelse\n   input_format=\"{arg:3}\"\nfi\n \nif [ \"{arg:4}\" = \"default\" ]; then\n   output_format=\"${FILE_1##*.}\"\nelse\n   output_format=\"{arg:4}\"\nfi\n\n# set up variables\n\nsr=$(ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate -of default=nokey=1:noprint_wrappers=1 \"$FILE_1\")\nfr=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=nokey=1:noprint_wrappers=1 \"$FILE_1\")\nd=$(ffprobe -i \"$FILE_1\" -show_entries format=duration -v quiet -of csv=\"p=0\")\nw=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 \"$FILE_1\")\nh=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 \"$FILE_1\")\nfc=$(ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=nokey=1:noprint_wrappers=1 \"$FILE_1\")\n\nffmpeg -y -stream_loop -1 -i \"$FILE_1\" -c:v h264 -preset ultrafast -tune fastdecode -qp 1 -t $duration -threads 0 -movflags +faststart \"0.$output_format\"\n\nfor i in $(seq 1 $((power + 0))); do\n  prev=$((i-1))\n  if [ \"$NO_TRIM\" = \"true\" ] || [ \"$NO_TRIM\" = \"+\" ]; then\n    ffmpeg -y -i \"${prev}.$input_format\" {arg:5+} -movflags +faststart \"${i}.$input_format\"\n  elif [ \"$NO_TRIM\" = \"false\" ] || [ \"$NO_TRIM\" = \"-\" ]; then\n    ffmpeg -y -stream_loop -1 -i \"${prev}.$input_format\" {arg:5+} -t \"$duration\" -movflags +faststart \"${i}.$input_format\"\n  fi\ndone\n\nrm -f list.txt\nfor i in $(seq 1 $((power + 0))); do\n  echo \"file '${i}.$input_format'\" >> list.txt\ndone\nffmpeg -y -f concat -safe 0 -i list.txt -crf 35 -pix_fmt yuv420p ./output/ihtx.\"$output_format\"\n\n# cleanup\nrm -f list.txt\nfor i in $(seq 0 $((power + 0))); do\n  rm -f \"${i}.$input_format\"\ndone\n}",
+        "owner_id": 1355759019330895973,
+        "created_at": "2026-08-01T04:18:37.825873+00:00",
+        "uses": 1,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": []
       }
     },
     "aliases": {

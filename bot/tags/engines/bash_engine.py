@@ -47,7 +47,13 @@ class BashEngine(BaseEngine):
             return EngineResult(error="bash: no command provided")
 
         try:
-            proc = await asyncio.create_subprocess_shell(
+            # Do not use create_subprocess_shell here: Python delegates that
+            # API to /bin/sh, even though this engine is explicitly called
+            # "bash". That makes valid Bash tag content fail with errors such
+            # as "/bin/sh: load: not found" and breaks Bash-only syntax.
+            proc = await asyncio.create_subprocess_exec(
+                "bash",
+                "-lc",
                 cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
