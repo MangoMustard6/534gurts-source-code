@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python] Pipe chains now automatically skip unknown effect names while preserving valid effects; an all-unknown chain returns the original media unchanged.
 - 2026-08-02: [Python] Added Uguu upload fallback when Catbox fails, plus th/uguu (alias ugupload) for direct file/video uploads.
 - 2026-08-02: [Python] Added th/funfact (aliases: fact, ihtxfact) with rotating facts about the IHTX bot and listed it in the th/bothelp Fun category.
 - 2026-08-02: [Python] Fixed autoreply2 silently not responding during Groq 429 quota exhaustion; it now sends a local status reply and temporarily skips repeated failed API calls.
@@ -3651,6 +3652,27 @@ def _apply_pipe_effects(
     if not effects:
         ok, err = _run_ffmpeg_raw(["ffmpeg", "-y", "-i", input_path, "-c", "copy", output_path], timeout=60)
         return ok, err
+
+    # Unknown names should not abort an otherwise valid chain. Keep parser-only
+    # raw filter names here because they are intentionally not public effects.
+    _PIPE_INTERNAL_EFFECTS = {"__rawvf__", "__rawaf__"}
+    unknown_effects = sorted({
+        name for name, _params in effects
+        if name not in PIPE_EFFECT_NAMES and name not in _PIPE_INTERNAL_EFFECTS
+    })
+    if unknown_effects:
+        print(f"[pipe] Skipping unknown effect(s): {', '.join(unknown_effects)}")
+        effects = [
+            (name, params)
+            for name, params in effects
+            if name in PIPE_EFFECT_NAMES or name in _PIPE_INTERNAL_EFFECTS
+        ]
+        if not effects:
+            ok, err = _run_ffmpeg_raw(
+                ["ffmpeg", "-y", "-i", input_path, "-c", "copy", output_path],
+                timeout=60,
+            )
+            return ok, err
 
     # Probe media properties for $fc/$vd/$sr/$f variable substitution.
     frame_count: int | None = None
