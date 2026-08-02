@@ -10,3 +10,4 @@
 - [VEB mention trigger](veb-mention-trigger.md) — VEB's random effects are command-only; bot mentions on replied media must not auto-process.
 - [Night Shift game](nightshift-game.md) — `/nightshift` renders all frames procedurally in memory and runs as a per-channel interactive game cog.
 - [Night Shift difficulty](nightshift-difficulty.md) — Easy, Normal, and Hard tune battery drain and animatronic movement; Normal is the default.
+- [Discord message length](discord-message-length.md) — clip FFmpeg and exception diagnostics before Discord replies or edits to stay under 2,000 characters.
