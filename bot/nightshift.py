@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
 from PIL import Image, ImageDraw, ImageEnhance
 
@@ -336,18 +335,27 @@ class NightShiftCog(commands.Cog):
         embed.set_image(url="attachment://nightshift.png")
         return embed, _frame_buffer(image)
 
-    @app_commands.command(name="nightshift", description="Survive a procedural animatronic night shift.")
-    async def nightshift(self, interaction: discord.Interaction) -> None:
-        channel_id = interaction.channel_id
+    @commands.hybrid_command(name="nightshift", description="Survive a procedural animatronic night shift.")
+    async def nightshift(self, ctx: commands.Context) -> None:
+        """Start a procedural animatronic night shift."""
+        channel_id = ctx.channel.id
         old = self.games.get(channel_id)
         if old and not old.ended:
-            await interaction.response.send_message("A night shift is already running in this channel.", ephemeral=True)
+            if ctx.interaction:
+                await ctx.interaction.response.send_message(
+                    "A night shift is already running in this channel.", ephemeral=True
+                )
+            else:
+                await ctx.reply("A night shift is already running in this channel.", mention_author=False)
             return
-        state = NightState(user_id=interaction.user.id, channel_id=channel_id)
+        state = NightState(user_id=ctx.author.id, channel_id=channel_id)
         view = NightShiftView(self, state)
         embed, file = self.build_message(state)
-        await interaction.response.send_message(embed=embed, file=file, view=view)
-        state.message = await interaction.original_response()
+        if ctx.interaction:
+            await ctx.interaction.response.send_message(embed=embed, file=file, view=view)
+            state.message = await ctx.interaction.original_response()
+        else:
+            state.message = await ctx.send(embed=embed, file=file, view=view)
         self.games[channel_id] = state
 
     @tasks.loop(seconds=1.0)
