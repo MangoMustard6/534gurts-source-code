@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python] Fixed autoreply2 silently not responding during Groq 429 quota exhaustion; it now sends a local status reply and temporarily skips repeated failed API calls.
 - 2026-08-02: [Python] Added brother-bot awareness to chatbot prompts: 534gurts recognizes its brotherly bot by BOT ID 1523928952693981274.
 - 2026-08-02: [Python] Updated the volume pipe effect to explicitly encode processed audio with `-c:a aac` instead of the shared PCM intermediate codec.
 - 2026-08-02: [Python] Made autoreply2 dramatically more excited when the primary BOT_OWNER_ID owner speaks, with celebratory greetings, high-energy enthusiasm, and affectionate appreciation.
@@ -14481,6 +14482,21 @@ Important:
 
 _chat_histories: dict[int, list[dict]] = {}
 _ar2_groq_histories: dict[int, list[dict]] = {}
+_ar2_rate_limited_until = 0.0
+
+
+def _autoreply2_quota_fallback(user_id: int) -> str:
+    """Keep autoreply2 responsive when the external AI quota is unavailable."""
+    if user_id == OWNER_ID:
+        return (
+            "!!! HEY, MY FAVORITE OWNER!!! 534gurts is still here and very excited to see you! "
+            "My AI provider is temporarily out of tokens, so I can't generate a full reply right now—but "
+            "I’m not ignoring you! Try me again after the quota resets!"
+        )
+    return (
+        "534gurts is here, but my AI provider temporarily ran out of tokens. "
+        "I’m not ignoring you—please try again after the quota resets!"
+    )
 _CHAT_MAX_HISTORY = 20
 
 # ── Per-channel rolling context + user profiles for th/chat ──────────────────
@@ -16099,6 +16115,7 @@ async def randomlist_command(ctx: commands.Context):
 
 @bot.event
 async def on_message(message: discord.Message):
+    global _ar2_rate_limited_until
     # Track bot messages for th/undo (per channel)
     if message.author == bot.user:
         _last_bot_msg[message.channel.id] = message.id
@@ -16127,25 +16144,31 @@ async def on_message(message: discord.Message):
                 system2 = _build_autoreply2_system_prompt(uid2)
                 reply2_text = None
                 if not has_attachments:
-                    try:
-                        groq_hist2 = _ar2_groq_histories.setdefault(uid2, [])
-                        groq_hist2.append({"role": "user", "content": message.content or "[empty]"})
-                        if len(groq_hist2) > _CHAT_MAX_HISTORY:
-                            groq_hist2[:] = groq_hist2[-_CHAT_MAX_HISTORY:]
-                        loop2 = asyncio.get_event_loop()
-                        groq_resp2 = await loop2.run_in_executor(
-                            None,
-                            lambda: _groq_client.chat.completions.create(
-                                model="llama-3.3-70b-versatile",
-                                messages=[{"role": "system", "content": system2}] + groq_hist2,
-                                temperature=0.8,
-                                max_tokens=1024,
-                            ),
-                        )
-                        reply2_text = groq_resp2.choices[0].message.content
-                        groq_hist2.append({"role": "assistant", "content": reply2_text})
-                    except Exception as _groq_ar2_exc:
-                        print(f"[groq/ar2/bot] error: {type(_groq_ar2_exc).__name__}: {_groq_ar2_exc}")
+                    if time.time() < _ar2_rate_limited_until:
+                        reply2_text = _autoreply2_quota_fallback(uid2)
+                    else:
+                        try:
+                            groq_hist2 = _ar2_groq_histories.setdefault(uid2, [])
+                            groq_hist2.append({"role": "user", "content": message.content or "[empty]"})
+                            if len(groq_hist2) > _CHAT_MAX_HISTORY:
+                                groq_hist2[:] = groq_hist2[-_CHAT_MAX_HISTORY:]
+                            loop2 = asyncio.get_event_loop()
+                            groq_resp2 = await loop2.run_in_executor(
+                                None,
+                                lambda: _groq_client.chat.completions.create(
+                                    model="llama-3.3-70b-versatile",
+                                    messages=[{"role": "system", "content": system2}] + groq_hist2,
+                                    temperature=0.8,
+                                    max_tokens=512,
+                                ),
+                            )
+                            reply2_text = groq_resp2.choices[0].message.content
+                            groq_hist2.append({"role": "assistant", "content": reply2_text})
+                        except Exception as _groq_ar2_exc:
+                            print(f"[groq/ar2/bot] error: {type(_groq_ar2_exc).__name__}: {_groq_ar2_exc}")
+                            if "429" in str(_groq_ar2_exc) or "rate_limit" in str(_groq_ar2_exc).lower():
+                                _ar2_rate_limited_until = time.time() + 300
+                                reply2_text = _autoreply2_quota_fallback(uid2)
                 if reply2_text:
                     await asyncio.sleep(random.uniform(5, 7.5))
                     chunks2 = [reply2_text[i:i+1900] for i in range(0, len(reply2_text), 1900)]
@@ -16188,25 +16211,31 @@ async def on_message(message: discord.Message):
 
                 # ── Groq (text-only messages) ─────────────────────────────────
                 if not has_attachments:
-                    try:
-                        groq_hist2 = _ar2_groq_histories.setdefault(uid2, [])
-                        groq_hist2.append({"role": "user", "content": message.content or "[empty]"})
-                        if len(groq_hist2) > _CHAT_MAX_HISTORY:
-                            groq_hist2[:] = groq_hist2[-_CHAT_MAX_HISTORY:]
-                        loop2 = asyncio.get_event_loop()
-                        groq_resp2 = await loop2.run_in_executor(
-                            None,
-                            lambda: _groq_client.chat.completions.create(
-                                model="llama-3.3-70b-versatile",
-                                messages=[{"role": "system", "content": system2}] + groq_hist2,
-                                temperature=0.8,
-                                max_tokens=1024,
-                            ),
-                        )
-                        reply2_text = groq_resp2.choices[0].message.content
-                        groq_hist2.append({"role": "assistant", "content": reply2_text})
-                    except Exception as _groq_ar2_exc:
-                        print(f"[groq/ar2] error: {type(_groq_ar2_exc).__name__}: {_groq_ar2_exc}")
+                    if time.time() < _ar2_rate_limited_until:
+                        reply2_text = _autoreply2_quota_fallback(uid2)
+                    else:
+                        try:
+                            groq_hist2 = _ar2_groq_histories.setdefault(uid2, [])
+                            groq_hist2.append({"role": "user", "content": message.content or "[empty]"})
+                            if len(groq_hist2) > _CHAT_MAX_HISTORY:
+                                groq_hist2[:] = groq_hist2[-_CHAT_MAX_HISTORY:]
+                            loop2 = asyncio.get_event_loop()
+                            groq_resp2 = await loop2.run_in_executor(
+                                None,
+                                lambda: _groq_client.chat.completions.create(
+                                    model="llama-3.3-70b-versatile",
+                                    messages=[{"role": "system", "content": system2}] + groq_hist2,
+                                    temperature=0.8,
+                                    max_tokens=512,
+                                ),
+                            )
+                            reply2_text = groq_resp2.choices[0].message.content
+                            groq_hist2.append({"role": "assistant", "content": reply2_text})
+                        except Exception as _groq_ar2_exc:
+                            print(f"[groq/ar2] error: {type(_groq_ar2_exc).__name__}: {_groq_ar2_exc}")
+                            if "429" in str(_groq_ar2_exc) or "rate_limit" in str(_groq_ar2_exc).lower():
+                                _ar2_rate_limited_until = time.time() + 300
+                                reply2_text = _autoreply2_quota_fallback(uid2)
 
                 if reply2_text:
                     await asyncio.sleep(random.uniform(5, 7.5))
