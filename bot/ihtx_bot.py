@@ -9,6 +9,7 @@ ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
 - 2026-08-01: [Python] Implemented th/ihtx no_trim argument after duration: true/yes/+ preserves full-length source and exports; false/no/- loops and trims each step to duration.
+- 2026-08-02: [Python] Added a th/bothelp guide for newer IHTX filters, including scgv, gradientmap, labadjust, wave, and frei0r plugin syntax.
 - 2026-08-01: [Python] Added optional overlay start offset to th/addsource; the fifth positional value snips the overlay from its beginning, e.g. `th/addsource URL 3x3 5 0.5 0.4`.
 - 2026-08-01: [Python] Added a startup notification in the configured Discord channel after each bot process restart, reporting the newest update-log change or restart reason.
 - 2026-08-01: [Python] Preserved Bash `${...}` parameter expansions while resolving nested TagScript placeholders, preventing generated filenames such as `$.mov`.
@@ -12344,6 +12345,25 @@ _HELP_ENTRIES: list[dict] = [
             "**Color:** `labadjust=l;a;b` (negate Lab channels; each 0 or 1)\n"
             "**Overlay:** `nepeta[=url]` (cat-ear PNG or custom image scaled to video) `watermark=<url>` `ring[=url]` `miui` `reddit` `caption=<text>`\n"
             "**Raw / FX:** `ffmpeg(<args>)` `frei0r=plugin:params` `lut=<url>` `speed=<factor>`"
+        ),
+    },
+    {
+        "cat": "heavy",
+        "name": "Newer filters & plugins (scgv, gradientmap, frei0r…)",
+        "value": (
+            "Newer IHTX effects are still used as comma-separated pipe effects; put each effect in the chain where it should run.\n"
+            "**Vocoder:** `scgv=<carrier_url>[;bands;ratio;threshold;release;attack;makeup;knee;detection;range;volume;pitch]` "
+            "— example: `scgv=https://example.com/carrier.mp3;64;2;1;50;0.01;1;8;peak;0;1;0`.\n"
+            "**Gradient map:** `gradientmap=R,G,B[,A[,position]];R,G,B[,A[,position]]…` "
+            "— example: `gradientmap=0,0,0,0,0;255,80,20,255,1` (also `gmap`). "
+            "Stops need at least two colors; RGB is 0–255 and position is 0–1.\n"
+            "**Lab adjustment:** `labadjust=L;A;B` (also `labadj`) — each channel is `0` or `1`; "
+            "example: `labadjust=1;0;1`.\n"
+            "**Wave distortion:** `wave=hSpeed|hFreq|hAmp|hPhase|vSpeed|vFreq|vAmp|vPhase[|separate|noclip]` "
+            "— example: `wave=1|1|2|0|1|1|2|0|1|1`.\n"
+            "**Installed frei0r plugins:** `frei0r=plugin:param:param` — example: "
+            "`frei0r=distort0r:*T`. Plugin names depend on the bot host; an unavailable plugin returns an FFmpeg error.\n"
+            "**Full example:** `th/ihtx 3 1.0 - mp4 gradientmap=0,0,0,0,0;255,80,20,255,1,wave=1|1|2|0|1|1|2|0`"
         ),
     },
     {
