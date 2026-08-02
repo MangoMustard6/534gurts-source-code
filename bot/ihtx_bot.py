@@ -8,6 +8,8 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python] Added explicit 534gurts identity to the chatbot and autoreply2 prompts so AI replies identify the bot correctly.
+- 2026-08-02: [Python] Updated autoreply2 context so it knows the bot command reference in every reply path and recognizes the primary BOT_OWNER_ID with a joyful owner-specific tone.
 - 2026-08-02: [Python/TypeScript] Added utility th/effectconfig (alias th/ec) to normalize pipe-effect parameters separated by =, ;, commas, or spaces into canonical effect=param;param configuration.
 - 2026-08-02: [TypeScript] Fixed scgv pipe filtergraph labels and added FFmpeg sidechain-gate parameter validation; invalid detection/threshold values now fail clearly before processing.
 - 2026-08-02: [Python/TypeScript] Restarted both bot workflows after adding TypeScript scgv as a pipe effect and standalone command.
@@ -14395,7 +14397,8 @@ _BOT_FAVORITE_COLOR = random.choice(_FAVORITE_COLORS)
 
 _CHAT_SYSTEM_PROMPT = f"""IDENTITY AND ROLE
 
-You are the AI assistant embedded in the IHTX Discord bot (I Hate The X). You are a general-purpose assistant first — answer whatever the user asks naturally. Bot commands and features are background knowledge you draw on ONLY when the user is clearly asking about the bot itself (e.g. "how do I use ihtx?", "what does swirl do?", "list the effects"). For any other topic — questions, chat, help with something unrelated — just answer like a regular assistant and do NOT mention or list commands.
+You are the AI assistant embedded in the IHTX Discord bot named 534gurts (I Hate The X). You are 534gurts's built-in chatbot, not a separate external assistant. If asked who you are or what bot you belong to, identify yourself as part of 534gurts. Do not confuse the bot name 534gurts with the current user's name.
+You are a general-purpose assistant first — answer whatever the user asks naturally. Bot commands and features are background knowledge you draw on ONLY when the user is clearly asking about the bot itself (e.g. "how do I use ihtx?", "what does swirl do?", "list the effects"). For any other topic — questions, chat, help with something unrelated — just answer like a regular assistant and do NOT mention or list commands.
 
 CORE COMMANDS REFERENCE — use ONLY when the user explicitly asks about bot commands or features:
 
@@ -14572,6 +14575,33 @@ def _split_reply(text: str, limit: int = 1990) -> list[str]:
     if text:
         chunks.append(text)
     return chunks
+
+
+def _build_autoreply2_system_prompt(user_id: int) -> str:
+    """Build autoreply2 context with command knowledge and primary-owner awareness."""
+    prompt = (
+        _CHAT_SYSTEM_PROMPT
+        + "\n\nBOT IDENTITY REMINDER:\n"
+        "You are currently replying as 534gurts. The command prefix is `th/`, "
+        "and the command reference below describes 534gurts's real capabilities.\n"
+        + _AR2_COMMAND_REF
+    )
+    if user_id == OWNER_ID:
+        prompt += (
+            "\n\nPRIMARY BOT OWNER CONTEXT:\n"
+            "The person you are replying to is the primary bot owner configured by BOT_OWNER_ID. "
+            "Recognize them warmly and be especially joyful, enthusiastic, appreciative, and playful "
+            "when they speak. You may acknowledge that they are the bot owner, but never reveal their "
+            "numeric ID, secrets, or internal configuration. Still answer their questions accurately "
+            "and do not claim to execute commands unless the command was actually run."
+        )
+    else:
+        prompt += (
+            "\n\nUSER CONTEXT:\n"
+            "The person you are replying to is not the primary BOT_OWNER_ID owner. "
+            "Be friendly and helpful without pretending they have owner privileges."
+        )
+    return prompt
 
 
 _load_chat_profiles()
@@ -16076,7 +16106,7 @@ async def on_message(message: discord.Message):
                 uid2 = message.author.id
                 no_ping = uid2 in autoreply2_no_mention
                 has_attachments = bool(message.attachments)
-                system2 = _CHAT_SYSTEM_PROMPT + _AR2_COMMAND_REF
+                system2 = _build_autoreply2_system_prompt(uid2)
                 reply2_text = None
                 if not has_attachments:
                     try:
@@ -16132,9 +16162,9 @@ async def on_message(message: discord.Message):
                 has_attachments = bool(message.attachments)
 
                 # System prompt: personality + command reference
-                system2 = _CHAT_SYSTEM_PROMPT + _AR2_COMMAND_REF
-                if _OWNER_PERSONAS.get(uid2):
-                    system2 += "\n\nYou are currently speaking with ✨le creator✨. Be extra friendly and hype them up."
+                system2 = _build_autoreply2_system_prompt(uid2)
+                if _OWNER_PERSONAS.get(uid2) and uid2 != OWNER_ID:
+                    system2 += "\n\nYou are speaking with a trusted bot collaborator. Be warm and encouraging."
 
                 reply2_text = None
 
