@@ -7,3 +7,4 @@
 - [Help preview attachments](help-preview-attachments.md) — use local PNG/GIF Discord attachments for bothelp previews; Catbox returned zero-byte image bodies.
 - [IHTX no-trim flags](ihtx-no-trim-flags.md) — `true`/`yes`/`+` preserves full length; `false`/`no`/`-` loops and trims to duration.
 - [Pitch value limit](pitch-value-limit.md) — pitch-layer commands consistently cap user-supplied pitch values at 100.
+- [VEB mention trigger](veb-mention-trigger.md) — VEB's random effects are command-only; bot mentions on replied media must not auto-process.
