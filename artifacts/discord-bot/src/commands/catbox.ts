@@ -4,6 +4,7 @@ import os from 'os';
 import { Message, EmbedBuilder, Attachment } from 'discord.js';
 import { spawnAsync } from '../utils/spawn.js';
 import { BOT_OWNER_ID } from '../config.js';
+import { uploadToUguu } from '../utils/catbox.js';
 
 const CATBOX_UPLOAD_SCRIPT = path.resolve('../../bot/catbox_upload.py');
 const MAX_FILE_BYTES = 200 * 1024 * 1024; // catbox.moe limit: 200 MB
@@ -91,13 +92,23 @@ export async function handleCatbox(message: Message, args: string[]): Promise<vo
     const result = await spawnAsync('python3', scriptArgs, { timeout: UPLOAD_TIMEOUT_MS });
 
     if (result.code !== 0) {
-      await status.edit(`❌ Catbox upload failed.\n\`\`\`\n${result.stderr.slice(-500)}\n\`\`\``);
+      const uguuUrl = await uploadToUguu(localPath);
+      if (uguuUrl) {
+        await status.edit(`✅ Catbox failed, so it was uploaded to **uguu.se** instead.\n${uguuUrl}`);
+      } else {
+        await status.edit(`❌ Catbox and Uguu uploads failed.\n\`\`\`\n${result.stderr.slice(-500)}\n\`\`\``);
+      }
       return;
     }
 
     const url = result.stdout.trim();
     if (!url.startsWith('http')) {
-      await status.edit(`❌ Unexpected catbox response: \`${url.slice(0, 200)}\``);
+      const uguuUrl = await uploadToUguu(localPath);
+      await status.edit(
+        uguuUrl
+          ? `✅ Catbox returned an invalid response, so it was uploaded to **uguu.se** instead.\n${uguuUrl}`
+          : `❌ Catbox and Uguu uploads failed. Unexpected Catbox response: \`${url.slice(0, 200)}\``,
+      );
       return;
     }
 

@@ -22,6 +22,7 @@ import { handleRoulette } from './commands/games/roulette.js';
 import { handleTrivia } from './commands/games/trivia.js';
 import { handleInfo } from './commands/info.js';
 import { handleCatbox } from './commands/catbox.js';
+import { handleUguu } from './commands/uguu.js';
 import { handleChat } from './commands/chat.js';
 import { handleClearchat } from './commands/clearchat.js';
 import { handleBytebeat, handleBytebeatInteraction } from './commands/bytebeat.js';
@@ -126,7 +127,7 @@ client.once('clientReady', async (c) => {
   console.log(`[IHTX-TS] Logged in as ${c.user.tag}`);
   console.log(`[IHTX-TS] Prefix: ${PREFIX}`);
   console.log(`[IHTX-TS] Owner ID: ${BOT_OWNER_ID || '(not set)'}`);
-  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitch2, ihtxsap, multipitch_bungee, mpb, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, bytebeat, ffmpegprocess, realgmajor4, stretch_to_length, gradientmap, gmap, gm, wave, scgv, sidechaingate_vocoder, repeat, rep, loop`);
+  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitch2, ihtxsap, multipitch_bungee, mpb, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, uguu, bytebeat, ffmpegprocess, realgmajor4, stretch_to_length, gradientmap, gmap, gm, wave, scgv, sidechaingate_vocoder, repeat, rep, loop`);
 
   // Register slash commands.
   // Set BOT_GUILD_ID env var for instant guild-level registration (dev),
@@ -262,6 +263,11 @@ client.on('messageCreate', async (message: Message) => {
       case 'cb':
       case 'upload':
         await handleCatbox(message, args);
+        break;
+
+      case 'uguu':
+      case 'ugupload':
+        await handleUguu(message);
         break;
 
       case 'bytebeat':
