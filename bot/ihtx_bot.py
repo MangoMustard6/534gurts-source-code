@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python] Added th/funfact (aliases: fact, ihtxfact) with rotating facts about the IHTX bot and listed it in the th/bothelp Fun category.
 - 2026-08-02: [Python] Fixed autoreply2 silently not responding during Groq 429 quota exhaustion; it now sends a local status reply and temporarily skips repeated failed API calls.
 - 2026-08-02: [Python] Added brother-bot awareness to chatbot prompts: 534gurts recognizes its brotherly bot by BOT ID 1523928952693981274.
 - 2026-08-02: [Python] Updated the volume pipe effect to explicitly encode processed audio with `-c:a aac` instead of the shared PCM intermediate codec.
@@ -12766,6 +12767,11 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "fun",
+        "name": "th/funfact  (aliases: fact, ihtxfact)",
+        "value": "Share a random fun fact about the IHTX bot and its 534gurts identity.",
+    },
+    {
+        "cat": "fun",
         "name": "th/tag <name> [args]  (aliases: tags)",
         "value": (
             "Invoke a custom tag. Run `th/tag help` for the full scripting reference.\n"
@@ -14467,6 +14473,7 @@ Utility:
 Economy / fun:
 • th/slots, th/blackjack, th/roulette, th/coinflip, th/dice, th/rps
 • th/garden — farming mini-game
+• th/funfact — fun facts about the IHTX bot
 
 AI:
 • th/ask <question> — quick AI answer
@@ -14701,6 +14708,7 @@ Economy & Profile:
 
 Fun & Utility:
 - th/uptime — bot uptime and render count
+- th/funfact — share a random fun fact about the IHTX bot
 - th/tag <name> [args] — run a custom TagScript tag
 - th/presets — list all IHTX presets (chaos, glitch, melt, etc.)
 - th/ihtxhelp — full IHTX command reference
@@ -14967,6 +14975,33 @@ async def resetlimit_error(ctx: commands.Context, error: commands.CommandError):
 
 
 # ---------- Fun commands ----------
+_IHTX_FUN_FACTS = [
+    "534gurts is the bot's name, while IHTX stands for “I Hate The X.”",
+    "IHTX can build long FFmpeg effect chains from a single th/ihtx pipe command.",
+    "The bot's pipe effects can use media-aware math variables such as $fc, $vd, $f, and $sr.",
+    "534gurts has a brotherly bot with Discord ID 1523928952693981274.",
+    "The bot can turn a video into a procedural Night Shift horror game through th/nightshift.",
+    "IHTX has both preset effects and custom semicolon-separated pipe effects.",
+    "The bot can generate a sidechain-gate vocoder effect with th/scgv or th/sidechaingate_vocoder.",
+    "The bot's autoreply2 AI knows the IHTX command reference and gets extra excited when its primary owner speaks.",
+    "IHTX supports gradient maps with multiple color stops through the th/gradientmap command and pipe effect.",
+    "The bot can upload oversized media to Catbox when a Discord attachment is too large.",
+]
+
+
+@bot.command(name="funfact", aliases=["fact", "ihtxfact"])
+async def funfact(ctx: commands.Context):
+    """Share a random fun fact about the IHTX bot."""
+    fact = random.choice(_IHTX_FUN_FACTS)
+    embed = discord.Embed(
+        title="IHTX Fun Fact",
+        description=f"💡 {fact}",
+        color=0x40E0D0,
+    )
+    embed.set_footer(text="534gurts · th/funfact")
+    await ctx.reply(embed=embed)
+
+
 _8BALL_RESPONSES = [
     "It is certain.", "It is decidedly so.", "Without a doubt.", "Yes, definitely.",
     "You may rely on it.", "As I see it, yes.", "Most likely.", "Outlook good.",
