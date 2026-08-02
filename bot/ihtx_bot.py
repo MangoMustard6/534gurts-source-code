@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python/TypeScript] Restarted both bot workflows after adding TypeScript scgv as a pipe effect and standalone command.
 - 2026-08-02: [Python] Fixed th/pipetest error reporting to clip oversized FFmpeg diagnostics before Discord replies/edits, preventing the 2,000-character Invalid Form Body error.
 - 2026-08-02: [Python] Added Easy, Normal, and Hard difficulty modes to th/nightshift; Easy slows battery drain and monster movement, Hard increases both, and Normal remains the default.
 - 2026-08-02: [Python] Converted th/nightshift into a hybrid command; it now starts the same interactive game from either `th/nightshift` or `/nightshift`.

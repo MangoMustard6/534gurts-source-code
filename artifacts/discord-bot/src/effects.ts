@@ -11,6 +11,9 @@ import { spawnAsync } from './utils/spawn.js';
 import { PROCESS_TIMEOUTS } from './config.js';
 import { parseGradientParams, applyGradientmap as applyGradientmapCore } from './commands/gradientmap.js';
 import { WAVE_PRESETS, WavePresetKey } from './wavePresets.js';
+import { buildVocoderCommand } from './commands/scgv.js';
+import { makeTempDir, cleanupDir, downloadUrl } from './utils/temp.js';
+import path from 'node:path';
 
 // ── Processor context ────────────────────────────────────────────────
 
@@ -18,6 +21,86 @@ export interface ProcessorContext {
   inputFile: string;
   outputFile: string;
   timeout?: number;
+}
+
+// ── Sidechain-gate vocoder ────────────────────────────────────────────
+
+/**
+ * Apply the SCGV vocoder. The input media is the modulator and the first
+ * parameter is the carrier URL, followed by the positional vocoder options.
+ *
+ * Pipe syntax:
+ *   scgv=<carrier_url>[;bandwidth;ratio;threshold;release;attack;makeup;knee;detection;range;volume;pitch]
+ */
+export async function applySidechainGateVocoder(
+  ctx: ProcessorContext,
+  params: string[],
+): Promise<void> {
+  const carrierUrl = params[0]?.trim();
+  if (!carrierUrl) {
+    throw new Error('scgv requires a carrier URL');
+  }
+
+  const numeric = (index: number): number | undefined => {
+    const value = params[index];
+    if (value === undefined || value.trim() === '') return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
+
+  const options = {
+    url: carrierUrl,
+    bandwidth: numeric(1),
+    ratio: numeric(2),
+    threshold: numeric(3),
+    release: numeric(4),
+    attack: numeric(5),
+    makeup: numeric(6),
+    knee: numeric(7),
+    detection: params[8]?.trim() || undefined,
+    range: numeric(9),
+    volume: numeric(10),
+    pitch: numeric(11),
+  };
+
+  const command = buildVocoderCommand(options);
+  if (!command.ffmpegArgs) {
+    throw new Error(command.usageHelp || 'scgv could not build an FFmpeg command');
+  }
+
+  const carrierDir = makeTempDir('scgv-carrier');
+  const carrierExt = path.extname(new URL(carrierUrl).pathname) || '.mp3';
+  const carrierPath = path.join(carrierDir, `carrier${carrierExt}`);
+
+  try {
+    await downloadUrl(carrierUrl, carrierPath);
+
+    // Replace the builder's carrier URL with the downloaded local file.
+    const carrierInputIndex = command.ffmpegArgs.indexOf(carrierUrl);
+    if (carrierInputIndex < 0) {
+      throw new Error('scgv command did not contain its carrier input');
+    }
+    const ffmpegArgs = [...command.ffmpegArgs];
+    ffmpegArgs[carrierInputIndex] = carrierPath;
+
+    await spawnAsync('ffmpeg', [
+      '-loglevel', 'error',
+      '-hide_banner',
+      '-y',
+      '-i', ctx.inputFile,
+      ...ffmpegArgs,
+      '-c:v', 'libx264',
+      '-preset', 'fast',
+      '-crf', '23',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-shortest',
+      ctx.outputFile,
+    ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
+  } finally {
+    cleanupDir(carrierDir);
+  }
 }
 
 // ── Video dimension probing ──────────────────────────────────────────

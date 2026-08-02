@@ -4,7 +4,7 @@ import fs from 'fs';
 import { makeTempDir, cleanupDir, downloadUrl } from '../utils/temp.js';
 import { getUploadLimitBytes, formatBytes } from '../utils/limits.js';
 import { _upload_to_catbox } from '../utils/catbox.js';
-import { applyGradientmap, applyWave } from '../effects.js';
+import { applyGradientmap, applySidechainGateVocoder, applyWave } from '../effects.js';
 import {
   parseGradientParams,
   parseGradientPointsText,
@@ -24,6 +24,7 @@ const USAGE =
   `• \`wave=<preset>\` — ${WAVE_PRESET_LIST}\n` +
   '• `wave=custom:<hSpd>|<hFreq>|<hAmp>|<hPhase>|<vSpd>|<vFreq>|<vAmp>|<vPhase>`\n' +
   '• `gradientmap <R,G,B> <R,G,B> ...` — color gradient map\n' +
+  '• `scgv=<carrier_url>[;bandwidth;ratio;threshold;release;attack;makeup;knee;detection;range;volume;pitch]` — sidechain-gate vocoder\n' +
   '**Examples:**\n' +
   '`th/pipetest wave=largeWave`\n' +
   '`th/pipetest wave=custom:0|15|0.8|0|0|0|0|0`\n' +
@@ -93,6 +94,7 @@ export async function handlePipetest(message: Message, rest: string): Promise<vo
   const firstToken = tokens[0];
   const firstLower = firstToken.toLowerCase();
   const isWave = firstLower.startsWith('wave=') || firstLower === 'wave';
+  const isScgv = firstLower.startsWith('scgv=') || firstLower === 'scgv';
 
   const tmpDir = makeTempDir('pipetest');
   const startTime = Date.now();
@@ -147,6 +149,42 @@ export async function handlePipetest(message: Message, rest: string): Promise<vo
         files: [{ attachment: outputPath, name: path.basename(outputPath) }],
       });
 
+    } else if (isScgv) {
+      const vocoderParams = [
+        firstLower.startsWith('scgv=') ? firstToken.slice('scgv='.length) : '',
+        ...tokens.slice(1),
+      ];
+      const carrier = vocoderParams[0] || '(missing carrier)';
+      const status = await message.reply(`⏳ Applying scgv vocoder with carrier \`${carrier.slice(0, 80)}\`…`);
+
+      await applySidechainGateVocoder(
+        { inputFile: inputPath, outputFile: outputPath },
+        vocoderParams,
+      );
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(3);
+      if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
+        await status.edit('❌ SCGV produced no output.');
+        return;
+      }
+
+      const outSize = fs.statSync(outputPath).size;
+      const uploadLimit = getUploadLimitBytes(message.guild ?? null);
+      if (outSize > uploadLimit) {
+        await status.edit(`Output too large for Discord (${formatBytes(outSize)}). Uploading to Catbox…`);
+        const catboxUrl = await _upload_to_catbox(outputPath);
+        await status.edit(
+          catboxUrl
+            ? `✅ SCGV done! (${elapsed}s)\n-# Output exceeded Discord limit — uploaded to Catbox.\n${catboxUrl}`
+            : `❌ Too large for Discord and Catbox upload failed. (${formatBytes(outSize)})`,
+        );
+        return;
+      }
+
+      await status.edit({
+        content: `✅ SCGV vocoder applied\n-# Took ${elapsed} seconds.`,
+        files: [{ attachment: outputPath, name: 'sidechaingate_vocoder.mp4' }],
+      });
     } else {
       // ── Gradientmap effect ─────────────────────────────────────────────
       let params = tokens;
