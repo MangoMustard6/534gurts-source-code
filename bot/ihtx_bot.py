@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python] Added Uguu upload fallback when Catbox fails, plus th/uguu (alias ugupload) for direct file/video uploads.
 - 2026-08-02: [Python] Added th/funfact (aliases: fact, ihtxfact) with rotating facts about the IHTX bot and listed it in the th/bothelp Fun category.
 - 2026-08-02: [Python] Fixed autoreply2 silently not responding during Groq 429 quota exhaustion; it now sends a local status reply and temporarily skips repeated failed API calls.
 - 2026-08-02: [Python] Added brother-bot awareness to chatbot prompts: 534gurts recognizes its brotherly bot by BOT ID 1523928952693981274.
@@ -1041,15 +1042,42 @@ async def _upload_to_catbox(file_path: str) -> str | None:
                     _renders_completed += 1
                     asyncio.ensure_future(_update_bot_presence())
                     return text.strip()
-                return None
+                return await _upload_to_uguu(file_path)
     except Exception:
-        return None
+        return await _upload_to_uguu(file_path)
     finally:
         if transcoded:
             try:
                 os.remove(transcoded)
             except OSError:
                 pass
+
+
+async def _upload_to_uguu(file_path: str) -> str | None:
+    """Upload a file to uguu.se and return its direct URL, or None on failure."""
+    try:
+        with open(file_path, "rb") as fh:
+            form = aiohttp.FormData()
+            form.add_field(
+                "files[]",
+                fh,
+                filename=Path(file_path).name,
+                content_type="application/octet-stream",
+            )
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://uguu.se/upload.php",
+                    data=form,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as resp:
+                    if resp.status != 200:
+                        return None
+                    payload = await resp.json(content_type=None)
+                    files = payload.get("files", []) if isinstance(payload, dict) else []
+                    url = files[0].get("url") if files and isinstance(files[0], dict) else None
+                    return url.strip() if isinstance(url, str) and url.startswith("https://") else None
+    except Exception:
+        return None
 
 
 def _ffprobe(input_path: str, *args: str) -> str:
@@ -12753,7 +12781,12 @@ _HELP_ENTRIES: list[dict] = [
     {
         "cat": "fun",
         "name": "th/catbox  (aliases: cb, upload)",
-        "value": "Upload any file (up to 200 MB) to catbox.moe and get a permanent direct link.",
+        "value": "Upload any file (up to 200 MB) to catbox.moe; automatically falls back to uguu.se if Catbox fails.",
+    },
+    {
+        "cat": "fun",
+        "name": "th/uguu  (alias: ugupload)",
+        "value": "Upload an attached or replied-to file/video to uguu.se and get a direct link.",
     },
     {
         "cat": "fun",
@@ -14461,7 +14494,8 @@ Heavy/effects commands:
 
 Utility:
 • th/yt <url> — download YouTube video
-• th/catbox — upload attachment to catbox.moe
+• th/catbox — upload attachment to catbox.moe (uguu.se fallback)
+• th/uguu — upload attachment directly to uguu.se
 • th/download — download replied/attached URL
 • th/ffmpeg <args> — raw FFmpeg passthrough
 • th/math <expr> — safe math evaluator
@@ -14694,7 +14728,8 @@ Heavy (media processing):
 
 Downloads & Upload:
 - th/ytdl <url or search> — download video from YouTube/URL or search query (TypeScript bot)
-- th/catbox — upload file to catbox.moe (up to 200 MB)
+- th/catbox — upload file to catbox.moe (up to 200 MB; uguu.se fallback)
+- th/uguu — upload a file/video directly to uguu.se
 
 AI & Chat:
 - th/chat / th/ask / th/ai <prompt> — chat with Clankered (you!) — powered by Groq + Gemini fallback
@@ -16800,7 +16835,7 @@ async def catbox_upload(ctx: commands.Context):
 
       th/catbox   (with file attached, or reply to a message with a file)
     """
-    src = attachment
+    src = None
     if src is None and ctx.message.attachments:
         src = ctx.message.attachments[0]
     if src is None and ctx.message.reference:
@@ -16811,29 +16846,68 @@ async def catbox_upload(ctx: commands.Context):
         except Exception:
             pass
     if src is None:
-        await ctx.reply("📎 attach a file or reply to a message with a file to upload it to catbox.moe")
+        await ctx.reply("📎 attach a file or reply to a message with a file to upload it to catbox.moe (or use `th/uguu`)")
         return
 
     status_msg = await ctx.reply(f"⬆️ uploading `{src.filename}` to catbox.moe…")
     try:
-        file_bytes = await src.read()
-        data = aiohttp.FormData()
-        data.add_field("reqtype", "fileupload")
-        data.add_field(
-            "fileToUpload",
-            file_bytes,
-            filename=src.filename,
-            content_type=src.content_type or "application/octet-stream",
-        )
-        async with aiohttp.ClientSession() as session:
-            async with session.post("https://catbox.moe/user/api.php", data=data, timeout=aiohttp.ClientTimeout(total=120)) as r:
-                result = await r.text()
-        if result.startswith("https://"):
-            await status_msg.edit(content=f"✅ {result.strip()}")
+        with tempfile.NamedTemporaryFile(
+            prefix="ihtx-upload-", suffix=Path(src.filename).suffix, delete=False
+        ) as temp:
+            temp_path = temp.name
+        await src.save(temp_path)
+        file_url = await _upload_to_catbox(temp_path)
+        if file_url:
+            provider = "catbox.moe" if "catbox.moe" in file_url else "uguu.se (Catbox fallback)"
+            await status_msg.edit(content=f"✅ Uploaded to **{provider}**\n{file_url}")
         else:
-            await status_msg.edit(content=f"❌ catbox error: {result[:300]}")
+            await status_msg.edit(content="❌ Catbox and Uguu uploads failed.")
     except Exception as e:
         await status_msg.edit(content=f"❌ upload failed: {e}")
+    finally:
+        if "temp_path" in locals():
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+
+@bot.command(name="uguu", aliases=["ugupload"])
+async def uguu_upload(ctx: commands.Context):
+    """Upload an attached or replied-to file directly to uguu.se."""
+    src = ctx.message.attachments[0] if ctx.message.attachments else None
+    if src is None and ctx.message.reference:
+        try:
+            ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+            if ref.attachments:
+                src = ref.attachments[0]
+        except Exception:
+            pass
+    if src is None:
+        await ctx.reply("📎 attach a file/video or reply to a message with one to upload it to uguu.se")
+        return
+
+    status_msg = await ctx.reply(f"⬆️ uploading `{src.filename}` to uguu.se…")
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="ihtx-uguu-", suffix=Path(src.filename).suffix, delete=False
+        ) as temp:
+            temp_path = temp.name
+        await src.save(temp_path)
+        url = await _upload_to_uguu(temp_path)
+        if url:
+            await status_msg.edit(content=f"✅ Uploaded to **uguu.se**\n{url}")
+        else:
+            await status_msg.edit(content="❌ Uguu upload failed.")
+    except Exception as e:
+        await status_msg.edit(content=f"❌ Uguu upload failed: {e}")
+    finally:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 
 # ---------- Guess Effect Mini-Game ----------
