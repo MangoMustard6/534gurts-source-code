@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python] Updated the volume pipe effect to explicitly encode processed audio with `-c:a aac` instead of the shared PCM intermediate codec.
 - 2026-08-02: [Python] Made autoreply2 dramatically more excited when the primary BOT_OWNER_ID owner speaks, with celebratory greetings, high-energy enthusiasm, and affectionate appreciation.
 - 2026-08-02: [Python] Added explicit 534gurts identity to the chatbot and autoreply2 prompts so AI replies identify the bot correctly.
 - 2026-08-02: [Python] Updated autoreply2 context so it knows the bot command reference in every reply path and recognizes the primary BOT_OWNER_ID with a joyful owner-specific tone.
@@ -3919,7 +3920,13 @@ def _apply_pipe_effects(
                     # pcm_s16le is lossless but requires a container that supports it.
                     # Use .mkv for intermediates; for the final output honour the extension.
                     _pcm_exts = {".mkv", ".wav", ".avi", ".mka"}
-                    if is_last:
+                    if name == "volume":
+                        # Volume pipe output is intentionally AAC-encoded, including
+                        # intermediate stages, to avoid carrying raw PCM through
+                        # the rest of a volume-heavy chain.
+                        audio_out = out if is_last else os.path.join(tmpdir, f"pipe_{i}.mkv")
+                        audio_codec_args = ["-c:a", "aac"]
+                    elif is_last:
                         audio_out = out
                         _out_ext = os.path.splitext(out)[1].lower()
                         audio_codec_args = ["-c:a", "pcm_s16le"] if _out_ext in _pcm_exts else ["-c:a", "aac", "-b:a", "192k"]
