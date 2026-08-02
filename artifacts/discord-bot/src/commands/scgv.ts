@@ -45,7 +45,7 @@ export function buildVocoderCommand(args: Partial<VocoderArgs> & { url?: string 
   }
 
   const showCode = args.showCode ?? false;
-  const url = args.url.replace('https', 'https""');
+  const url = args.url;
   const bands = args.bandwidth ?? 64;
   const detection = args.detection ?? 'peak';
   const release = args.release ?? 50;

@@ -39,6 +39,7 @@ import { handleBlockuserCommand, handleUnblockuserCommand, isBlocked as isUserBl
 import { handleBlockchannelCommand, handleUnblockchannelCommand, isBlockedInChannel } from './commands/blockchannel.js';
 import { handleKlaskysource } from './commands/klaskysource.js';
 import { handleVideolength } from './commands/videolength.js';
+import { handleScgv } from './commands/scgv-command.js';
 
 if (!BOT_TOKEN) {
   console.error('ERROR: DISCORD_TOKEN environment variable is not set.');
@@ -124,7 +125,7 @@ client.once('clientReady', async (c) => {
   console.log(`[IHTX-TS] Logged in as ${c.user.tag}`);
   console.log(`[IHTX-TS] Prefix: ${PREFIX}`);
   console.log(`[IHTX-TS] Owner ID: ${BOT_OWNER_ID || '(not set)'}`);
-  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitch2, ihtxsap, multipitch_bungee, mpb, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, bytebeat, ffmpegprocess, realgmajor4, stretch_to_length, gradientmap, gmap, gm, wave, repeat, rep, loop`);
+  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitch2, ihtxsap, multipitch_bungee, mpb, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, bytebeat, ffmpegprocess, realgmajor4, stretch_to_length, gradientmap, gmap, gm, wave, scgv, sidechaingate_vocoder, repeat, rep, loop`);
 
   // Register slash commands.
   // Set BOT_GUILD_ID env var for instant guild-level registration (dev),
@@ -317,6 +318,11 @@ client.on('messageCreate', async (message: Message) => {
       case 'rep':
       case 'loop':
         await handleRepeat(message, rest);
+        break;
+
+      case 'scgv':
+      case 'sidechaingate_vocoder':
+        await handleScgv(message, rest);
         break;
 
       case 'blockuser':
