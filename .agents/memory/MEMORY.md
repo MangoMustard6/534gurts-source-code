@@ -6,3 +6,4 @@
 - [Building missing frei0r plugins on Nix](frei0r-plugin-build.md) — the Nix frei0r package may omit newer plugins like mirr0r; build from source and install to ~/.frei0r-1/lib/ so FFmpeg discovers them.
 - [Help preview attachments](help-preview-attachments.md) — use local PNG/GIF Discord attachments for bothelp previews; Catbox returned zero-byte image bodies.
 - [IHTX no-trim flags](ihtx-no-trim-flags.md) — `true`/`yes`/`+` preserves full length; `false`/`no`/`-` loops and trims to duration.
+- [Pitch value limit](pitch-value-limit.md) — pitch-layer commands consistently cap user-supplied pitch values at 100.

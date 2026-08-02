@@ -28,6 +28,7 @@ import { getUploadLimitBytes, formatBytes } from '../utils/limits.js';
 
 const BINARY_URL = 'https://file.garden/aTXso15ukD3mnuPI/multipitch';
 const DEFAULT_SR  = 44100;
+const MAX_PITCH_VALUES = 100;
 
 type WaveHammer = 'G-Major_17' | 'Evil_Rampaging_Sorcerer';
 const WAVE_HAMMERS: ReadonlySet<string> = new Set<WaveHammer>(['G-Major_17', 'Evil_Rampaging_Sorcerer']);
@@ -90,6 +91,8 @@ function parseArgs(raw: string): Opts | string {
   const pitchValues = pitchToken.split('|');
   if (pitchValues.length === 0 || pitchValues.some((p) => p.trim() === ''))
     return `❌ Empty pitch value in \`${pitchToken}\`.`;
+  if (pitchValues.length > MAX_PITCH_VALUES)
+    return `❌ Too many pitch values (maximum: ${MAX_PITCH_VALUES}). Got ${pitchValues.length}.`;
   if (pitchValues.some((p) => isNaN(Number(p.trim()))))
     return `❌ All pitches must be numbers. Got: \`${pitchToken}\``;
 

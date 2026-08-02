@@ -9,6 +9,7 @@ ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
 - 2026-08-01: [Python] Implemented th/ihtx no_trim argument after duration: true/yes/+ preserves full-length source and exports; false/no/- loops and trims each step to duration.
+- 2026-08-02: [Python/TypeScript] Raised the maximum pitch-value count to 100 for ihtxsap, multipitch, multipitch2, multipitch3, and multipitchsox.
 - 2026-08-02: [Python] Added a th/bothelp guide for newer IHTX filters, including scgv, gradientmap, labadjust, wave, and frei0r plugin syntax.
 - 2026-08-01: [Python] Added optional overlay start offset to th/addsource; the fifth positional value snips the overlay from its beginning, e.g. `th/addsource URL 3x3 5 0.5 0.4`.
 - 2026-08-01: [Python] Added a startup notification in the configured Discord channel after each bot process restart, reporting the newest update-log change or restart reason.
@@ -5437,7 +5438,7 @@ def _run_ihtx_tagscript_workflow(
 
 # ---------- Multipitch (Rubber Band R3 pitch-shift pipeline) ----------
 
-MAX_PITCHES = 64
+MAX_PITCHES = 100
 
 # Path to the Signalsmith multi-pitch binary (downloaded at startup)
 _MULTIPITCH_BIN = os.path.join(os.path.dirname(__file__), "fileaa")
@@ -8333,7 +8334,7 @@ _MULTIPITCH_AUDIO_EXTS = {
     ".wav", ".mp3", ".flac", ".ogg", ".aac", ".m4a", ".opus",
 }
 
-_MULTIPITCH_MAX = 20
+_MULTIPITCH_MAX = 100
 
 
 @bot.command(name="multipitch", aliases=["mp", "multi"])
@@ -8588,7 +8589,7 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
 
 _IHTXSAP_MAX_REPS    = 1000
 _IHTXSAP_MAX_DUR     = 3600.0
-_IHTXSAP_MAX_PITCHES = 20
+_IHTXSAP_MAX_PITCHES = 100
 
 _IHTXSAP_AUDIO_EXTS = {
     ".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a", ".opus", ".wma", ".aiff", ".aif",
