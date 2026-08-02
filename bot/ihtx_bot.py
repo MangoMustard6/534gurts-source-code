@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python/TypeScript] Fixed adjacent pipe assignments such as `mp=-7|7 volume=2`: the parser now keeps each effect separate instead of attaching the next effect as a parameter.
 - 2026-08-02: [Python] Pipe chains now automatically skip unknown effect names while preserving valid effects; an all-unknown chain returns the original media unchanged.
 - 2026-08-02: [Python] Added Uguu upload fallback when Catbox fails, plus th/uguu (alias ugupload) for direct file/video uploads.
 - 2026-08-02: [Python] Added th/funfact (aliases: fact, ihtxfact) with rotating facts about the IHTX bot and listed it in the th/bothelp Fun category.
@@ -3046,7 +3047,22 @@ def _parse_pipe_effects(pipe_str: str) -> list[tuple[str, list[str]]]:
     current_name = None
     current_params: list[str] = []
 
-    for part in _split_pipe_segments(pipe_str):
+    # A comma is the canonical effect delimiter, but users commonly write
+    # adjacent assignments with whitespace:
+    #   mp=-7|7 volume=2
+    # Do not let the second assignment become another multipitch parameter.
+    # This split is deliberately limited to a whitespace followed by a
+    # `name=` shape, so ordinary positional parameters (`brightness=1 2 3`)
+    # and pipe-separated values (`mp=-7|7`) remain intact.
+    raw_parts: list[str] = []
+    for segment in _split_pipe_segments(pipe_str):
+        assignment_parts = re.split(
+            r"\s+(?=[^\s=]+\s*=)",
+            segment.strip(),
+        )
+        raw_parts.extend(part for part in assignment_parts if part.strip())
+
+    for part in raw_parts:
         part = part.strip()
         if not part:
             continue
