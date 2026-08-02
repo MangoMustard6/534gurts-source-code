@@ -228,6 +228,7 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
           '`th/tag <name> [args]` *tags* — Custom scripting tags (variables, math, iscript, IHTX)',
           '`th/submiteffect <name> <effects>` *se addeffect* — Submit named pipe-effect combo',
           '`th/listeffects` *le effectlist* — Browse user-submitted effects (paginated)',
+          '`th/effectconfig <effect> <params>` *ec* — Normalize pipe-effect settings into `effect=param;param` configuration',
         ].join('\n'),
       },
       {

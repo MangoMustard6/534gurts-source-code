@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python/TypeScript] Added utility th/effectconfig (alias th/ec) to normalize pipe-effect parameters separated by =, ;, commas, or spaces into canonical effect=param;param configuration.
 - 2026-08-02: [TypeScript] Fixed scgv pipe filtergraph labels and added FFmpeg sidechain-gate parameter validation; invalid detection/threshold values now fail clearly before processing.
 - 2026-08-02: [Python/TypeScript] Restarted both bot workflows after adding TypeScript scgv as a pipe effect and standalone command.
 - 2026-08-02: [Python] Fixed th/pipetest error reporting to clip oversized FFmpeg diagnostics before Discord replies/edits, preventing the 2,000-character Invalid Form Body error.
@@ -12805,6 +12806,11 @@ _HELP_ENTRIES: list[dict] = [
         "name": "th/bothelp  (alias: ihtxhelp)",
         "value": "Show this interactive command reference.",
     },
+    {
+        "cat": "utility",
+        "name": "th/effectconfig  (alias: ec)",
+        "value": "Normalize pipe-effect parameters separated by =, ;, commas, or spaces into canonical effect=param;param configuration.",
+    },
     # ── Owner ──
     {
         "cat": "owner",
@@ -16996,6 +17002,45 @@ async def guesseffect(ctx: commands.Context):
 
 
 # ---------- th/convert — convert video to video fmt + audio fmt + image fmt ----------
+
+@bot.command(name="effectconfig", aliases=["ec"])
+async def effectconfig_command(ctx: commands.Context, *, raw: str = ""):
+    """Normalize flexible pipe-effect arguments into canonical effect=param;param syntax."""
+    usage = (
+        "**Usage:** `th/effectconfig <effect>[=<param>[;param...]]`\n"
+        "**Also accepts:** spaces and commas as parameter separators.\n"
+        "**Examples:**\n"
+        "`th/effectconfig scgv carrier.mp3 64 2 0.5 peak` → `scgv=carrier.mp3;64;2;0.5;peak`\n"
+        "`th/effectconfig wave=1,15,0.8,0` → `wave=1;15;0.8;0`"
+    )
+
+    if not raw.strip():
+        names = sorted(PIPE_EFFECT_NAMES)
+        await ctx.reply(
+            f"**Available pipe effects:**\n`{'`, `'.join(names)}`\n\n{usage}"
+        )
+        return
+
+    tokens = [token.strip() for token in re.split(r"[=;,\s]+", raw.strip()) if token.strip()]
+    requested = tokens.pop(0).lower() if tokens else ""
+    aliases = {
+        "invert": "negate",
+        "mp": "multipitch",
+        "multi": "multipitch",
+        "gm": "gradientmap",
+        "gmap": "gradientmap",
+        "rj": "randomjitter",
+        "p2p": "pinch&punch",
+        "pnp": "pinch&punch",
+    }
+    effect = aliases.get(requested, requested)
+    if effect not in PIPE_EFFECT_NAMES:
+        await ctx.reply(f"❌ Unknown pipe effect `{requested}`.\n{usage}")
+        return
+
+    normalized = f"{effect}={';'.join(tokens)}" if tokens else effect
+    await ctx.reply(f"✅ **Normalized pipe configuration:**\n`{normalized}`")
+
 
 _CONVERT_VIDEO_FMTS = {"mp4", "mkv", "webm", "avi", "mov"}
 _CONVERT_AUDIO_FMTS = {"mp3", "wav", "ogg", "flac", "aac", "m4a", "opus"}
