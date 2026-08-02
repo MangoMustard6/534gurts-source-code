@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python] Added /nightshift, a Pillow-rendered interactive horror game with in-memory office/camera/jumpscare frames, power drain, moving threats, and owner-locked controls.
 - 2026-08-02: [Python] Removed VEB's automatic bot-mention reply-to-video random pipe-effect trigger; normal `th/veb` and media reply handling remain available.
 - 2026-08-02: [Python/TypeScript] Raised the maximum pitch-value count to 100 for ihtxsap, multipitch, multipitch2, multipitch3, and multipitchsox.
 - 2026-08-02: [Python] Added a th/bothelp guide for newer IHTX filters, including scgv, gradientmap, labadjust, wave, and frei0r plugin syntax.
@@ -7401,6 +7402,14 @@ async def on_ready():
             print("BytebeatCog loaded.")
         except Exception as _bb_exc:
             print(f"Warning: BytebeatCog failed to load — {_bb_exc}")
+    # Load Night Shift — procedural Pillow-rendered horror minigame
+    if "NightShiftCog" not in bot.cogs:
+        try:
+            from bot.nightshift import setup as _nightshift_setup
+            await _nightshift_setup(bot)
+            print("NightShiftCog loaded.")
+        except Exception as _nightshift_exc:
+            print(f"Warning: NightShiftCog failed to load — {_nightshift_exc}")
     # Auto-sync slash commands in a background task so exceptions surface in
     # the console and don't silently fail inside on_ready's exception handler.
     async def _auto_sync_slash():
