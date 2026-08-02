@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python] Removed the `.t` automatic reply filter trigger from bot/autoreplies.json.
 - 2026-08-02: [Python/TypeScript] Raised the maximum pitch-value count to 100 for ihtxsap, multipitch, multipitch2, multipitch3, and multipitchsox.
 - 2026-08-02: [Python] Added a th/bothelp guide for newer IHTX filters, including scgv, gradientmap, labadjust, wave, and frei0r plugin syntax.
 - 2026-08-01: [Python] Implemented th/ihtx no_trim argument after duration: true/yes/+ preserves full-length source and exports; false/no/- loops and trims each step to duration.
