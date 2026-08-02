@@ -33,6 +33,7 @@ const FILEAA_BIN = path.resolve(process.cwd(), '../../bot/fileaa');
 // multipitch binary — used by the Bungee style and by th/multipitch_bungee (mpb).
 const MULTIPITCH_BIN = path.resolve(process.cwd(), '../../bot/multipitch');
 const MULTIPITCH_URL = 'https://file.garden/aTXso15ukD3mnuPI/multipitch';
+const MAX_PITCH_VALUES = 100;
 
 const IMAGE_EXTENSIONS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'svg', 'ico', 'avif', 'heic',
@@ -166,6 +167,8 @@ function parsePrefixArgs(raw: string): SapOpts | string {
   const pitches = tokens[2].split(';').map((p) => parseFloat(p.trim()));
   if (pitches.some(isNaN) || pitches.length < 1)
     return `❌ \`pitches\` must be semicolon-separated numbers, e.g. \`-7;5;6\`.`;
+  if (pitches.length > MAX_PITCH_VALUES)
+    return `❌ Too many pitch values (maximum: ${MAX_PITCH_VALUES}). Got ${pitches.length}.`;
   if (pitches.some((p) => Math.abs(p) > 120))
     return `❌ Pitch shifts must be within ±120 semitones.`;
 
@@ -610,6 +613,10 @@ export async function handleIhtxSapInteraction(slash: ChatInputCommandInteractio
   const pitches = pitchStr.trim().split(/\s+/).map(Number);
   if (pitches.some(isNaN) || pitches.length < 1) {
     await slash.editReply('❌ `pitches` must be space-separated numbers, e.g. `1 2 3` or `-7 5 6`.');
+    return;
+  }
+  if (pitches.length > MAX_PITCH_VALUES) {
+    await slash.editReply(`❌ Too many pitch values (maximum: ${MAX_PITCH_VALUES}). Got ${pitches.length}.`);
     return;
   }
   if (pitches.some((p) => Math.abs(p) > 120)) {
