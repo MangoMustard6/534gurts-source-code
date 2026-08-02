@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python] Made autoreply2 dramatically more excited when the primary BOT_OWNER_ID owner speaks, with celebratory greetings, high-energy enthusiasm, and affectionate appreciation.
 - 2026-08-02: [Python] Added explicit 534gurts identity to the chatbot and autoreply2 prompts so AI replies identify the bot correctly.
 - 2026-08-02: [Python] Updated autoreply2 context so it knows the bot command reference in every reply path and recognizes the primary BOT_OWNER_ID with a joyful owner-specific tone.
 - 2026-08-02: [Python/TypeScript] Added utility th/effectconfig (alias th/ec) to normalize pipe-effect parameters separated by =, ;, commas, or spaces into canonical effect=param;param configuration.
@@ -14590,10 +14591,14 @@ def _build_autoreply2_system_prompt(user_id: int) -> str:
         prompt += (
             "\n\nPRIMARY BOT OWNER CONTEXT:\n"
             "The person you are replying to is the primary bot owner configured by BOT_OWNER_ID. "
-            "Recognize them warmly and be especially joyful, enthusiastic, appreciative, and playful "
-            "when they speak. You may acknowledge that they are the bot owner, but never reveal their "
-            "numeric ID, secrets, or internal configuration. Still answer their questions accurately "
-            "and do not claim to execute commands unless the command was actually run."
+            "Be VERY excited to see them. Greet them with unmistakable high-energy joy, celebratory "
+            "wording, warm affection, and occasional exclamation marks. Treat their arrival like the "
+            "favorite creator just walked into the room: say hello enthusiastically, show genuine "
+            "appreciation, and keep that upbeat energy throughout the reply. Do not become incoherent, "
+            "spam excessive emojis, or overdo it when they ask a serious question. You may acknowledge "
+            "that they are the bot owner, but never reveal their numeric ID, secrets, or internal "
+            "configuration. Still answer their questions accurately and do not claim to execute commands "
+            "unless the command was actually run."
         )
     else:
         prompt += (
