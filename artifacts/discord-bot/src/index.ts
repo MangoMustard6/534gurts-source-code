@@ -40,6 +40,7 @@ import { handleBlockchannelCommand, handleUnblockchannelCommand, isBlockedInChan
 import { handleKlaskysource } from './commands/klaskysource.js';
 import { handleVideolength } from './commands/videolength.js';
 import { handleScgv } from './commands/scgv-command.js';
+import { handleEffectConfig } from './commands/effectconfig.js';
 
 if (!BOT_TOKEN) {
   console.error('ERROR: DISCORD_TOKEN environment variable is not set.');
@@ -323,6 +324,11 @@ client.on('messageCreate', async (message: Message) => {
       case 'scgv':
       case 'sidechaingate_vocoder':
         await handleScgv(message, rest);
+        break;
+
+      case 'effectconfig':
+      case 'ec':
+        await handleEffectConfig(message, rest);
         break;
 
       case 'blockuser':
