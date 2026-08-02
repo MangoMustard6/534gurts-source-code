@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 from PIL import Image, ImageDraw, ImageEnhance
 
@@ -29,6 +30,26 @@ if TYPE_CHECKING:
 WIDTH, HEIGHT = 900, 500
 HOUR_SECONDS = 20.0
 MAX_POWER = 100.0
+DIFFICULTIES = {
+    "easy": {
+        "label": "Easy",
+        "drain": 0.55,
+        "threat_chance": 0.45,
+        "description": "Slower battery drain and quieter animatronics.",
+    },
+    "normal": {
+        "label": "Normal",
+        "drain": 1.0,
+        "threat_chance": 1.0,
+        "description": "The intended night shift experience.",
+    },
+    "hard": {
+        "label": "Hard",
+        "drain": 1.55,
+        "threat_chance": 1.8,
+        "description": "Faster battery drain and more active animatronics.",
+    },
+}
 
 
 def _frame_buffer(image: Image.Image) -> discord.File:
@@ -224,6 +245,7 @@ def render_jumpscare(seed: int, progress: float = 1.0) -> Image.Image:
 class NightState:
     user_id: int
     channel_id: int
+    difficulty: str = "normal"
     message: Message | None = None
     hour: int = 0
     started_at: float = field(default_factory=time.monotonic)
@@ -330,14 +352,34 @@ class NightShiftCog(commands.Cog):
         embed = discord.Embed(title=title, description=description, color=0x8c1616 if state.result else 0x2d6b3b)
         embed.add_field(name="Power", value=f"{max(0, state.power):.1f}%", inline=True)
         embed.add_field(name="Time", value="6 AM" if state.result == "won" else f"{12 + state.hour if state.hour < 6 else 6} AM", inline=True)
+        difficulty = DIFFICULTIES[state.difficulty]
+        embed.add_field(name="Difficulty", value=difficulty["label"], inline=True)
         if not state.ended:
             embed.add_field(name="Doors", value=f"L {'SHUT' if state.left_closed else 'OPEN'} · R {'SHUT' if state.right_closed else 'OPEN'}", inline=False)
         embed.set_image(url="attachment://nightshift.png")
         return embed, _frame_buffer(image)
 
     @commands.hybrid_command(name="nightshift", description="Survive a procedural animatronic night shift.")
-    async def nightshift(self, ctx: commands.Context) -> None:
-        """Start a procedural animatronic night shift."""
+    @app_commands.describe(difficulty="Choose how much battery pressure and monster activity you want.")
+    @app_commands.choices(difficulty=[
+        app_commands.Choice(name="Easy — slower drain, fewer monster moves", value="easy"),
+        app_commands.Choice(name="Normal — default difficulty", value="normal"),
+        app_commands.Choice(name="Hard — faster drain, more monster moves", value="hard"),
+    ])
+    async def nightshift(self, ctx: commands.Context, difficulty: str = "normal") -> None:
+        """Start a procedural animatronic night shift.
+
+        Prefix usage: ``th/nightshift [easy|normal|hard]``.
+        """
+        difficulty = difficulty.strip().lower()
+        if difficulty not in DIFFICULTIES:
+            valid = "`, `".join(DIFFICULTIES)
+            message = f"Choose a difficulty: `{valid}`. Normal is the default."
+            if ctx.interaction:
+                await ctx.interaction.response.send_message(message, ephemeral=True)
+            else:
+                await ctx.reply(message, mention_author=False)
+            return
         channel_id = ctx.channel.id
         old = self.games.get(channel_id)
         if old and not old.ended:
@@ -348,7 +390,7 @@ class NightShiftCog(commands.Cog):
             else:
                 await ctx.reply("A night shift is already running in this channel.", mention_author=False)
             return
-        state = NightState(user_id=ctx.author.id, channel_id=channel_id)
+        state = NightState(user_id=ctx.author.id, channel_id=channel_id, difficulty=difficulty)
         view = NightShiftView(self, state)
         embed, file = self.build_message(state)
         if ctx.interaction:
@@ -370,9 +412,10 @@ class NightShiftCog(commands.Cog):
                 await self._refresh(state)
                 continue
 
+            tuning = DIFFICULTIES[state.difficulty]
             camera_cost = 0.055 if state.camera is not None else 0.0
             door_cost = (0.10 if state.left_closed else 0.0) + (0.10 if state.right_closed else 0.0)
-            state.power -= 0.12 + camera_cost + door_cost
+            state.power -= (0.12 + camera_cost + door_cost) * tuning["drain"]
             self._move_threats(state)
             if state.power <= 0:
                 state.power = 0
@@ -392,11 +435,12 @@ class NightShiftCog(commands.Cog):
 
     def _move_threats(self, state: NightState) -> None:
         rng = random.Random(state.seed + int(state.elapsed))
+        tuning = DIFFICULTIES[state.difficulty]
         for name, position in state.threats.items():
-            chance = 0.055 + state.hour * 0.012
+            chance = (0.055 + state.hour * 0.012) * tuning["threat_chance"]
             if rng.random() < chance:
                 state.threats[name] = min(3, position + 1)
-            elif rng.random() < 0.025 and position > 0:
+            elif rng.random() < 0.025 / tuning["threat_chance"] and position > 0:
                 state.threats[name] = position - 1
 
     async def _refresh(self, state: NightState) -> None:
