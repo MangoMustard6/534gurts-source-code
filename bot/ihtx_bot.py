@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python] Fixed th/pipetest error reporting to clip oversized FFmpeg diagnostics before Discord replies/edits, preventing the 2,000-character Invalid Form Body error.
 - 2026-08-02: [Python] Added Easy, Normal, and Hard difficulty modes to th/nightshift; Easy slows battery drain and monster movement, Hard increases both, and Normal remains the default.
 - 2026-08-02: [Python] Converted th/nightshift into a hybrid command; it now starts the same interactive game from either `th/nightshift` or `/nightshift`.
 - 2026-08-02: [Python] Added /nightshift, a Pillow-rendered interactive horror game with in-memory office/camera/jumpscare frames, power drain, moving threats, and owner-locked controls.
@@ -7719,7 +7720,9 @@ async def pipetest_command(ctx: commands.Context, *, effects: str = ""):
             lambda: _apply_pipe_effects(input_path, output_path, pipe_effects),
         )
         if not ok:
-            await status_msg.edit(content=f"❌ pipetest failed: `{err}`")
+            await status_msg.edit(
+                content=_clip_discord_text(f"❌ pipetest failed:\n```\n{err}\n```")
+            )
             return
 
         out_size = os.path.getsize(output_path)
@@ -17174,6 +17177,14 @@ async def convert_command(ctx: commands.Context, *, formats: str = "mp4/mp3/png"
 
 # ---------- Error handling & run ----------
 
+def _clip_discord_text(text: str, limit: int = 1900) -> str:
+    """Keep diagnostic messages below Discord's 2,000-character content limit."""
+    if len(text) <= limit:
+        return text
+    marker = "\n…(error output truncated)"
+    return text[: max(0, limit - len(marker))] + marker
+
+
 @bot.event
 async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.CommandNotFound):
@@ -17191,7 +17202,11 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
         original = error.original
         print(f"[error] CommandInvokeError in {ctx.command}: {type(original).__name__}: {original}")
         try:
-            await ctx.reply(f"❌ An error occurred: `{type(original).__name__}: {original}`")
+            await ctx.reply(
+                _clip_discord_text(
+                    f"❌ An error occurred: `{type(original).__name__}: {original}`"
+                )
+            )
         except Exception:
             pass
         return
