@@ -1,21 +1,25 @@
 import { Message } from 'discord.js';
 
 const PIPE_EFFECTS = [
-  'hflip', 'vflip', 'negate', 'grayscale', 'sepia', 'rotate',
+  'hflip', 'vflip', 'invert', 'negate', 'grayscale', 'sepia', 'rotate',
   'ccshue', 'brightness', 'contrast', 'saturation', 'swapuv', 'mirror',
-  'zoom', 'pinch&punch', 'gm91deform', 'invertrgb', 'invlum',
+  'zoom', 'pinch&punch', 'p&p', 'pinchpunch', 'gm91deform', 'invertrgb', 'invlum',
   'volume', 'vibrato', 'areverse', 'vreverse', 'channelblend', 'huehsv',
-  'multipitch', 'lut', 'syncaudio', 'speed', 'ffmpeg', 'frei0r', 'wave',
-  'tvsim', 'swirl', 'folkvalley', 'labadjust', 'vocoder', 'ilvocodex',
+  'multipitch', 'mp', 'multi', 'lut', 'syncaudio', 'speed', 'ffmpeg', 'frei0r', 'wave',
+  'tvsim', 'tv', 'swirl', 'folkvalley', 'fv', 'labadjust', 'labadj', 'vocoder', 'ilvocodex',
   'orangevocoder', '4ormulator', 'audacity', 'magix', 'alimiter',
-  'multipitch2', 'multipitch3', 'randomjitter', 'trim', 'leftsplit',
+  'freakzinga', 'fzgm156', 'freakzingagm156', 'fgm156',
+  'multipitch2', 'mp2', 'multipitch3', 'mp3', 'randomjitter', 'rj', 'trim', 'leftsplit',
   'rightsplit', 'ripple', 'scroll', 'pan', 'tile', 'watermark', 'ring',
-  'miui', 'reddit', 'caption', 'nepeta', 'gradientmap', 'spherize',
-  'imagemagick', 'geq', 'scgv', 'sidechaingate_vocoder',
+  'miui', 'reddit', 'caption', 'orb', 'deorb', 'nepeta', 'gradientmap', 'gmap',
+  'spherize', 'sphere', 'bulge', 'imagemagick', 'im', 'geq', 'wave2',
+  'wmm3dripple', 'wmm', 'timecode', 'radar', 'freakzingatesteffect', 'fzte',
+  'freaktest', 'stretch', 'scgv', 'sidechaingate_vocoder',
+  'acontrast', 'adestroy', 'audioequalizer', 'avflip', 'nparisonffmpeg',
+  'nineparisonffmpeg', '🥸🥸', '﷽', '𒐫', 'gm4', 'realgm4',
 ];
 
 const EFFECT_ALIASES: Record<string, string> = {
-  invert: 'negate',
   mp: 'multipitch',
   multi: 'multipitch',
   gm: 'gradientmap',
