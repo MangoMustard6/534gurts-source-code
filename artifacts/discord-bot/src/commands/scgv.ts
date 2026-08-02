@@ -46,8 +46,9 @@ export function buildVocoderCommand(args: Partial<VocoderArgs> & { url?: string 
 
   const showCode = args.showCode ?? false;
   const url = args.url;
-  const bands = args.bandwidth ?? 64;
-  const detection = args.detection ?? 'peak';
+  const bands = Math.max(1, Math.min(256, Math.floor(args.bandwidth ?? 64)));
+  const rawDetection = String(args.detection ?? 'peak').trim().toLowerCase();
+  const detection = rawDetection === '0' ? 'peak' : rawDetection === '1' ? 'rms' : rawDetection;
   const release = args.release ?? 50;
   const attack = args.attack ?? 0.01;
   const ratio = args.ratio ?? 2;
@@ -58,11 +59,35 @@ export function buildVocoderCommand(args: Partial<VocoderArgs> & { url?: string 
   const range = args.range ?? 0;
   const volume = args.volume ?? 1;
 
+  if (!['peak', 'rms'].includes(detection)) {
+    return {
+      usageHelp: 'scgv detection must be `peak` or `rms` (numeric aliases: 0 or 1).',
+    };
+  }
+  if (threshold < 0 || threshold > 1) {
+    return { usageHelp: 'scgv threshold must be between 0 and 1.' };
+  }
+  if (range < 0 || range > 1) {
+    return { usageHelp: 'scgv range must be between 0 and 1.' };
+  }
+  if (ratio < 1 || ratio > 9000) {
+    return { usageHelp: 'scgv ratio must be between 1 and 9000.' };
+  }
+  if (attack < 0.01 || release < 0.01) {
+    return { usageHelp: 'scgv attack and release must be at least 0.01.' };
+  }
+  if (makeup < 1 || makeup > 64) {
+    return { usageHelp: 'scgv makeup must be between 1 and 64.' };
+  }
+  if (knee < 1 || knee > 8) {
+    return { usageHelp: 'scgv knee must be between 1 and 8.' };
+  }
+
   const pitchFilter =
     pitch !== 0 ? `rubberband=pitch=2^(${pitch}/12):phase=2.14748e+09/3:window=short,` : '';
 
-  const modLabelSplit = '[mod]'.repeat(bands);
-  const carrLabelSplit = '[carr]'.repeat(bands);
+  const modLabelSplit = Array.from({ length: bands }, (_, i) => `[mod${i + 1}]`).join('');
+  const carrLabelSplit = Array.from({ length: bands }, (_, i) => `[carr${i + 1}]`).join('');
 
   let filterComplex = `[0]aformat=cl=mono,${pitchFilter}asplit=${bands}${modLabelSplit};`;
   filterComplex += `[1]aformat=cl=mono,asplit=${bands}${carrLabelSplit};`;
@@ -71,14 +96,14 @@ export function buildVocoderCommand(args: Partial<VocoderArgs> & { url?: string 
     const lowFreq = (i - 1) * (20000 / bands);
     const highFreq = i * (20000 / bands);
     filterComplex +=
-      `[mod]firequalizer=gain='if(between(f,${lowFreq},${highFreq}), 0, -INF)':accuracy=100:fixed=1:wfunc=nuttall,atrim=0.01[m${i}];`;
+      `[mod${i}]firequalizer=gain='if(between(f,${lowFreq},${highFreq}), 0, -INF)':accuracy=100:fixed=1:wfunc=nuttall,atrim=0.01[m${i}];`;
   }
 
   for (let i = 1; i <= bands; i++) {
     const lowFreq = (i - 1) * (20000 / bands);
     const highFreq = i * (20000 / bands);
     filterComplex +=
-      `[carr]firequalizer=gain='if(between(f,${lowFreq},${highFreq}), 0, -INF)':accuracy=100:fixed=1:wfunc=nuttall,atrim=0.01[c${i}];`;
+      `[carr${i}]firequalizer=gain='if(between(f,${lowFreq},${highFreq}), 0, -INF)':accuracy=100:fixed=1:wfunc=nuttall,atrim=0.01[c${i}];`;
   }
 
   for (let i = 1; i <= bands; i++) {
