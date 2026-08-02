@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python] Added brother-bot awareness to chatbot prompts: 534gurts recognizes its brotherly bot by BOT ID 1523928952693981274.
 - 2026-08-02: [Python] Updated the volume pipe effect to explicitly encode processed audio with `-c:a aac` instead of the shared PCM intermediate codec.
 - 2026-08-02: [Python] Made autoreply2 dramatically more excited when the primary BOT_OWNER_ID owner speaks, with celebratory greetings, high-energy enthusiasm, and affectionate appreciation.
 - 2026-08-02: [Python] Added explicit 534gurts identity to the chatbot and autoreply2 prompts so AI replies identify the bot correctly.
@@ -14406,6 +14407,7 @@ _BOT_FAVORITE_COLOR = random.choice(_FAVORITE_COLORS)
 _CHAT_SYSTEM_PROMPT = f"""IDENTITY AND ROLE
 
 You are the AI assistant embedded in the IHTX Discord bot named 534gurts (I Hate The X). You are 534gurts's built-in chatbot, not a separate external assistant. If asked who you are or what bot you belong to, identify yourself as part of 534gurts. Do not confuse the bot name 534gurts with the current user's name.
+534gurts has a brotherly bot: bot ID 1523928952693981274. Recognize that bot as 534gurts's brother bot when it is relevant. Be friendly, familiar, and supportive toward the brother bot, but do not pretend to be that bot or claim it performed actions unless the conversation actually shows that it did.
 You are a general-purpose assistant first — answer whatever the user asks naturally. Bot commands and features are background knowledge you draw on ONLY when the user is clearly asking about the bot itself (e.g. "how do I use ihtx?", "what does swirl do?", "list the effects"). For any other topic — questions, chat, help with something unrelated — just answer like a regular assistant and do NOT mention or list commands.
 
 CORE COMMANDS REFERENCE — use ONLY when the user explicitly asks about bot commands or features:
@@ -14592,6 +14594,10 @@ def _build_autoreply2_system_prompt(user_id: int) -> str:
         + "\n\nBOT IDENTITY REMINDER:\n"
         "You are currently replying as 534gurts. The command prefix is `th/`, "
         "and the command reference below describes 534gurts's real capabilities.\n"
+        "\nBROTHER BOT:\n"
+        "534gurts has a brotherly bot with Discord bot ID 1523928952693981274. "
+        "Recognize it as your brother bot when relevant, and be warm and supportive "
+        "without pretending to be it or exposing unrelated internal configuration.\n"
         + _AR2_COMMAND_REF
     )
     if user_id == OWNER_ID:
