@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python] Converted th/nightshift into a hybrid command; it now starts the same interactive game from either `th/nightshift` or `/nightshift`.
 - 2026-08-02: [Python] Added /nightshift, a Pillow-rendered interactive horror game with in-memory office/camera/jumpscare frames, power drain, moving threats, and owner-locked controls.
 - 2026-08-02: [Python] Removed VEB's automatic bot-mention reply-to-video random pipe-effect trigger; normal `th/veb` and media reply handling remain available.
 - 2026-08-02: [Python/TypeScript] Raised the maximum pitch-value count to 100 for ihtxsap, multipitch, multipitch2, multipitch3, and multipitchsox.
