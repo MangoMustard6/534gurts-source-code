@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Fixed pitchtransition export delay by compensating Rubber Band look-ahead and resetting audio/video PTS during per-export trim and final concat; full IHTX output now starts both streams at t=0.
 - 2026-08-03: [Python] Added a dedicated pitchtransition parser branch so custom IHTX exports preserve the full decimal `start,end[;start,end]` parameter as one raw value.
 - 2026-08-03: [Python] Preserved raw pitchtransition pair parameters through the IHTX export preprocessor so decimal values such as `-4.5,5` reach the Rubber Band automation unchanged.
 - 2026-08-03: [Python] Fixed standalone `pitchtransition -4.5,5` parsing so its comma remains part of the start/end pair instead of being treated as an effect delimiter.
@@ -3552,6 +3553,11 @@ def _run_pitch_transition(
         "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1",
     ).strip())
     with tempfile.TemporaryDirectory(prefix="pitchtransition_") as tmpdir:
+        # FFmpeg's Rubber Band filter has a small look-ahead/window delay.
+        # Remove it from the intermediate audio before the final video export;
+        # otherwise IHTX's subsequent export/trim pass makes the sweep sound
+        # late even though the requested pitch values are correct.
+        transition_latency = 0.08
         voice_wavs: list[str] = []
         for index, (start, end) in enumerate(voices):
             commands = []
@@ -3564,7 +3570,14 @@ def _run_pitch_transition(
             wav = os.path.join(tmpdir, f"voice_{index}.wav")
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y", "-i", input_path, "-vn",
-                "-af", f"asendcmd=f={cmd_file},rubberband=phase=712923000",
+                # Rubber Band can carry a non-zero input PTS through its
+                # internal window. Reset the filtered stream before writing
+                # the intermediate so export/mux timing starts at t=0.
+                "-af", (
+                    f"asendcmd=f={cmd_file},rubberband=phase=712923000,"
+                    f"atrim=start={transition_latency},asetpts=PTS-STARTPTS,"
+                    f"apad=whole_dur={duration:.6f},atrim=duration={duration:.6f}"
+                ),
                 "-c:a", "pcm_s16le", wav,
             ], timeout=300)
             if not ok:
@@ -3594,7 +3607,13 @@ def _run_pitch_transition(
             return _run_ffmpeg_raw([
                 "ffmpeg", "-y", "-i", input_path, "-i", mixed,
                 "-map", "0:v:0", "-map", "1:a:0",
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-map_metadata", "-1", "-avoid_negative_ts", "make_zero",
+                # Re-encode the video timeline so source encoder delay cannot
+                # remain offset from the freshly rendered Rubber Band audio.
+                "-vf", "setpts=PTS-STARTPTS",
+                "-c:v", "libx264", "-preset", "fast", "-tune", "zerolatency",
+                "-bf", "0", "-crf", "18",
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
                 "-shortest", output_path,
             ], timeout=180)
         return _run_ffmpeg_raw([
@@ -5601,6 +5620,11 @@ def _run_ihtx_tagscript_workflow(
                     "-stream_loop", "-1", "-i", current,
                     "-t", dur,
                     "-map", "0:v?", "-map", "0:a?",
+                    # Each export pass must begin both streams at t=0.
+                    # Without this, AAC priming/previous filter PTS becomes
+                    # cumulative delay in the final IHTX export.
+                    "-vf", "setpts=PTS-STARTPTS",
+                    "-af", "asetpts=PTS-STARTPTS",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                     "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
                     "-movflags", "+faststart", trimmed,
@@ -5634,6 +5658,8 @@ def _run_ihtx_tagscript_workflow(
         concat_cmd = [
             "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
             "-f", "concat", "-safe", "0", "-i", concat_list,
+            "-vf", "setpts=PTS-STARTPTS",
+            "-af", "asetpts=PTS-STARTPTS",
         ]
         concat_cmd.extend(_concat_codec_args(extension))
         concat_cmd.extend(["-movflags", "+faststart", final_output])
