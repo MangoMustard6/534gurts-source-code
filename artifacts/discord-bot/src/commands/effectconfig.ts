@@ -5,7 +5,7 @@ const PIPE_EFFECTS = [
   'ccshue', 'brightness', 'contrast', 'saturation', 'swapuv', 'mirror',
   'zoom', 'pinch&punch', 'p&p', 'pinchpunch', 'gm91deform', 'invertrgb', 'invlum',
   'volume', 'vibrato', 'areverse', 'vreverse', 'channelblend', 'huehsv',
-  'multipitch', 'mp', 'multi', 'lut', 'syncaudio', 'speed', 'ffmpeg', 'frei0r', 'wave',
+  'multipitch', 'mp', 'multi', 'pitchtransition', 'pitchtrans', 'lut', 'syncaudio', 'speed', 'ffmpeg', 'frei0r', 'wave',
   'tvsim', 'tv', 'swirl', 'folkvalley', 'fv', 'labadjust', 'labadj', 'vocoder', 'ilvocodex',
   'orangevocoder', '4ormulator', 'audacity', 'magix', 'alimiter',
   'freakzinga', 'fzgm156', 'freakzingagm156', 'fgm156',

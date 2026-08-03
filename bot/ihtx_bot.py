@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-02: [Python/TypeScript] Added `pitchtransition` / `pitchtrans` as a standalone and pipe-effect time-varying Rubber Band pitch sweep with optional multi-voice mixing.
 - 2026-08-02: [Python/TypeScript] Fixed adjacent pipe assignments such as `mp=-7|7 volume=2`: the parser now keeps each effect separate instead of attaching the next effect as a parameter.
 - 2026-08-02: [Python] Pipe chains now automatically skip unknown effect names while preserving valid effects; an all-unknown chain returns the original media unchanged.
 - 2026-08-02: [Python] Added Uguu upload fallback when Catbox fails, plus th/uguu (alias ugupload) for direct file/video uploads.
@@ -2848,6 +2849,7 @@ PIPE_EFFECT_NAMES = {
     "earthquake", "nbfx",
     "ssmp", "soundstretchmultipitch",
     "multipitchsox", "mpsox",
+    "pitchtransition", "pitchtrans",
     "folkvalley", "fv",
     "labadjust", "labadj",
     "vocoder", "ilvocodex", "orangevocoder", "4ormulator", "audacity", "magix",
@@ -2983,6 +2985,17 @@ def _split_pipe_segments(pipe_str: str) -> list[str]:
             array_depth = max(0, array_depth - 1)
             current.append(ch)
         elif ch in (",", ">") and paren_depth == 0 and array_depth == 0:
+            # pitchtransition voice definitions intentionally contain a comma:
+            # pitchtransition=-5,9;5,-9
+            current_name = "".join(current).lstrip().lower()
+            if ch == "," and current_name.startswith(("pitchtransition=", "pitchtrans=")):
+                # Keep commas inside `start,end` voice pairs, but recognize a
+                # following `effect=` assignment as the next effect.
+                remainder = pipe_str[i + 1:]
+                if not re.match(r"\s*[a-z0-9_&()﷽𒐫🥸]+\s*=", remainder, re.IGNORECASE):
+                    current.append(ch)
+                    i += 1
+                    continue
             seg = "".join(current).strip()
             if seg:
                 segments.append(seg)
@@ -3483,6 +3496,92 @@ def _ff_af(inp: str, af: str, out: str, timeout: int = 180) -> tuple[bool, str]:
     """Run a -af filter keeping video stream unchanged."""
     return _run_ffmpeg_raw(_FF_BASE + ["-i", inp, "-af", af, "-c:v", "copy", "-c:a", "pcm_s16le", out], timeout=timeout)
 
+
+def _run_pitch_transition(
+    input_path: str,
+    output_path: str,
+    pitch_params: list[str],
+) -> tuple[bool, str]:
+    """Sweep one or more voices linearly from start to end semitones.
+
+    Pipe syntax: ``pitchtransition=-5,9;5,-9``.
+    Each voice is rendered with FFmpeg's asendcmd + rubberband filter and
+    multiple voices are mixed with amix before being muxed back to the source.
+    """
+    raw = " ".join(pitch_params).strip()
+    if raw.lower().startswith("--pitch"):
+        raw = raw.split("=", 1)[1].strip() if "=" in raw else raw[len("--pitch"):].strip()
+    voices: list[tuple[float, float]] = []
+    for voice in raw.split(";"):
+        voice = voice.strip()
+        if not voice:
+            continue
+        parts = [part.strip() for part in voice.split(",")]
+        if len(parts) != 2:
+            return False, f"pitchtransition: invalid voice {voice!r}; expected start,end."
+        try:
+            start, end = float(parts[0]), float(parts[1])
+        except ValueError:
+            return False, f"pitchtransition: start/end must be numbers in {voice!r}."
+        if not math.isfinite(start) or not math.isfinite(end):
+            return False, "pitchtransition: start/end must be finite numbers."
+        voices.append((start, end))
+    if not voices:
+        return False, "pitchtransition: provide start,end[;start,end;...]."
+    if len(voices) > 100:
+        return False, "pitchtransition: maximum 100 voices."
+
+    duration = _ffprobe_duration(input_path)
+    if duration <= 0:
+        return False, "pitchtransition: could not determine input duration."
+
+    has_video = bool(_ffprobe(
+        input_path, "-select_streams", "v:0",
+        "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1",
+    ).strip())
+    with tempfile.TemporaryDirectory(prefix="pitchtransition_") as tmpdir:
+        voice_wavs: list[str] = []
+        for index, (start, end) in enumerate(voices):
+            commands = []
+            for step in range(int(duration / 0.01) + 1):
+                t = min(step * 0.01, duration)
+                ratio = f"2^((({t:.2f}/{duration})*(({end})-({start}))+({start}))/12)"
+                commands.append(f"{t:.2f} rubberband pitch {ratio};")
+            cmd_file = os.path.join(tmpdir, f"transition_{index}.txt")
+            Path(cmd_file).write_text("\n".join(commands) + "\n")
+            wav = os.path.join(tmpdir, f"voice_{index}.wav")
+            ok, err = _run_ffmpeg_raw([
+                "ffmpeg", "-y", "-i", input_path, "-vn",
+                "-af", f"asendcmd=f={cmd_file},rubberband=phase=712923000",
+                "-c:a", "pcm_s16le", wav,
+            ], timeout=300)
+            if not ok:
+                return False, f"pitchtransition voice {index + 1} failed: {err}"
+            voice_wavs.append(wav)
+
+        mixed = os.path.join(tmpdir, "mixed.wav")
+        mix_cmd = ["ffmpeg", "-y"]
+        for wav in voice_wavs:
+            mix_cmd += ["-i", wav]
+        mix_cmd += [
+            "-filter_complex", f"amix=inputs={len(voice_wavs)}:duration=longest:dropout_transition=0",
+            "-c:a", "pcm_s16le", mixed,
+        ]
+        ok, err = _run_ffmpeg_raw(mix_cmd, timeout=300)
+        if not ok:
+            return False, f"pitchtransition mix failed: {err}"
+
+        if has_video:
+            return _run_ffmpeg_raw([
+                "ffmpeg", "-y", "-i", input_path, "-i", mixed,
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-shortest", output_path,
+            ], timeout=180)
+        return _run_ffmpeg_raw([
+            "ffmpeg", "-y", "-i", mixed, "-c:a", "aac", output_path,
+        ], timeout=180)
+
 def _geq(expr: str) -> str:
     """Wrap a geq pixel expression in the yuv444p → geq → yuv420p boilerplate."""
     return f"format=yuv444p,geq='{expr}',format=yuv420p"
@@ -3788,6 +3887,13 @@ def _apply_pipe_effects(
                     _lim_ok, _lim_err = _ff_af(out, "alimiter=limit=0.99:level=false:latency=1", _lim_out)
                     if _lim_ok:
                         os.replace(_lim_out, out)
+                current = out
+                continue
+
+            if name in ("pitchtransition", "pitchtrans"):
+                ok, err = _run_pitch_transition(current, out, params)
+                if not ok:
+                    return False, err
                 current = out
                 continue
 
@@ -8560,6 +8666,66 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Failed to upload result: {e}")
 
 
+@bot.command(name="pitchtransition", aliases=["pitchtrans"])
+async def pitchtransition_command(ctx: commands.Context, *, args: str = ""):
+    """Apply a linear Rubber Band pitch sweep to attached/replied media.
+
+    Usage: th/pitchtransition -5,9
+           th/pitchtransition -5,9;5,-9
+           th/pitchtransition --pitch "-5,9;5,-9"
+    """
+    raw = args.strip()
+    if raw.lower().startswith("--pitch"):
+        raw = raw.split("=", 1)[1].strip() if "=" in raw else raw[len("--pitch"):].strip()
+    raw = raw.strip("\"'")
+    if not raw:
+        await ctx.reply(
+            "**IHTX Pitch Transition** — time-varying Rubber Band pitch sweep\n"
+            "Attach or reply to audio/video and provide `start,end` semitone pairs.\n"
+            "Examples: `th/pitchtransition -5,9` or `th/pitchtransition -5,9;5,-9`"
+        )
+        return
+    source = await _resolve_media_source(ctx)
+    if source is None:
+        await ctx.reply("Attach or reply to an audio/video file. Example: `th/pitchtransition -5,9`")
+        return
+    suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else (
+        Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
+    )
+    if suffix not in _MULTIPITCH_AUDIO_EXTS:
+        await ctx.reply(f"Unsupported file type `{suffix}`. Attach audio or video.")
+        return
+    status_msg = await ctx.reply(f"⚙️ Applying **pitchtransition** (`{raw}`)…")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = os.path.join(tmpdir, f"input{suffix}")
+        output_path = os.path.join(tmpdir, "output_pitchtransition.mp4")
+        try:
+            await download_attachment(source, input_path)
+            loop = asyncio.get_event_loop()
+            ok, err = await loop.run_in_executor(
+                None, _run_pitch_transition, input_path, output_path, [raw]
+            )
+            if not ok:
+                await status_msg.edit(content=f"❌ Pitch transition failed:\n```\n{err[-1500:]}\n```")
+                return
+            if os.path.getsize(output_path) > CATBOX_THRESHOLD:
+                await status_msg.edit(content="⬆️ Output exceeds 10 MB — uploading to Catbox…")
+                url = await _upload_to_catbox(output_path)
+                if url:
+                    await ctx.reply(f"✅ Pitch transition done!\n{url}")
+                    await status_msg.delete()
+                else:
+                    await status_msg.edit(content="❌ Output too large and upload failed.")
+                return
+            await ctx.reply(
+                content=f"✅ **IHTX pitchtransition** (`{raw}`) applied!",
+                file=discord.File(output_path, filename="534gurts_thpitchtransition.mp4"),
+            )
+            await status_msg.delete()
+        except Exception as e:
+            await status_msg.edit(content=f"❌ Pitch transition failed: {str(e)[:1500]}")
+
+
 @bot.command(name="soundstretchmultipitch", aliases=["ssmp"])
 async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = ""):
     """Apply multi-voice pitch shifting using SoundTouch soundstretch.
@@ -12436,7 +12602,7 @@ _HELP_ENTRIES: list[dict] = [
             "**Scroll:** `scroll=hpos=V` · `scroll=hpos=V;ypos=V` · `scroll=h;v` (continuous) · `scroll=x1:y1:x2:y2[:dur]` (animated pan)\n"
             "**Split:** `leftsplit(<inner_effects>)` · `rightsplit(<inner_effects>)` — apply inner effects to one half, mirror/combine\n"
             "**Reverse:** `vreverse` (video frames) · `areverse` (audio)\n"
-            "**Audio:** `multipitch=semis` `volume=<val>` `vibrato=freq;depth` `syncaudio` `vocoder=mode;url` `ilvocodex=url` `orangevocoder=url` `4ormulator=url` `audacity=url`\n"
+             "**Audio:** `multipitch=semis` `pitchtransition=start,end[;start,end]` `volume=<val>` `vibrato=freq;depth` `syncaudio` `vocoder=mode;url` `ilvocodex=url` `orangevocoder=url` `4ormulator=url` `audacity=url`\n"
             "**CRT:** `tvsim=curvature[;line_sync;detail_zoom;vert_sync;phosphor;interlace;aperture_grill;static]`\n"
             "**Swirl:** `swirl=strength[;radius;xc;yc;fallout;is1to1]`\n"
             "**Aesthetics:** `folkvalley` / `fv` — music replacement + brightness + overlay\n"

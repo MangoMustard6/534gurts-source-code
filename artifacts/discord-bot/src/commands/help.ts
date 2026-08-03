@@ -115,7 +115,7 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
           '**Distortion:** `mirror=<deg|L/R/T/B>` `zoom=<amt>` `ripple=spd|freq|amp|phase` `pan=px|py` `tile=tx|ty` `pinch&punch=str;r;cx;cy` `shake=h|v` `spherize=amt|r|cx|cy` `swirl=str[;r;xc;yc]`',
           '**Wave:** `wave=hSpd|hFreq|hAmp|hPhase|vSpd|vFreq|vAmp|vPhase[|sep][|noclip]` — presets: `largeWave` `mediumWave` `smallWave` `horizontalOnly` `verticalOnly`',
           '**Scroll/Split/Reverse:** `scroll=hpos=V` · `scroll=h;v` · `scroll=x1:y1:x2:y2[:dur]` · `leftsplit(<fx>)` · `rightsplit(<fx>)` · `vreverse` · `areverse`',
-          '**Audio:** `multipitch=semis` `volume=<val>` `vibrato=freq;depth` `syncaudio` `vocoder=mode;url` `scgv=carrier_url[;bands;ratio;threshold;release;attack;makeup;knee;detection;range;volume;pitch]` `tvsim=curvature[;…]`',
+          '**Audio:** `multipitch=semis` `pitchtransition=start,end[;start,end]` `volume=<val>` `vibrato=freq;depth` `syncaudio` `vocoder=mode;url` `scgv=carrier_url[;bands;ratio;threshold;release;attack;makeup;knee;detection;range;volume;pitch]` `tvsim=curvature[;…]`',
           '**Overlay/FX:** `nepeta[=url]` `watermark=<url>` `ring[=url]` `miui` `reddit` `caption=<text>` `folkvalley`/`fv` `frei0r=plugin:p` `lut=<url>` `speed=<x>` `ffmpeg(<args>)`',
         ].join('\n'),
       },
@@ -123,6 +123,7 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
         name: '🎬 Video Tools  *(not rate-limited)*',
         value: [
           '`th/multipitch <semis>` *mp multi* — Multi-voice pitch shift (Rubber Band R3)',
+          '`th/pitchtransition <start,end[;start,end]>` *pitchtrans* — Time-varying pitch sweep; attach or reply to audio/video',
           '`th/preview1280 [start] [dur]` *p1280* — 12-segment TV-simulator montage',
           '`th/oppositep1280 [start] [dur]` *op1280* — Inverse TV-simulator montage',
           '`th/preview1280with640x360resize` *p1280ff!3* — preview1280 locked to 640×360',
