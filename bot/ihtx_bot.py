@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Added explicit `[preview1280-r3]` runtime logs before and after every native Rubber Band R3 segment render, including segment name, pitch, tempo/time mode, and exit status.
 - 2026-08-03: [Python] Fixed preview1280 R3 pitch rendering to use native Rubber Band R3 `--pitch` and `--tempo` controls for fixed-pitch segments instead of a constant pitch map that could sound effectively unchanged.
 - 2026-08-03: [Python/TypeScript] Expanded preview1280 help entries with the trailing R3 option and added the selected pitch engine (`R3 enabled`/`R3 disabled`) to every preview1280 result embed.
 - 2026-08-03: [Python] Added optional trailing `r3`/`native-r3` pitch-render toggle to preview1280, oppositep1280, the 640×360 preview variant, and preview1280what. It replaces the FFmpeg Rubber Band pitch pass with native Rubber Band R3 while preserving the intended semitone and tempo values.
@@ -6908,6 +6909,13 @@ def _run_montage_segment(
         rb_args.append(f"--tempo={tempo:.10f}")
     else:
         rb_args.append("--time=1")
+    mode = f"tempo={tempo:.6f}" if tempo and abs(tempo - 1.0) > 1e-9 else "time=1"
+    segment_name = Path(segment_path).name
+    print(
+        f"[preview1280-r3] starting native rubberband-r3 "
+        f"segment={segment_name} pitch={semitones:+.3f}st {mode}",
+        flush=True,
+    )
     try:
         result = subprocess.run(
             rb_args + [audio_in, audio_out],
@@ -6916,7 +6924,17 @@ def _run_montage_segment(
     except Exception as exc:
         return False, f"R3 failed: {exc}"
     if result.returncode != 0:
+        print(
+            f"[preview1280-r3] failed segment={segment_name} "
+            f"exit={result.returncode}: {result.stderr[-500:]}",
+            flush=True,
+        )
         return False, result.stderr[-1500:]
+    print(
+        f"[preview1280-r3] completed native rubberband-r3 "
+        f"segment={segment_name} pitch={semitones:+.3f}st {mode}",
+        flush=True,
+    )
 
     remux = segment_path + ".r3.avi"
     ok, err = _run_ffmpeg_raw([
