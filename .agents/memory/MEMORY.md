@@ -14,3 +14,4 @@
 - [SCGV TypeScript paths](scgv-typescript-paths.md) — keep SCGV available through both the reusable pipe-effect runner and the standalone prefix command.
 - [Pitchtransition separators](pitchtransition-separators.md) — accept semicolon-separated voice pairs and the space-normalized form produced by custom exports.
 - [Pitchtransition export timing](pitchtransition-export-timing.md) — compensate Rubber Band look-ahead and reset audio/video PTS through every IHTX export pass.
+- [Pitchtransition tail preservation](pitchtransition-tail.md) — pad before Rubber Band, then compensate latency and trim so the final endpoint is not cut.

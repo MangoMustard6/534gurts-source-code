@@ -88,9 +88,12 @@ export async function applyPitchTransition(
         // Normalize Rubber Band's filtered PTS before the intermediate WAV
         // reaches the final export/mux step.
         '-af',
+        // Add tail audio before Rubber Band so the final automation command
+        // is emitted, then remove the look-ahead delay and trim to source length.
+        `apad=pad_dur=${transitionLatency.toFixed(6)},` +
         `asendcmd=f=${commandFile},rubberband=phase=712923000,` +
         `atrim=start=${transitionLatency},asetpts=PTS-STARTPTS,` +
-        `apad=whole_dur=${duration.toFixed(6)},atrim=duration=${duration.toFixed(6)}`,
+        `apad,atrim=duration=${duration.toFixed(6)}`,
         '-c:a', 'pcm_s16le', voiceFile,
       ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
       if (rendered.code !== 0) throw new Error(`pitchtransition voice ${index + 1} failed: ${rendered.stderr.slice(-500)}`);
