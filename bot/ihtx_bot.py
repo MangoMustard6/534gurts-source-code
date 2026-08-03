@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Reduced th/ihtx export sizes across filters by using compressed CRF video and low-bitrate audio for intermediate and final outputs, with container-compatible MXF/AVI profiles.
 - 2026-08-03: [Python] Made th/ihtx output_format required and restricted final exports to supported FFmpeg/ffprobe-compatible containers; removed fallback to intermediate format.
 - 2026-08-03: [Python] Added third positional R3 toggle to preview1280/p1280 and oppositep1280/op1280 pipe effects; omitted toggle keeps FFmpeg Rubber Band.
 - 2026-08-03: [Python] Made th/ihtx output_format required after format: intermediate renders use format, while the final export uses the required ffprobe-compatible output format.
@@ -5597,28 +5598,45 @@ def _safe_awk_duration(duration_expr: str, vidlen: float) -> tuple[bool, str]:
 
 
 def _concat_codec_args(output_format: str) -> list[str]:
-    """Return final concat codec args for each supported output format."""
+    """Return compressed final codec args for each supported output format."""
     fmt = output_format.lower().lstrip(".")
     if fmt == "mkv":
-        return ["-c:v", "mpeg2video", "-q:v", "1", "-c:a", "flac",
-                "-pix_fmt", "yuv420p", "-bufsize", "16M", "-threads", "0"]
+        return [
+            "-c:v", "libx264", "-preset", "medium", "-crf", "28",
+            "-c:a", "aac", "-b:a", "96k",
+            "-pix_fmt", "yuv420p", "-threads", "0",
+        ]
     if fmt == "mxf":
-        return ["-c:v", "mpeg2video", "-qscale", "1", "-qmin", "1",
-                "-c:a", "pcm_s16le", "-ar", "48000",
-                "-pix_fmt", "yuv420p", "-bufsize", "16M", "-threads", "0"]
+        # MXF commonly requires PCM audio; keep it container-compatible and
+        # reduce the video bitrate substantially with MPEG-2 qscale 5.
+        return [
+            "-c:v", "mpeg2video", "-qscale:v", "5",
+            "-c:a", "pcm_s16le", "-ar", "44100",
+            "-pix_fmt", "yuv420p", "-threads", "0",
+        ]
     if fmt == "mov":
-        return ["-c:v", "libx264", "-profile:v", "high422", "-level:v", "5",
-                "-tune", "zerolatency", "-q:v", "1", "-crf", "25", "-preset", "veryfast",
-                 "-c:a", "pcm_s16le",
-                "-pix_fmt", "yuv420p", "-bufsize", "16M", "-threads", "0"]
+        return [
+            "-c:v", "libx264", "-preset", "medium", "-crf", "28",
+            "-c:a", "aac", "-b:a", "96k",
+            "-pix_fmt", "yuv420p", "-threads", "0",
+        ]
     if fmt == "mp4":
-        return ["-c:v", "libx264", "-profile:v", "high422", "-level:v", "5",
-                "-tune", "zerolatency", "-q:v", "1", "-crf", "25", "-preset", "veryfast",
-                "-c:a", "flac", "-pix_fmt", "yuv420p", "-bufsize", "16M", "-threads", "0"]
+        return [
+            "-c:v", "libx264", "-preset", "medium", "-crf", "28",
+            "-c:a", "aac", "-b:a", "96k",
+            "-pix_fmt", "yuv420p", "-threads", "0",
+        ]
     if fmt == "avi":
-        return ["-c:v", "mpeg2video", "-c:a", "flac", "-pix_fmt", "yuv420p", "-threads", "0"]
-    # fallback: copy streams, let FFmpeg choose container defaults
-    return ["-pix_fmt", "yuv420p", "-bufsize", "16M", "-threads", "0"]
+        return [
+            "-c:v", "mpeg4", "-q:v", "5",
+            "-c:a", "libmp3lame", "-b:a", "96k",
+            "-pix_fmt", "yuv420p", "-threads", "0",
+        ]
+    return [
+        "-c:v", "libx264", "-preset", "medium", "-crf", "28",
+        "-c:a", "aac", "-b:a", "96k",
+        "-pix_fmt", "yuv420p", "-threads", "0",
+    ]
 
 
 def _run_ihtx_tagscript_workflow(
@@ -5696,8 +5714,8 @@ def _run_ihtx_tagscript_workflow(
         base_cmd = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
         base_cmd += ["-i", input_path] if no_trim_enabled else ["-stream_loop", "-1", "-i", input_path]
         base_cmd += [
-            "-c:v", "libx264", "-preset", "ultrafast", "-b:v", "16M",
-            "-c:a", "flac",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+            "-c:a", "aac", "-b:a", "96k",
         ]
         if not no_trim_enabled:
             base_cmd += ["-t", effective_duration]
@@ -5730,7 +5748,7 @@ def _run_ihtx_tagscript_workflow(
                     # cumulative delay in the final IHTX export.
                     "-vf", "setpts=PTS-STARTPTS",
                     "-af", "asetpts=PTS-STARTPTS",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
                     "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
                     "-movflags", "+faststart", trimmed,
                 ]
