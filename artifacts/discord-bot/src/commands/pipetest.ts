@@ -4,7 +4,7 @@ import fs from 'fs';
 import { makeTempDir, cleanupDir, downloadUrl } from '../utils/temp.js';
 import { getUploadLimitBytes, formatBytes } from '../utils/limits.js';
 import { _upload_to_catbox } from '../utils/catbox.js';
-import { applyGradientmap, applySidechainGateVocoder, applyWave } from '../effects.js';
+import { applyGradientmap, applySidechainGateVocoder, applyWave, applyRawFfmpeg } from '../effects.js';
 import {
   parseGradientParams,
   parseGradientPointsText,
@@ -95,6 +95,7 @@ export async function handlePipetest(message: Message, rest: string): Promise<vo
   const firstLower = firstToken.toLowerCase();
   const isWave = firstLower.startsWith('wave=') || firstLower === 'wave';
   const isScgv = firstLower.startsWith('scgv=') || firstLower === 'scgv';
+  const isFfmpeg = firstLower === 'ffmpeg' || firstLower.startsWith('ffmpeg=');
 
   const tmpDir = makeTempDir('pipetest');
   const startTime = Date.now();
@@ -149,6 +150,14 @@ export async function handlePipetest(message: Message, rest: string): Promise<vo
         files: [{ attachment: outputPath, name: path.basename(outputPath) }],
       });
 
+    } else if (isFfmpeg) {
+      const raw = firstLower.startsWith('ffmpeg=') ? firstToken.slice('ffmpeg='.length) : tokens.slice(1).join(' ');
+      const status = await message.reply('⏳ Applying raw FFmpeg pipe effect…');
+      await applyRawFfmpeg({ inputFile: inputPath, outputFile: outputPath }, raw);
+      await status.edit({
+        content: '✅ Raw FFmpeg pipe effect applied.',
+        files: [{ attachment: outputPath, name: path.basename(outputPath) }],
+      });
     } else if (isScgv) {
       const vocoderParams = [
         firstLower.startsWith('scgv=') ? firstToken.slice('scgv='.length) : '',

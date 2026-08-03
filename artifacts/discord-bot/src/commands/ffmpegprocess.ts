@@ -12,7 +12,7 @@ import { _upload_to_catbox } from '../utils/catbox.js';
  * from each token so that `geq='p(X,Y)'` becomes `geq=p(X,Y)` when passed
  * directly to FFmpeg (no shell involved, quotes would be literal otherwise).
  */
-function shellSplit(s: string): string[] {
+export function shellSplit(s: string): string[] {
   const args: string[] = [];
   let current = '';
   let inSingle = false;
