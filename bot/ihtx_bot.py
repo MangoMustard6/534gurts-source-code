@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Made preview1280 pitch-engine selection explicit: `use_r3=True` runs native `rubberband-r3`, while `use_r3=False` runs only FFmpeg's `rubberband` filter; both branches now log their selected engine.
 - 2026-08-03: [Python] Added explicit `[preview1280-r3]` runtime logs before and after every native Rubber Band R3 segment render, including segment name, pitch, tempo/time mode, and exit status.
 - 2026-08-03: [Python] Fixed preview1280 R3 pitch rendering to use native Rubber Band R3 `--pitch` and `--tempo` controls for fixed-pitch segments instead of a constant pitch map that could sound effectively unchanged.
 - 2026-08-03: [Python/TypeScript] Expanded preview1280 help entries with the trailing R3 option and added the selected pitch engine (`R3 enabled`/`R3 disabled`) to every preview1280 result embed.
@@ -6873,11 +6874,28 @@ def _run_montage_segment(
     use_r3: bool,
     timeout: int,
 ) -> tuple[bool, str]:
-    """Render a montage segment, optionally replacing FFmpeg Rubber Band with R3."""
+    """Render one segment using exactly one selected pitch engine.
+
+    ``use_r3=True`` is the native Rubber Band R3 branch. ``use_r3=False`` is
+    the original FFmpeg rubberband branch; it must not invoke rubberband-r3.
+    """
     af_index = next((i for i, value in enumerate(cmd) if value == "-af"), -1)
     pitch_filter = cmd[af_index + 1] if af_index >= 0 and af_index + 1 < len(cmd) else ""
     pitch_match = re.search(r"(?:^|:)pitch=([0-9.]+)", pitch_filter)
-    if not use_r3 or not pitch_match:
+    segment_name = Path(segment_path).name
+    if not use_r3:
+        print(
+            f"[preview1280-r3] disabled; using FFmpeg rubberband "
+            f"segment={segment_name}",
+            flush=True,
+        )
+        return _run_ffmpeg_raw(cmd, timeout=timeout)
+    if not pitch_match:
+        print(
+            f"[preview1280-r3] enabled but segment has no pitch filter; "
+            f"using unchanged audio segment={segment_name}",
+            flush=True,
+        )
         return _run_ffmpeg_raw(cmd, timeout=timeout)
 
     ratio = float(pitch_match.group(1))
@@ -6910,7 +6928,6 @@ def _run_montage_segment(
     else:
         rb_args.append("--time=1")
     mode = f"tempo={tempo:.6f}" if tempo and abs(tempo - 1.0) > 1e-9 else "time=1"
-    segment_name = Path(segment_path).name
     print(
         f"[preview1280-r3] starting native rubberband-r3 "
         f"segment={segment_name} pitch={semitones:+.3f}st {mode}",
