@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Updated standalone `th/trim` to accept optional `[start]` and `[end]`: no timestamps trims `0` → media length, one timestamp trims `start` → media length, and two timestamps use the explicit range.
 - 2026-08-03: [Python/TypeScript] Removed partial Logo Editing Wiki effect-index limits: recursively walks all nested Effects categories, searches up to 50 results, and probes normalized page-title variants so obscure effects are retrieved by name.
 - 2026-08-03: [Python/TypeScript] Changed Logo Editing Wiki responses to deliver documented instructions directly without wiki URLs; links are only allowed when explicitly requested.
 - 2026-08-03: [Python/TypeScript] Expanded Logo Editing Wiki retrieval to include up to 6,000 characters of matched page instructions/content, added instruction/settings/how-to triggers, and instructed AI not to guess undocumented usage.
@@ -10184,9 +10185,11 @@ def _parse_trim_timestamp(ts: str) -> Decimal:
 
 @bot.command(name="trim")
 async def trim_command(ctx: commands.Context, *, args: str = ""):
-    """Trim media from <start> to <end> with up to 10 decimal places of precision.
+    """Trim media from [start] to [end] with up to 10 decimal places of precision.
 
     Usage:
+      th/trim
+      th/trim <start>
       th/trim <start> <end>
       th/trim 5 15
       th/trim 0.5 3.75
@@ -10209,40 +10212,34 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
         else:
             ts_tokens.append(tok)
 
-    if len(ts_tokens) < 2:
+    if len(ts_tokens) > 2:
         await ctx.reply(
-            "❌ Usage: `th/trim <start> <end>`\n"
-            "Examples: `th/trim 5 15` · `th/trim 0.5 3.75` · `th/trim 00:01:30 00:02:45`\n"
+            "❌ Usage: `th/trim [start] [end]`\n"
+            "Defaults: `0` → media length.\n"
+            "Examples: `th/trim` · `th/trim 5` · `th/trim 5 15` · "
+            "`th/trim 00:01:30 00:02:45`\n"
             "Attach, reply to, or include a media URL."
         )
         return
 
-    # Parse start timestamp
-    try:
-        t_start = _parse_trim_timestamp(ts_tokens[0])
-    except ValueError as exc:
-        if str(exc) == "too_many_decimals":
-            await ctx.reply("❌ Timestamps may contain at most 10 decimal places.")
-        else:
-            await ctx.reply("❌ Invalid timestamp format.")
-        return
+    # Start is optional; with one timestamp it is the start and the end
+    # defaults to the media length. With no timestamps this becomes 0 → length.
+    t_start = Decimal(0)
+    t_end: Decimal | None = None
+    if ts_tokens:
+        try:
+            t_start = _parse_trim_timestamp(ts_tokens[0])
+            if len(ts_tokens) == 2:
+                t_end = _parse_trim_timestamp(ts_tokens[1])
+        except ValueError as exc:
+            if str(exc) == "too_many_decimals":
+                await ctx.reply("❌ Timestamps may contain at most 10 decimal places.")
+            else:
+                await ctx.reply("❌ Invalid timestamp format.")
+            return
 
-    # Parse end timestamp
-    try:
-        t_end = _parse_trim_timestamp(ts_tokens[1])
-    except ValueError as exc:
-        if str(exc) == "too_many_decimals":
-            await ctx.reply("❌ Timestamps may contain at most 10 decimal places.")
-        else:
-            await ctx.reply("❌ Invalid timestamp format.")
-        return
-
-    # Validate ordering
-    if t_start < 0 or t_end < 0:
+    if t_start < 0 or (t_end is not None and t_end < 0):
         await ctx.reply("❌ Timestamps cannot be negative.")
-        return
-    if t_start >= t_end:
-        await ctx.reply("❌ Start time must be less than end time.")
         return
 
     # Resolve media source (priority: attachment > reply > URL arg)
@@ -10301,10 +10298,16 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content="❌ Could not read media duration.")
             return
 
+        if t_end is None:
+            t_end = Decimal(str(dur))
         if float(t_end) > dur + 0.001:
             await status_msg.edit(
                 content=f"❌ End time exceeds the media duration ({dur:.6f}s)."
             )
+            return
+
+        if t_start >= t_end:
+            await status_msg.edit(content="❌ Start time must be less than end time.")
             return
 
         output_path = os.path.join(tmpdir, f"trimmed{suffix}")
@@ -13115,8 +13118,9 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "fun",
-        "name": "th/trim <start> <end>",
-        "value": "Trim audio, video, or GIF. Supports HH:MM:SS.frac and plain seconds.",
+        "name": "th/trim [start] [end]",
+        "value": "Trim audio, video, or GIF from 0 to the media length by default. "
+                 "Start and end are optional; supports HH:MM:SS.frac and plain seconds.",
     },
     {
         "cat": "fun",
@@ -15322,7 +15326,7 @@ Heavy (media processing):
 - th/folkvalley — folkvalley aesthetic (audio swap + brightness + overlay)
 - th/vocoder [mode] [bw] <carrier_url> — FFT phase vocoder
 - th/syncaudio [alt] — sync video and audio durations
-- th/trim <start> <end> — trim audio/video/GIF
+- th/trim [start] [end] — trim audio/video/GIF; defaults to `0` → media length
 - th/concatenate <url1> <url2> ... [format] / th/concat — join 2-10 attachments/URLs into one file
 - th/preview1280 [start] [dur] — 12-segment TV-simulator montage
 - th/oppositep1280 [start] [dur] — inverse TV-simulator montage (negated hues, inverted pitches)

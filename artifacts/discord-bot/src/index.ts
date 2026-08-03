@@ -36,6 +36,7 @@ import { handleGradientmap } from './commands/gradientmap.js';
 import { handlePipetest } from './commands/pipetest.js';
 import { handleWave } from './commands/wave.js';
 import { handleRepeat } from './commands/repeat.js';
+import { handleTrim } from './commands/trim.js';
 import { handleBlockuserCommand, handleUnblockuserCommand, isBlocked as isUserBlocked } from './commands/blockuser.js';
 import { handleBlockchannelCommand, handleUnblockchannelCommand, isBlockedInChannel } from './commands/blockchannel.js';
 import { handleKlaskysource } from './commands/klaskysource.js';
@@ -331,6 +332,10 @@ client.on('messageCreate', async (message: Message) => {
       case 'rep':
       case 'loop':
         await handleRepeat(message, rest);
+        break;
+
+      case 'trim':
+        await handleTrim(message, rest);
         break;
 
       case 'scgv':
