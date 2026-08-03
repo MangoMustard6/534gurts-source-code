@@ -23,6 +23,99 @@ export interface ProcessorContext {
   timeout?: number;
 }
 
+/**
+ * Apply user-supplied FFmpeg arguments between the input and output paths.
+ * The tokenizer deliberately keeps quoted geq/filter_complex expressions
+ * together, including commas, brackets, parentheses, and nested math.
+ */
+export async function applyRawFfmpeg(
+  ctx: ProcessorContext,
+  rawArgs: string,
+): Promise<void> {
+  const args: string[] = [];
+  let token = '';
+  let quote = '';
+  let escaped = false;
+  for (const ch of rawArgs.trim()) {
+    if (escaped) { token += ch; escaped = false; continue; }
+    if (ch === '\\' && quote === '"') { escaped = true; continue; }
+    if (quote) {
+      if (ch === quote) quote = '';
+      else token += ch;
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+    } else if (/\s/.test(ch)) {
+      if (token) { args.push(token); token = ''; }
+    } else {
+      token += ch;
+    }
+  }
+  if (escaped) token += '\\';
+  if (quote) throw new Error('ffmpeg arguments contain an unterminated quote');
+  if (token) args.push(token);
+  if (!args.length) throw new Error('ffmpeg pipe effect requires arguments');
+
+  const probe = async (entries: string[]): Promise<string> => {
+    const result = await spawnAsync('ffprobe', entries, { timeout: 10_000 });
+    return result.stdout.trim();
+  };
+  const [durationRaw, frameRateRaw, frameCountRaw, widthRaw, heightRaw, sampleRateRaw] =
+    await Promise.all([
+      probe(['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', ctx.inputFile]),
+      probe(['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=r_frame_rate', '-of', 'default=nw=1:nk=1', ctx.inputFile]),
+      probe(['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=nb_frames', '-of', 'default=nw=1:nk=1', ctx.inputFile]),
+      probe(['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width', '-of', 'default=nw=1:nk=1', ctx.inputFile]),
+      probe(['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=height', '-of', 'default=nw=1:nk=1', ctx.inputFile]),
+      probe(['-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=sample_rate', '-of', 'default=nw=1:nk=1', ctx.inputFile]),
+    ]);
+  const duration = Number(durationRaw) || 0;
+  const fpsParts = frameRateRaw.split('/');
+  const fps = fpsParts.length === 2 ? Number(fpsParts[0]) / Number(fpsParts[1]) : Number(frameRateRaw);
+  const vars: Record<string, string> = {
+    '$vd': String(duration), '$d': String(duration),
+    '$fr': String(fps || 0), '$f': String(fps || 0),
+    '$fc': frameCountRaw || '0', '$w': widthRaw || '0',
+    '$h': heightRaw || '0', '$sr': sampleRateRaw || '0',
+    '$T': duration > 0 ? `(t/${duration})` : 't',
+  };
+  let expanded = rawArgs;
+  for (const [key, value] of Object.entries(vars)) {
+    expanded = key === '$T'
+      ? expanded.replace(/\$T(?![A-Za-z0-9_])/g, value)
+      : expanded.split(key).join(value);
+  }
+  // Match the Python pipe engine's convenience function for expression math.
+  expanded = expanded.replace(
+    /lerp\(([^(),]+),([^(),]+),([^()]+)\)/g,
+    '(($1)+(($2)-($1))*($3))',
+  );
+  // Re-tokenize after substitutions so quoted filter arguments remain intact.
+  const finalArgs = shellLikeSplit(expanded);
+  const result = await spawnAsync('ffmpeg', [
+    '-loglevel', 'error', '-hide_banner', '-y', '-i', ctx.inputFile,
+    ...finalArgs, ctx.outputFile,
+  ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
+  if (result.code !== 0) throw new Error(result.stderr.slice(-1200) || 'FFmpeg failed');
+}
+
+function shellLikeSplit(value: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let quote = '';
+  for (const ch of value) {
+    if (quote) {
+      if (ch === quote) quote = '';
+      else current += ch;
+    } else if (ch === "'" || ch === '"') quote = ch;
+    else if (/\s/.test(ch)) {
+      if (current) { result.push(current); current = ''; }
+    } else current += ch;
+  }
+  if (quote) throw new Error('ffmpeg arguments contain an unterminated quote');
+  if (current) result.push(current);
+  return result;
+}
+
 // ── Pitch transition ───────────────────────────────────────────────────
 
 /**

@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Expanded `th/ffmpeg` and raw `ffmpeg(...)` pipe support for quoted `geq` expressions, nested parentheses/brackets, `filter_complex`, `$fc/$vd/$sr/$fr/$w/$h` variables, and `lerp` math; protected inner FFmpeg assignments from pipe splitting.
 - 2026-08-03: [Python/TypeScript] Switched pitchtransition from FFmpeg's `rubberband=phase=712923000` filter to native Rubber Band R3 (`rubberband-r3 -3 --pitchmap`) for dynamic pitch sweeps; finite padding and MOV PCM output remain intact.
 - 2026-08-03: [Python/TypeScript] Final MOV pitchtransition outputs now encode audio with `-c:a pcm_s16le`; MP4 remains AAC for container compatibility.
 - 2026-08-03: [Python/TypeScript] Fixed pitchtransition start truncation by removing the post-Rubber-Band front trim; timestamp normalization now preserves the source beginning while retaining the finite tail.
@@ -3079,10 +3080,17 @@ def _parse_pipe_effects(pipe_str: str) -> list[tuple[str, list[str]]]:
     # and pipe-separated values (`mp=-7|7`) remain intact.
     raw_parts: list[str] = []
     for segment in _split_pipe_segments(pipe_str):
-        assignment_parts = re.split(
-            r"\s+(?=[^\s=]+\s*=)",
-            segment.strip(),
-        )
+        stripped_segment = segment.strip()
+        # Raw wrapper effects own their entire parenthesized payload. Do not
+        # split inner FFmpeg options such as `geq=lum=...` or
+        # `-filter_complex ...` into separate pipe effects.
+        if re.match(r"^(?:ffmpeg|imagemagick|im|leftsplit|rightsplit)\s*\(", stripped_segment, re.IGNORECASE):
+            assignment_parts = [stripped_segment]
+        else:
+            assignment_parts = re.split(
+                r"\s+(?=[^\s=]+\s*=)",
+                stripped_segment,
+            )
         raw_parts.extend(part for part in assignment_parts if part.strip())
 
     for part in raw_parts:
@@ -4100,6 +4108,7 @@ def _apply_pipe_effects(
                 expr = params[0] if params else ""
                 if not expr:
                     return False, "geq pipe step requires an expression (e.g. geq='p(X,Y)*0.5')."
+                expr = _preprocess_math_expr(expr, frame_count, media_vars)
                 vf = f"format=yuv444p,geq={expr},scale=iw:ih,format=yuv420p"
                 ok, err = _ff_vf(current, vf, out, timeout=step_timeout)
                 if not ok:
@@ -9857,6 +9866,25 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
                 if _val and _val != "N/A":
                     args = re.sub(re.escape(_var) + r'(?![a-zA-Z0-9_])', _val, args) if _var in ("$T", "*T") else args.replace(_var, _val)
 
+        if any(v in args for v in ("$sr", "$fr", "$f", "$d", "$vd", "$w", "$h", "$fc", "$T", "*T", "lerp(")):
+            meta = await _gather_media_metadata(input_path)
+            try:
+                fps_raw = meta.get("frameRate", "N/A")
+                fps = float(fps_raw.split("/", 1)[0]) / float(fps_raw.split("/", 1)[1]) if "/" in fps_raw else float(fps_raw)
+            except (ValueError, ZeroDivisionError):
+                fps = 0.0
+            try:
+                duration = float(meta.get("duration", "N/A"))
+            except (ValueError, TypeError):
+                duration = 0.0
+            args = _preprocess_math_expr(args, int(meta.get("frameCount", 0) or 0), {
+                "sr": int(meta.get("sampleRate", 0) or 0),
+                "fps": fps,
+                "vd": duration,
+                "w": int(meta.get("width", 0) or 0),
+                "h": int(meta.get("height", 0) or 0),
+            })
+
         try:
             user_args = shlex.split(args)
         except ValueError as e:
@@ -10010,6 +10038,26 @@ async def ffmpeg_process_command(ctx: commands.Context, *, args: str = ""):
 
         # Gather metadata with ffprobe
         meta = await _gather_media_metadata(input_path)
+
+        if any(v in args for v in ("$sr", "$fr", "$f", "$d", "$vd", "$w", "$h", "$fc", "$T", "*T", "lerp(")):
+            def _ffmpegprocess_math(value: str) -> str:
+                try:
+                    fps_raw = meta.get("frameRate", "N/A")
+                    fps = float(fps_raw.split("/", 1)[0]) / float(fps_raw.split("/", 1)[1]) if "/" in fps_raw else float(fps_raw)
+                except (ValueError, ZeroDivisionError):
+                    fps = 0.0
+                try:
+                    duration = float(meta.get("duration", "N/A"))
+                except (ValueError, TypeError):
+                    duration = 0.0
+                return _preprocess_math_expr(value, int(meta.get("frameCount", 0) or 0), {
+                    "sr": int(meta.get("sampleRate", 0) or 0),
+                    "fps": fps,
+                    "vd": duration,
+                    "w": int(meta.get("width", 0) or 0),
+                    "h": int(meta.get("height", 0) or 0),
+                })
+            args = _ffmpegprocess_math(args)
 
         try:
             user_args = shlex.split(args)
