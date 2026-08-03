@@ -8,6 +8,8 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Updated sierpinskiransomware/srw to the supplied native FFmpeg filtergraph, including explicit outa1 audio and positional Rubber Band pitch/tempo stages.
+- 2026-08-03: [Python] Updated sierpinskiransomware/srw to the supplied native FFmpeg filtergraph, including explicit outa1 audio and positional Rubber Band pitch/tempo stages.
 - 2026-08-03: [Python] Made preview1280 R3 replacement fail-safe: native completion is logged only after the R3 WAV is remuxed into the segment, with output existence and audio-stream verification.
 - 2026-08-03: [Python] Made preview1280 R3 verification concrete: resolve and invoke the absolute `rubberband-r3` binary, log its path/version and exact argv, then log successful completion.
 - 2026-08-03: [Python/TypeScript] Added boolean R3 toggles to preview1280 commands: `true` selects native Rubber Band R3 and `false` selects FFmpeg Rubber Band; preview1280what keeps its tempo boolean after the R3 toggle.
@@ -872,20 +874,20 @@ PRESET_FILTERS: dict[str, dict] = {
         "complex_template": (
             "[0:v]null,trim=0:{d}[outv1];"
             "[0:a]atrim=0:{d}[outa1];"
-            "[0:v]trim=0:{d}[v1];"
+            "[0:v]null,trim=0:{d}[v1];"
             "[0:v]negate,trim=0:{d}[v2];"
             "[v1][v2]concat=2:1:0,setpts=1/2*PTS,fps={fr},trim=0:{d}[outv2];"
-            "[0:a]rubberband=pitch=2:tempo=2,atrim=0:{d}[a1];"
-            "[0:a]rubberband=pitch=2:tempo=2,atrim=0:{d}[a2];"
+            "[0:a]rubberband=2:2,atrim=0:{d}[a1];"
+            "[0:a]rubberband=2:2,atrim=0:{d}[a2];"
             "[a1][a2]concat=2:0:1,atrim=0:{d}[outa2];"
             "[0:v]null,trim=0:{d}[v3];"
             "[0:v]negate,trim=0:{d}[v4];"
             "[v3][v4]concat=2:1:0,setpts=1/1.333*PTS,fps={fr},trim=0:{d}[outv3];"
-            "[0:a]rubberband=pitch=1.333:tempo=1.333,atrim=0:{d}[a3];"
-            "[0:a]rubberband=pitch=1.333:tempo=1.333,atrim=0:{d}[a4];"
+            "[0:a]rubberband=1.333:1.333,atrim=0:{d}[a3];"
+            "[0:a]rubberband=1.333:1.333,atrim=0:{d}[a4];"
             "[a3][a4]concat=2:0:1,atrim=0:{d}[outa3];"
             "[0:v]setpts=1/0.5*PTS,fps={fr},trim=0:{d}[outv4];"
-            "[0:a]rubberband=pitch=0.5:tempo=0.5,atrim=0:{d}[outa4];"
+            "[0:a]rubberband=0.5:0.5,atrim=0:{d}[outa4];"
             "[outv1][outv2]hstack[tmp1];"
             "[outv3][outv4]hstack[tmp2];"
             "[tmp1][tmp2]vstack,scale=iw/2:ih/2[outv];"
@@ -1445,7 +1447,7 @@ def run_ffmpeg(input_path: str, output_path: str, preset: str, is_video: bool) -
             "-strict", "experimental",
             "-c:a", audio_codec,
             "-t", str(d),
-            "-f", "mov",
+            "-f", "mp4",
             output_path,
         ]
         return _run_ffmpeg_raw(cmd)
