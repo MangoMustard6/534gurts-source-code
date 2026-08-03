@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Added a dedicated pitchtransition parser branch so custom IHTX exports preserve the full decimal `start,end[;start,end]` parameter as one raw value.
 - 2026-08-03: [Python] Preserved raw pitchtransition pair parameters through the IHTX export preprocessor so decimal values such as `-4.5,5` reach the Rubber Band automation unchanged.
 - 2026-08-03: [Python] Fixed standalone `pitchtransition -4.5,5` parsing so its comma remains part of the start/end pair instead of being treated as an effect delimiter.
 - 2026-08-03: [Python/TypeScript] Pitchtransition now accepts decimal and exponent pitch values and normalizes multi-voice mixing; solo transitions bypass amix to preserve the reference behavior.
@@ -3121,7 +3122,12 @@ def _parse_pipe_effects(pipe_str: str) -> list[tuple[str, list[str]]]:
             name, value = part.split("=", 1)
             current_name = name.strip().lower()
             vstrip = value.strip()
-            if "::" in value:
+            if current_name in ("pitchtransition", "pitchtrans"):
+                # Preserve the complete decimal pair text verbatim. The
+                # generic parameter splitter/math normalizer is not suitable
+                # for `start,end;start,end` syntax.
+                current_params = [vstrip] if vstrip else []
+            elif "::" in value:
                 # :: is an explicit param separator — each segment is kept verbatim
                 # as one param (no further splitting on | or spaces).
                 # Allows: mp2=-4.5|5::G-Major_17  →  params=["-4.5|5", "G-Major_17"]
