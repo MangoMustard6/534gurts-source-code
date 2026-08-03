@@ -8,8 +8,9 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Made th/ihtx output_format required and restricted final exports to supported FFmpeg/ffprobe-compatible containers; removed fallback to intermediate format.
 - 2026-08-03: [Python] Added third positional R3 toggle to preview1280/p1280 and oppositep1280/op1280 pipe effects; omitted toggle keeps FFmpeg Rubber Band.
-- 2026-08-03: [Python] Added optional th/ihtx output_format after format: intermediate renders use format, while the final concatenated export uses output_format.
+- 2026-08-03: [Python] Made th/ihtx output_format required after format: intermediate renders use format, while the final export uses the required ffprobe-compatible output format.
 - 2026-08-03: [Python] Updated sierpinskiransomware/srw to the supplied native FFmpeg filtergraph, including explicit outa1 audio and positional Rubber Band pitch/tempo stages.
 - 2026-08-03: [Python] Updated sierpinskiransomware/srw to the supplied native FFmpeg filtergraph, including explicit outa1 audio and positional Rubber Band pitch/tempo stages.
 - 2026-08-03: [Python] Made preview1280 R3 replacement fail-safe: native completion is logged only after the R3 WAV is remuxed into the segment, with output existence and audio-stream verification.
@@ -5517,17 +5518,20 @@ def _raw_tail_after_n_tokens(s: str, n: int) -> str:
     return s[pos:].strip()
 
 
+_IHTX_FINAL_OUTPUT_FORMATS = {"mp4", "mov", "mkv", "mxf", "avi"}
+
+
 def _parse_ihtx_custom_args(args: str) -> tuple[int, str, str, str, str, str] | None:
     """Parse TagScript-style IHTX custom syntax.
 
     Syntax:
-      <exports> <duration_expr> <no_trim> <export_file_format> [<output_format>] <pipe effects>
+      <exports> <duration_expr> <no_trim> <export_file_format> <output_format> <pipe effects>
 
     Example:
       10 0.483 - mp4 mov huehsv 0.5;negate;multipitch=1|6|7
     """
     parts = shlex.split(args)
-    if len(parts) <= 4:
+    if len(parts) <= 5:
         return None
     try:
         exports = int(parts[0])
@@ -5540,13 +5544,13 @@ def _parse_ihtx_custom_args(args: str) -> tuple[int, str, str, str, str, str] | 
     if no_trim not in {"true", "yes", "+", "false", "no", "-"}:
         return None
     export_format = parts[3].lstrip(".") or "mp4"
-    supported_formats = {"mp4", "mkv", "mxf", "mov", "avi", "webm", "gif"}
-    has_output_format = len(parts) >= 6 and parts[4].lstrip(".").lower() in supported_formats
-    output_format = parts[4].lstrip(".") if has_output_format else export_format
+    output_format = parts[4].lstrip(".").lower()
+    if output_format not in _IHTX_FINAL_OUTPUT_FORMATS:
+        return None
     # Extract pipe_effects from the ORIGINAL raw string so quoted groups
     # (e.g. "-color-matrix \"0 1 0 1 0 0 0 0 1\"") are preserved verbatim.
     # " ".join(parts[4:]) would strip the quotes and lose grouping.
-    pipe_effects = _raw_tail_after_n_tokens(args, 5 if has_output_format else 4)
+    pipe_effects = _raw_tail_after_n_tokens(args, 5)
     if not pipe_effects:
         return None
     return exports, duration_expr, no_trim, export_format, output_format, pipe_effects
@@ -5624,24 +5628,28 @@ def _run_ihtx_tagscript_workflow(
     duration_expr: str,
     no_trim: str,
     export_format: str,
-    output_format: str | None,
+    output_format: str,
     pipe_effects_str: str,
     progress_callback=None,
 ) -> tuple[bool, str]:
     """Run custom IHTX using the TagScript-style shell workflow with pipe effects.
 
     Pipe effects are applied sequentially to each export. Intermediate files
-    use ``export_format``; the final concatenated output uses ``output_format``
-    when supplied, otherwise it uses ``export_format``.
+    use ``export_format``; the final concatenated output uses the required
+    ``output_format``.
     """
     if abs(exports) > MAX_REPETITIONS:
         exports = MAX_REPETITIONS if exports > 0 else -MAX_REPETITIONS
 
     if not re.fullmatch(r"[A-Za-z0-9]+", export_format):
         return False, "Export file format must be alphanumeric (example: mp4)."
-    output_format = (output_format or export_format).lstrip(".")
-    if not re.fullmatch(r"[A-Za-z0-9]+", output_format):
-        return False, "Output file format must be alphanumeric (example: mov)."
+    output_format = output_format.lstrip(".").lower()
+    if output_format not in _IHTX_FINAL_OUTPUT_FORMATS:
+        return False, (
+            "Output file format must be one of: "
+            + ", ".join(sorted(_IHTX_FINAL_OUTPUT_FORMATS))
+            + "."
+        )
 
     effects = _parse_pipe_effects(pipe_effects_str)
     if not effects:
@@ -5664,9 +5672,8 @@ def _run_ihtx_tagscript_workflow(
     except (TypeError, ValueError):
         return False, "Export duration must be numeric when pitchtransition is used."
 
-    _SUPPORTED_FINAL_FORMATS = {"mp4", "mkv", "mxf", "mov", "avi"}
     _fmt_lower = output_format.lower()
-    extension = _fmt_lower if _fmt_lower in _SUPPORTED_FINAL_FORMATS else "mp4"
+    extension = _fmt_lower
     dual_render = _fmt_lower in {"mkv", "mxf"}
     total_exports = abs(exports)
 
@@ -15134,12 +15141,12 @@ Heavy/effects commands:
   PRESET mode: th/ihtx <preset_name>  (attach media)
     Presets: chaos, glitch, melt, hell, orb, deorb, fzte, veb, and more. Lists with th/presets.
 
-  PIPE mode: th/ihtx <exports> <duration> <no_trim> <format> [<output_format>] <effects>  (attach media)
+  PIPE mode: th/ihtx <exports> <duration> <no_trim> <format> <output_format> <effects>  (attach media)
     - exports      — how many times to apply the chain (negative = reverse each pass, e.g. -3)
     - duration     — clip length in seconds or awk expr using `vidlen` (e.g. 0.5, vidlen/2, vidlen*0.75)
      - no_trim      — `true`, `yes`, or `+` keeps full length; `false`, `no`, or `-` trims to duration
      - format       — intermediate render container: mp4, mkv, gif, avi, mov, etc.
-     - output_format — optional final export container; defaults to format.
+     - output_format — required final export container: mp4, mov, mkv, mxf, or avi.
     - effects      — semicolon-separated effect chain (see below)
 
   Example pipe calls:
@@ -15611,12 +15618,12 @@ COMMANDS YOU KNOW (IHTX Bot — prefix th/) — reference these ONLY when the us
 Heavy (media processing):
 - th/ihtx — main effect engine (attach media). Two modes:
     PRESET:  th/ihtx <preset_name>   (chaos, glitch, melt, hell, orb, deorb, fzte, veb, …)
-    PIPE:    th/ihtx <exports> <duration> <no_trim> <format> [<output_format>] <effects>
+    PIPE:    th/ihtx <exports> <duration> <no_trim> <format> <output_format> <effects>
       • exports   — repetitions; negative reverses each pass (e.g. -3)
       • duration  — seconds or awk expr with vidlen (e.g. 0.5, vidlen/2)
       • no_trim   — `true`/`yes`/`+` keeps full length; `false`/`no`/`-` trims to duration
       • format    — intermediate render format: mp4, mkv, gif, avi, mov, …
-      • output_format — optional final export format; defaults to format
+      • output_format — required final export format: mp4, mov, mkv, mxf, or avi
       • effects   — semicolon-separated chain, params after = or space
     Example: th/ihtx 10 0.4 - mp4 mov huehsv=0.5
     Example: th/ihtx 3 0.483 - mp4 huehsv=0.5;negate;multipitch=1|6|7
