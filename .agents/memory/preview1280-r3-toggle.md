@@ -7,4 +7,4 @@ The preview1280 family keeps FFmpeg Rubber Band as the default pitch renderer. A
 
 **Why:** A constant pitch map was interpreted as a relative offset and could sound effectively unchanged, and the CLI `--pitch` option expects semitones rather than the FFmpeg filter's ratio. Runtime proof requires logging the resolved binary path, version, exact argv, and final installed audio stream.
 
-**How to apply:** Keep the boolean optional after numeric duration; accept the same convention across preview1280, oppositep1280, the fixed-size preview variant, and preview1280what. In preview1280what, its later boolean remains the legacy tempo toggle.
+**How to apply:** Keep the boolean optional after numeric duration; accept the same convention across preview1280, oppositep1280, the fixed-size preview variant, and preview1280what. Pipe forms use a third positional parameter, e.g. `preview1280=1.85|0.85|true` and `op1280=1.85|0.85|true`. In preview1280what, its later boolean remains the legacy tempo toggle.
