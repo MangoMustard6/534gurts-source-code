@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Final MOV pitchtransition outputs now encode audio with `-c:a pcm_s16le`; MP4 remains AAC for container compatibility.
 - 2026-08-03: [Python/TypeScript] Fixed pitchtransition start truncation by removing the post-Rubber-Band front trim; timestamp normalization now preserves the source beginning while retaining the finite tail.
 - 2026-08-03: [Python/TypeScript] Fixed pitchtransition endpoint truncation by retaining a finite latency tail through the audio render, mux, IHTX base render, and trim passes; bounded padding prevents runaway WAV output.
 - 2026-08-03: [Python/TypeScript] Preserved the final pitchtransition endpoint by padding audio before Rubber Band processing, then compensating latency and trimming only after the tail is emitted.
@@ -3624,7 +3625,12 @@ def _run_pitch_transition(
                 "-t", f"{duration + transition_latency:.6f}",
                 "-c:v", "libx264", "-preset", "fast", "-tune", "zerolatency",
                 "-bf", "0", "-crf", "18",
-                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                "-pix_fmt", "yuv420p",
+                *(
+                    ["-c:a", "pcm_s16le"]
+                    if Path(output_path).suffix.lower() == ".mov"
+                    else ["-c:a", "aac", "-b:a", "192k"]
+                ),
                 output_path,
             ], timeout=180)
         return _run_ffmpeg_raw([
@@ -5534,7 +5540,7 @@ def _concat_codec_args(output_format: str) -> list[str]:
     if fmt == "mov":
         return ["-c:v", "libx264", "-profile:v", "high422", "-level:v", "5",
                 "-tune", "zerolatency", "-q:v", "1", "-crf", "25", "-preset", "veryfast",
-                "-c:a", "aac", "-q:a", "10", "-b:a", "96K", "-aac_coder", "fast",
+                 "-c:a", "pcm_s16le",
                 "-pix_fmt", "yuv420p", "-bufsize", "16M", "-threads", "0"]
     if fmt == "mp4":
         return ["-c:v", "libx264", "-profile:v", "high422", "-level:v", "5",
@@ -8771,7 +8777,10 @@ async def pitchtransition_command(ctx: commands.Context, *, args: str = ""):
     status_msg = await ctx.reply(f"⚙️ Applying **pitchtransition** (`{raw}`)…")
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{suffix}")
-        output_path = os.path.join(tmpdir, "output_pitchtransition.mp4")
+        output_path = os.path.join(
+            tmpdir,
+            "output_pitchtransition.mov" if suffix in VIDEO_EXTENSIONS else "output_pitchtransition.m4a",
+        )
         try:
             await download_attachment(source, input_path)
             loop = asyncio.get_event_loop()
