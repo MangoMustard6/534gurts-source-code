@@ -6954,6 +6954,8 @@ def _run_montage_segment(
     if version_result.returncode != 0 or help_result.returncode not in (0, 2) or "Rubber Band" not in r3_help:
         return False, f"Resolved `rubberband-r3` is not verifiable as Rubber Band R3: {r3_version}"
 
+    # Rubber Band CLI --pitch takes semitones. Do not pass the FFmpeg filter's
+    # ratio here; e.g. +1 semitone must be `--pitch=1`, not `--pitch=1.059463`.
     rb_args = [r3_bin, "-3", f"--pitch={semitones:.10f}"]
     if tempo and abs(tempo - 1.0) > 1e-9:
         # FFmpeg's tempo factor is the inverse of Rubber Band's time ratio.
