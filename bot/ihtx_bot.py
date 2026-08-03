@@ -8397,7 +8397,8 @@ async def preview1280_command(ctx: commands.Context, *args: str):
     duration = max(0.1, min(duration, 10.0))
 
     status_msg = await ctx.reply(
-        f"⚙️ Creating **preview1280** montage (start={start}s, dur={duration}s)... this will take a while."
+        f"⚙️ Creating **preview1280** montage (start={start}s, dur={duration}s, "
+        f"pitch engine={'R3 enabled' if use_r3 else 'R3 disabled'})... this will take a while."
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -8509,7 +8510,8 @@ async def oppositep1280_command(ctx: commands.Context, *args: str):
     duration = max(0.1, min(duration, 10.0))
 
     status_msg = await ctx.reply(
-        f"⚙️ Creating **oppositep1280** montage (start={start}s, dur={duration}s)... this will take a while."
+        f"⚙️ Creating **oppositep1280** montage (start={start}s, dur={duration}s, "
+        f"pitch engine={'R3 enabled' if use_r3 else 'R3 disabled'})... this will take a while."
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -8624,7 +8626,8 @@ async def preview1280_640x360resize_command(ctx: commands.Context, *args: str):
     duration = max(0.1, min(duration, 10.0))
 
     status_msg = await ctx.reply(
-        f"⚙️ Creating **preview1280 (640×360)** montage (start={start}s, dur={duration}s)... this will take a while."
+        f"⚙️ Creating **preview1280 (640×360)** montage (start={start}s, dur={duration}s, "
+        f"pitch engine={'R3 enabled' if use_r3 else 'R3 disabled'})... this will take a while."
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -8749,7 +8752,8 @@ async def preview1280what_command(
 
     status_msg = await ctx.reply(
         f"⚙️ Creating **preview1280what??** montage "
-        f"(start={start}s, dur={dur}s, target_len={target_len}s, tempo={use_tempo_bool}) "
+        f"(start={start}s, dur={dur}s, target_len={target_len}s, tempo={use_tempo_bool}, "
+        f"pitch engine={'R3 enabled' if use_r3 else 'R3 disabled'}) "
         f"— 28 segments, this will take a while."
     )
 
