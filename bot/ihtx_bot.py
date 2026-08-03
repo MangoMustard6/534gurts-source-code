@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Fixed pitchtransition endpoint truncation by retaining a finite latency tail through the audio render, mux, IHTX base render, and trim passes; bounded padding prevents runaway WAV output.
 - 2026-08-03: [Python/TypeScript] Preserved the final pitchtransition endpoint by padding audio before Rubber Band processing, then compensating latency and trimming only after the tail is emitted.
 - 2026-08-03: [Python/TypeScript] Fixed pitchtransition export delay by compensating Rubber Band look-ahead and resetting audio/video PTS during per-export trim and final concat; full IHTX output now starts both streams at t=0.
 - 2026-08-03: [Python] Added a dedicated pitchtransition parser branch so custom IHTX exports preserve the full decimal `start,end[;start,end]` parameter as one raw value.
@@ -3578,9 +3579,10 @@ def _run_pitch_transition(
                     # Feed Rubber Band enough tail audio to emit the final
                     # automation command, then remove its look-ahead delay.
                     f"apad=pad_dur={transition_latency:.6f},"
+                    f"atrim=duration={duration + transition_latency:.6f},"
                     f"asendcmd=f={cmd_file},rubberband=phase=712923000,"
                     f"atrim=start={transition_latency},asetpts=PTS-STARTPTS,"
-                    f"apad,atrim=duration={duration:.6f}"
+                    f"atrim=duration={duration + transition_latency:.6f}"
                 ),
                 "-c:a", "pcm_s16le", wav,
             ], timeout=300)
@@ -3615,13 +3617,16 @@ def _run_pitch_transition(
                 # Re-encode the video timeline so source encoder delay cannot
                 # remain offset from the freshly rendered Rubber Band audio.
                 "-vf", "setpts=PTS-STARTPTS",
+                "-t", f"{duration + transition_latency:.6f}",
                 "-c:v", "libx264", "-preset", "fast", "-tune", "zerolatency",
                 "-bf", "0", "-crf", "18",
                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-                "-shortest", output_path,
+                output_path,
             ], timeout=180)
         return _run_ffmpeg_raw([
-            "ffmpeg", "-y", "-i", mixed, "-c:a", "aac", output_path,
+            "ffmpeg", "-y", "-i", mixed,
+            "-t", f"{duration + transition_latency:.6f}",
+            "-c:a", "aac", output_path,
         ], timeout=180)
 
 def _geq(expr: str) -> str:
@@ -5569,6 +5574,15 @@ def _run_ihtx_tagscript_workflow(
     if not dur_ok:
         return False, dur_or_error
     dur = dur_or_error
+    # A pitchtransition filter needs its Rubber Band tail to finish emitting
+    # the final automation command. Keep that tail through every export pass.
+    pitchtransition_tail = 0.08 if any(
+        name in ("pitchtransition", "pitchtrans") for name, _ in effects
+    ) else 0.0
+    try:
+        effective_duration = f"{float(dur) + pitchtransition_tail:.6f}"
+    except (TypeError, ValueError):
+        return False, "Export duration must be numeric when pitchtransition is used."
 
     _SUPPORTED_FINAL_FORMATS = {"mp4", "mkv", "mxf", "mov", "avi"}
     _fmt_lower = export_format.lower()
@@ -5599,7 +5613,7 @@ def _run_ihtx_tagscript_workflow(
             "-c:a", "flac",
         ]
         if not no_trim_enabled:
-            base_cmd += ["-t", dur]
+            base_cmd += ["-t", effective_duration]
         base_cmd += ["-movflags", "+faststart", base]
         ok, err = _run_ffmpeg_raw(base_cmd, timeout=180)
         if not ok:
@@ -5622,7 +5636,7 @@ def _run_ihtx_tagscript_workflow(
                 trim_cmd = [
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                     "-stream_loop", "-1", "-i", current,
-                    "-t", dur,
+                    "-t", effective_duration,
                     "-map", "0:v?", "-map", "0:a?",
                     # Each export pass must begin both streams at t=0.
                     # Without this, AAC priming/previous filter PTS becomes
