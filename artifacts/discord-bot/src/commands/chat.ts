@@ -107,6 +107,7 @@ let logoWikiCatalog: {
   fetchedAt: number;
   items: Array<{ title: string; category: string }>;
   categories: string[];
+  members: Record<string, string[]>;
 } | null = null;
 
 function needsLogoWiki(question: string): boolean {
@@ -130,6 +131,7 @@ async function getLogoWikiCatalog(): Promise<Array<{ title: string; category: st
   const queue = ['Category:Effects'];
   const visited = new Set<string>();
   const categories = new Set<string>(['Category:Effects']);
+  const members: Record<string, string[]> = {};
   const pages = new Map<string, { title: string; category: string }>();
   while (queue.length && visited.size < 250) {
     const category = queue.shift()!;
@@ -142,6 +144,7 @@ async function getLogoWikiCatalog(): Promise<Array<{ title: string; category: st
         cmlimit: 'max', cmtype: 'page|subcat', ...(continuation ?? {}),
       });
       for (const item of data.query?.categorymembers ?? []) {
+        (members[category] ??= []).push(item.title);
         if (item.ns === 14) {
           queue.push(item.title);
           categories.add(item.title);
@@ -155,6 +158,7 @@ async function getLogoWikiCatalog(): Promise<Array<{ title: string; category: st
     fetchedAt: Date.now(),
     items: [...pages.values()],
     categories: [...categories].sort(),
+    members,
   };
   return logoWikiCatalog.items;
 }
@@ -187,10 +191,20 @@ async function getLogoWikiContext(question: string): Promise<string> {
       .map((item) => `${item.title} [${item.category.replace(/^Category:/, '')}]`).join(', ').slice(0, 14_000);
     const categoryText = (logoWikiCatalog?.categories ?? ['Category:Effects'])
       .map((category) => category.replace(/^Category:/, '')).join(', ').slice(0, 8_000);
+    const categoryContents = (logoWikiCatalog?.categories ?? ['Category:Effects'])
+      .map((category) => {
+        const members = logoWikiCatalog?.members[category] ?? [];
+        if (!members.length) return '';
+        return `- ${category.replace(/^Category:/, '')}: ${members.slice(0, 100)
+          .map((member) => member.replace(/^Category:/, '')).join(', ')}`;
+      })
+      .filter(Boolean).join('\n').slice(0, 16_000);
     return `\n\nLIVE LOGO EDITING WIKI CONTEXT
 Use this public wiki context for logo editing and video-effect questions. Do not invent details not present here; link source pages when useful.
 The Effects root category was recursively inspected. These are the available subcategories; use them when the user asks about categories or wants effects grouped by category:
 Subcategories: ${categoryText}
+Subcategory contents (effect pages and nested categories):
+${categoryContents}
 Effects catalog with parent category: ${catalogText}
 ${extracts.length ? `Relevant pages:\n${extracts.join('\n')}\n` : ''}Wiki home: https://logo-editing.fandom.com/wiki/Logo_Editing_Wiki
 Effects root: https://logo-editing.fandom.com/wiki/Category:Effects`;

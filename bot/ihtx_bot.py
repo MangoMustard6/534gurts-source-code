@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Added live member lists for every recursively discovered Logo Editing Wiki subcategory, including effect pages and nested categories, so AI can browse category contents rather than only names.
 - 2026-08-03: [Python/TypeScript] Exposed the recursively discovered Logo Editing Wiki Effects subcategory names directly to AI context, while retaining each effect's parent category for grouped answers.
 - 2026-08-03: [Python/TypeScript] Added live Logo Editing Wiki retrieval to both AI chatbots: recursively indexes Category:Effects and nested categories, then fetches relevant effect pages with bounded caching and source links.
 - 2026-08-03: [Python/TypeScript] Expanded `th/ffmpeg` and raw `ffmpeg(...)` pipe support for quoted `geq` expressions, nested parentheses/brackets, `filter_complex`, `$fc/$vd/$sr/$fr/$w/$h` variables, and `lerp` math; protected inner FFmpeg assignments from pipe splitting.
@@ -205,7 +206,7 @@ _preview_cache: dict[str, str] = {}
 # cached separately from page extracts so a temporary Fandom outage does not
 # make normal chat unavailable.
 _LOGO_WIKI_API = "https://logo-editing.fandom.com/api.php"
-_logo_wiki_categories: tuple[float, list[dict], list[str]] | None = None
+_logo_wiki_categories: tuple[float, list[dict], list[str], dict[str, list[str]]] | None = None
 _logo_wiki_pages: dict[str, tuple[float, str]] = {}
 _LOGO_WIKI_TTL = 6 * 60 * 60
 
@@ -15000,6 +15001,7 @@ async def _logo_wiki_category_index() -> list[dict]:
         return _logo_wiki_categories[1]
     found: dict[str, dict] = {}
     category_names: set[str] = {"Category:Effects"}
+    category_members: dict[str, list[str]] = {}
     queue = ["Category:Effects"]
     visited: set[str] = set()
     while queue and len(visited) < 250:
@@ -15018,6 +15020,7 @@ async def _logo_wiki_category_index() -> list[dict]:
                 title = item.get("title", "")
                 if not title:
                     continue
+                category_members.setdefault(category, []).append(title)
                 if item.get("ns") == 14:
                     queue.append(title)
                     category_names.add(title)
@@ -15028,7 +15031,7 @@ async def _logo_wiki_category_index() -> list[dict]:
                 break
             params.update(continuation)
     result = list(found.values())
-    _logo_wiki_categories = (now, result, sorted(category_names))
+    _logo_wiki_categories = (now, result, sorted(category_names), category_members)
     return result
 
 
@@ -15077,6 +15080,21 @@ async def _logo_wiki_context(question: str) -> str:
         category_text = ", ".join(
             category.removeprefix("Category:") for category in categories
         )[:8_000]
+        category_members = _logo_wiki_categories[3] if _logo_wiki_categories else {}
+        # Include the actual contents of each subcategory, not just its name.
+        # Keep the prompt bounded while allowing category-specific questions to
+        # use a larger member list for the matching categories.
+        category_details: list[str] = []
+        for category in categories:
+            members = category_members.get(category, [])
+            if not members:
+                continue
+            label = category.removeprefix("Category:")
+            member_text = ", ".join(
+                member.removeprefix("Category:") for member in members[:100]
+            )
+            category_details.append(f"- {label}: {member_text}")
+        category_contents = "\n".join(category_details)[:16_000]
         return (
             "\n\nLIVE LOGO EDITING WIKI CONTEXT\n"
             "Use this public wiki context for logo editing and video-effect questions. "
@@ -15085,6 +15103,8 @@ async def _logo_wiki_context(question: str) -> str:
             "These are the available subcategories; use them when the user asks "
             "about categories or wants effects grouped by category:\n"
             f"Subcategories: {category_text}\n"
+            "Subcategory contents (effect pages and nested categories):\n"
+            f"{category_contents}\n"
             f"Effects catalog with parent category: {catalog_text}\n"
             + ("\nRelevant pages:\n" + "\n".join(extracts) if extracts else "")
             + "\nWiki home: https://logo-editing.fandom.com/wiki/Logo_Editing_Wiki\n"
