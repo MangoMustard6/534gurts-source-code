@@ -103,7 +103,11 @@ LANGUAGE RULES (always apply):
 
 const LOGO_WIKI_API = 'https://logo-editing.fandom.com/api.php';
 const LOGO_WIKI_TTL_MS = 6 * 60 * 60 * 1000;
-let logoWikiCatalog: { fetchedAt: number; items: Array<{ title: string; category: string }> } | null = null;
+let logoWikiCatalog: {
+  fetchedAt: number;
+  items: Array<{ title: string; category: string }>;
+  categories: string[];
+} | null = null;
 
 function needsLogoWiki(question: string): boolean {
   return /\blogo[\s-]*edit(?:ing|ed)?\b|\b(?:video|audio)\s+effects?\b|\b(?:effect|transition|geq|ffmpeg|filter|edit(?:ing)?)\b/i.test(question);
@@ -125,6 +129,7 @@ async function getLogoWikiCatalog(): Promise<Array<{ title: string; category: st
   }
   const queue = ['Category:Effects'];
   const visited = new Set<string>();
+  const categories = new Set<string>(['Category:Effects']);
   const pages = new Map<string, { title: string; category: string }>();
   while (queue.length && visited.size < 250) {
     const category = queue.shift()!;
@@ -137,13 +142,20 @@ async function getLogoWikiCatalog(): Promise<Array<{ title: string; category: st
         cmlimit: 'max', cmtype: 'page|subcat', ...(continuation ?? {}),
       });
       for (const item of data.query?.categorymembers ?? []) {
-        if (item.ns === 14) queue.push(item.title);
+        if (item.ns === 14) {
+          queue.push(item.title);
+          categories.add(item.title);
+        }
         else if (item.title) pages.set(item.title, { title: item.title, category });
       }
       continuation = data.continue;
     } while (continuation);
   }
-  logoWikiCatalog = { fetchedAt: Date.now(), items: [...pages.values()] };
+  logoWikiCatalog = {
+    fetchedAt: Date.now(),
+    items: [...pages.values()],
+    categories: [...categories].sort(),
+  };
   return logoWikiCatalog.items;
 }
 
@@ -173,9 +185,13 @@ async function getLogoWikiContext(question: string): Promise<string> {
     }
     const catalogText = catalog.slice(0, 500)
       .map((item) => `${item.title} [${item.category.replace(/^Category:/, '')}]`).join(', ').slice(0, 14_000);
+    const categoryText = (logoWikiCatalog?.categories ?? ['Category:Effects'])
+      .map((category) => category.replace(/^Category:/, '')).join(', ').slice(0, 8_000);
     return `\n\nLIVE LOGO EDITING WIKI CONTEXT
 Use this public wiki context for logo editing and video-effect questions. Do not invent details not present here; link source pages when useful.
-Effects catalog (root plus nested categories): ${catalogText}
+The Effects root category was recursively inspected. These are the available subcategories; use them when the user asks about categories or wants effects grouped by category:
+Subcategories: ${categoryText}
+Effects catalog with parent category: ${catalogText}
 ${extracts.length ? `Relevant pages:\n${extracts.join('\n')}\n` : ''}Wiki home: https://logo-editing.fandom.com/wiki/Logo_Editing_Wiki
 Effects root: https://logo-editing.fandom.com/wiki/Category:Effects`;
   } catch (error) {

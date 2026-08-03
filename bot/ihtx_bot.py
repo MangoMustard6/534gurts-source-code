@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Exposed the recursively discovered Logo Editing Wiki Effects subcategory names directly to AI context, while retaining each effect's parent category for grouped answers.
 - 2026-08-03: [Python/TypeScript] Added live Logo Editing Wiki retrieval to both AI chatbots: recursively indexes Category:Effects and nested categories, then fetches relevant effect pages with bounded caching and source links.
 - 2026-08-03: [Python/TypeScript] Expanded `th/ffmpeg` and raw `ffmpeg(...)` pipe support for quoted `geq` expressions, nested parentheses/brackets, `filter_complex`, `$fc/$vd/$sr/$fr/$w/$h` variables, and `lerp` math; protected inner FFmpeg assignments from pipe splitting.
 - 2026-08-03: [Python/TypeScript] Switched pitchtransition from FFmpeg's `rubberband=phase=712923000` filter to native Rubber Band R3 (`rubberband-r3 -3 --pitchmap`) for dynamic pitch sweeps; finite padding and MOV PCM output remain intact.
@@ -204,7 +205,7 @@ _preview_cache: dict[str, str] = {}
 # cached separately from page extracts so a temporary Fandom outage does not
 # make normal chat unavailable.
 _LOGO_WIKI_API = "https://logo-editing.fandom.com/api.php"
-_logo_wiki_categories: tuple[float, list[dict]] | None = None
+_logo_wiki_categories: tuple[float, list[dict], list[str]] | None = None
 _logo_wiki_pages: dict[str, tuple[float, str]] = {}
 _LOGO_WIKI_TTL = 6 * 60 * 60
 
@@ -14998,6 +14999,7 @@ async def _logo_wiki_category_index() -> list[dict]:
     if _logo_wiki_categories and now - _logo_wiki_categories[0] < _LOGO_WIKI_TTL:
         return _logo_wiki_categories[1]
     found: dict[str, dict] = {}
+    category_names: set[str] = {"Category:Effects"}
     queue = ["Category:Effects"]
     visited: set[str] = set()
     while queue and len(visited) < 250:
@@ -15018,6 +15020,7 @@ async def _logo_wiki_category_index() -> list[dict]:
                     continue
                 if item.get("ns") == 14:
                     queue.append(title)
+                    category_names.add(title)
                 else:
                     found[title] = {"title": title, "category": category}
             continuation = data.get("continue")
@@ -15025,7 +15028,7 @@ async def _logo_wiki_category_index() -> list[dict]:
                 break
             params.update(continuation)
     result = list(found.values())
-    _logo_wiki_categories = (now, result)
+    _logo_wiki_categories = (now, result, sorted(category_names))
     return result
 
 
@@ -15070,11 +15073,19 @@ async def _logo_wiki_context(question: str) -> str:
             f"{item['title']} [{item['category'].removeprefix('Category:')}]"
             for item in catalog[:500]
         )[:14_000]
+        categories = _logo_wiki_categories[2] if _logo_wiki_categories else ["Category:Effects"]
+        category_text = ", ".join(
+            category.removeprefix("Category:") for category in categories
+        )[:8_000]
         return (
             "\n\nLIVE LOGO EDITING WIKI CONTEXT\n"
             "Use this public wiki context for logo editing and video-effect questions. "
             "Do not invent details not present here; cite/link the source pages when useful.\n"
-            f"Effects category catalog (including nested categories): {catalog_text}\n"
+            "The Effects root category has been recursively inspected. "
+            "These are the available subcategories; use them when the user asks "
+            "about categories or wants effects grouped by category:\n"
+            f"Subcategories: {category_text}\n"
+            f"Effects catalog with parent category: {catalog_text}\n"
             + ("\nRelevant pages:\n" + "\n".join(extracts) if extracts else "")
             + "\nWiki home: https://logo-editing.fandom.com/wiki/Logo_Editing_Wiki\n"
             "Effects root: https://logo-editing.fandom.com/wiki/Category:Effects"
