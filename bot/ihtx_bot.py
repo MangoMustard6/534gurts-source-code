@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Preserved the final pitchtransition endpoint by padding audio before Rubber Band processing, then compensating latency and trimming only after the tail is emitted.
 - 2026-08-03: [Python/TypeScript] Fixed pitchtransition export delay by compensating Rubber Band look-ahead and resetting audio/video PTS during per-export trim and final concat; full IHTX output now starts both streams at t=0.
 - 2026-08-03: [Python] Added a dedicated pitchtransition parser branch so custom IHTX exports preserve the full decimal `start,end[;start,end]` parameter as one raw value.
 - 2026-08-03: [Python] Preserved raw pitchtransition pair parameters through the IHTX export preprocessor so decimal values such as `-4.5,5` reach the Rubber Band automation unchanged.
@@ -3574,9 +3575,12 @@ def _run_pitch_transition(
                 # internal window. Reset the filtered stream before writing
                 # the intermediate so export/mux timing starts at t=0.
                 "-af", (
+                    # Feed Rubber Band enough tail audio to emit the final
+                    # automation command, then remove its look-ahead delay.
+                    f"apad=pad_dur={transition_latency:.6f},"
                     f"asendcmd=f={cmd_file},rubberband=phase=712923000,"
                     f"atrim=start={transition_latency},asetpts=PTS-STARTPTS,"
-                    f"apad=whole_dur={duration:.6f},atrim=duration={duration:.6f}"
+                    f"apad,atrim=duration={duration:.6f}"
                 ),
                 "-c:a", "pcm_s16le", wav,
             ], timeout=300)
