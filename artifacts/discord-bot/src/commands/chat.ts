@@ -228,7 +228,7 @@ async function getLogoWikiContext(question: string): Promise<string> {
       for (const page of Object.values(data.query?.pages ?? {}) as Array<Record<string, string>>) {
         const extract = (page.extract ?? '').replace(/\s+/g, ' ').trim();
         if (extract || exactTitles.includes(page.title)) {
-          extracts.push(`- ${page.title} — full wiki instructions/content:\n  ${extract.slice(0, 6000)}\n  Source: ${page.fullurl ?? ''}`);
+          extracts.push(`- ${page.title} — full wiki instructions/content:\n  ${extract.slice(0, 6000)}`);
         }
       }
     }
@@ -245,17 +245,17 @@ async function getLogoWikiContext(question: string): Promise<string> {
       })
       .filter(Boolean).join('\n').slice(0, 16_000);
     return `\n\nLIVE LOGO EDITING WIKI CONTEXT
-Use this public wiki context for logo editing and video-effect questions. Do not invent details not present here; link source pages when useful.
+Use this public wiki context for logo editing and video-effect questions. Do not invent details not present here.
 When a named effect or preset is found in the wiki, treat the wiki page as authoritative for that name. Do not substitute a similarly named IHTX command preset such as G-Major_17 or th/mp2.
-For questions asking how an effect works, how to use it, its settings, parameters, or instructions, use the retrieved page content below. Do not infer or invent instructions from the bot command reference. If the wiki page does not document the requested instruction, say that the wiki does not specify it and provide the source page.
+For questions asking how an effect works, how to use it, its settings, parameters, or instructions, use the retrieved page content below. Do not infer or invent instructions from the bot command reference. If the wiki page does not document the requested instruction, say that the wiki does not specify it. Give the user the documented instructions directly instead of sending them to the wiki. Do not include wiki URLs or source links unless the user explicitly asks for a link.
 ${wikiCategoryIntent ? 'IMPORTANT: This question is asking to browse wiki/category contents. Answer from the subcategory contents and wiki pages below. Do not replace the answer with the bot’s built-in th/mp2 preset list unless the user explicitly asks for the bot command itself.\n' : ''}\
 The Effects root category was recursively inspected. These are the available subcategories; use them when the user asks about categories or wants effects grouped by category:
 Subcategories: ${categoryText}
 Subcategory contents (effect pages and nested categories):
 ${categoryContents}
 Effects catalog with parent category: ${catalogText}
-${extracts.length ? `Relevant pages:\n${extracts.join('\n')}\n` : ''}Wiki home: https://logo-editing.fandom.com/wiki/Logo_Editing_Wiki
-Effects root: https://logo-editing.fandom.com/wiki/Category:Effects`;
+${extracts.length ? `Relevant pages:\n${extracts.join('\n')}\n` : ''}
+Answer with the instructions directly; do not send the user to the wiki.`;
   } catch (error) {
     console.warn('[logo-wiki] lookup failed:', error);
     return '';
