@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Fixed standalone `pitchtransition -4.5,5` parsing so its comma remains part of the start/end pair instead of being treated as an effect delimiter.
 - 2026-08-03: [Python/TypeScript] Pitchtransition now accepts decimal and exponent pitch values and normalizes multi-voice mixing; solo transitions bypass amix to preserve the reference behavior.
 - 2026-08-02: [Python/TypeScript] Added `pitchtransition` / `pitchtrans` as a standalone and pipe-effect time-varying Rubber Band pitch sweep with optional multi-voice mixing.
 - 2026-08-02: [Python/TypeScript] Fixed adjacent pipe assignments such as `mp=-7|7 volume=2`: the parser now keeps each effect separate instead of attaching the next effect as a parameter.
@@ -2989,7 +2990,7 @@ def _split_pipe_segments(pipe_str: str) -> list[str]:
             # pitchtransition voice definitions intentionally contain a comma:
             # pitchtransition=-5,9;5,-9
             current_name = "".join(current).lstrip().lower()
-            if ch == "," and current_name.startswith(("pitchtransition=", "pitchtrans=")):
+            if ch == "," and re.match(r"^(?:pitchtransition|pitchtrans)(?:=|\s)", current_name):
                 # Keep commas inside `start,end` voice pairs, but recognize a
                 # following `effect=` assignment as the next effect.
                 remainder = pipe_str[i + 1:]
