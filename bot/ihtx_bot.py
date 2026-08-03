@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Expanded Logo Editing Wiki retrieval to include up to 6,000 characters of matched page instructions/content, added instruction/settings/how-to triggers, and instructed AI not to guess undocumented usage.
 - 2026-08-03: [Python] Wired Logo Editing Wiki context into both `autoreply2` message branches and fixed direct named-page retrieval so questions like “What is G Major 74?” return the wiki page instead of the built-in MP2 explanation.
 - 2026-08-03: [Python/TypeScript] Fixed named-effect wiki retrieval ranking: exact and hyphen/space-normalized matches such as `G Major 74` now appear before generic results, and the AI is told not to substitute the built-in `th/mp2` presets.
 - 2026-08-03: [Python/TypeScript] Fixed wiki-chat intent detection for `th/mp2`, presets, categories, and subcategories; category questions now explicitly prioritize Logo Editing Wiki contents over the built-in MP2 command reference.
@@ -14984,7 +14985,8 @@ def _logo_wiki_relevant(question: str) -> bool:
         r"\blogo[\s-]*edit(?:ing|ed)?\b|\b(?:video|audio)\s+effects?\b|"
         r"\b(?:effect|transition|geq|ffmpeg|filter|edit(?:ing)?)\b|"
         r"\b(?:wiki|categor(?:y|ies)|subcategory|subcategor(?:y|ies)|"
-        r"preset(?:s)?|logo|mp2|th/mp2)\b",
+        r"preset(?:s)?|logo|mp2|th/mp2|instruction(?:s)?|how\s+do\s+i|"
+        r"how\s+to|settings?|parameters?|usage|use\s+it|works?)\b",
         question,
         re.IGNORECASE,
     ))
@@ -15133,13 +15135,14 @@ async def _logo_wiki_context(question: str) -> str:
             data = await _logo_wiki_api({
                 "action": "query", "prop": "extracts|info",
                 "explaintext": 1, "exlimit": len(titles),
-                "inprop": "url", "titles": "|".join(titles),
+                "exchars": 6000, "inprop": "url", "titles": "|".join(titles),
             })
             for page in data.get("query", {}).get("pages", {}).values():
                 extract = re.sub(r"\s+", " ", page.get("extract", "")).strip()
                 if extract or page.get("title") in exact_titles:
                     extracts.append(
-                        f"- {page.get('title', 'Wiki page')}: {extract[:1800]}\n"
+                        f"- {page.get('title', 'Wiki page')} — full wiki instructions/content:\n"
+                        f"  {extract[:6000]}\n"
                         f"  Source: {page.get('fullurl', '')}"
                     )
         catalog_text = ", ".join(
@@ -15172,6 +15175,11 @@ async def _logo_wiki_context(question: str) -> str:
             "When a named effect or preset is found in the wiki, treat the wiki page "
             "as authoritative for that name. Do not substitute a similarly named IHTX "
             "command preset such as G-Major_17 or th/mp2.\n"
+            "For questions asking how an effect works, how to use it, its settings, "
+            "parameters, or instructions, use the retrieved page content below. "
+            "Do not infer or invent instructions from the bot command reference. "
+            "If the wiki page does not document the requested instruction, say that "
+            "the wiki does not specify it and provide the source page.\n"
             + (
                 "IMPORTANT: This question is asking to browse the wiki/category contents. "
                 "Answer from the subcategory contents and wiki pages below. Do not replace "

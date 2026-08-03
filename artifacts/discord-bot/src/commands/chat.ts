@@ -111,7 +111,7 @@ let logoWikiCatalog: {
 } | null = null;
 
 function needsLogoWiki(question: string): boolean {
-  return /\blogo[\s-]*edit(?:ing|ed)?\b|\b(?:video|audio)\s+effects?\b|\b(?:effect|transition|geq|ffmpeg|filter|edit(?:ing)?)\b|\b(?:wiki|categor(?:y|ies)|subcategory|subcategor(?:y|ies)|presets?|logo|mp2|th\/mp2)\b/i.test(question);
+  return /\blogo[\s-]*edit(?:ing|ed)?\b|\b(?:video|audio)\s+effects?\b|\b(?:effect|transition|geq|ffmpeg|filter|edit(?:ing)?)\b|\b(?:wiki|categor(?:y|ies)|subcategory|subcategor(?:y|ies)|presets?|logo|mp2|th\/mp2|instructions?|how\s+do\s+i|how\s+to|settings?|parameters?|usage|use\s+it|works?)\b/i.test(question);
 }
 
 async function logoWikiApi(params: Record<string, string>): Promise<any> {
@@ -223,12 +223,12 @@ async function getLogoWikiContext(question: string): Promise<string> {
     if (titles.length) {
       const data = await logoWikiApi({
         action: 'query', prop: 'extracts|info', explaintext: '1',
-        exlimit: String(titles.length), inprop: 'url', titles: titles.join('|'),
+        exlimit: String(titles.length), exchars: '6000', inprop: 'url', titles: titles.join('|'),
       });
       for (const page of Object.values(data.query?.pages ?? {}) as Array<Record<string, string>>) {
         const extract = (page.extract ?? '').replace(/\s+/g, ' ').trim();
         if (extract || exactTitles.includes(page.title)) {
-          extracts.push(`- ${page.title}: ${extract.slice(0, 1800)}\n  Source: ${page.fullurl ?? ''}`);
+          extracts.push(`- ${page.title} — full wiki instructions/content:\n  ${extract.slice(0, 6000)}\n  Source: ${page.fullurl ?? ''}`);
         }
       }
     }
@@ -247,6 +247,7 @@ async function getLogoWikiContext(question: string): Promise<string> {
     return `\n\nLIVE LOGO EDITING WIKI CONTEXT
 Use this public wiki context for logo editing and video-effect questions. Do not invent details not present here; link source pages when useful.
 When a named effect or preset is found in the wiki, treat the wiki page as authoritative for that name. Do not substitute a similarly named IHTX command preset such as G-Major_17 or th/mp2.
+For questions asking how an effect works, how to use it, its settings, parameters, or instructions, use the retrieved page content below. Do not infer or invent instructions from the bot command reference. If the wiki page does not document the requested instruction, say that the wiki does not specify it and provide the source page.
 ${wikiCategoryIntent ? 'IMPORTANT: This question is asking to browse wiki/category contents. Answer from the subcategory contents and wiki pages below. Do not replace the answer with the bot’s built-in th/mp2 preset list unless the user explicitly asks for the bot command itself.\n' : ''}\
 The Effects root category was recursively inspected. These are the available subcategories; use them when the user asks about categories or wants effects grouped by category:
 Subcategories: ${categoryText}
