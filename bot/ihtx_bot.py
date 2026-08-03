@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Removed partial Logo Editing Wiki effect-index limits: recursively walks all nested Effects categories, searches up to 50 results, and probes normalized page-title variants so obscure effects are retrieved by name.
 - 2026-08-03: [Python/TypeScript] Changed Logo Editing Wiki responses to deliver documented instructions directly without wiki URLs; links are only allowed when explicitly requested.
 - 2026-08-03: [Python/TypeScript] Expanded Logo Editing Wiki retrieval to include up to 6,000 characters of matched page instructions/content, added instruction/settings/how-to triggers, and instructed AI not to guess undocumented usage.
 - 2026-08-03: [Python] Wired Logo Editing Wiki context into both `autoreply2` message branches and fixed direct named-page retrieval so questions like “What is G Major 74?” return the wiki page instead of the built-in MP2 explanation.
@@ -15012,7 +15013,9 @@ async def _logo_wiki_category_index() -> list[dict]:
     category_members: dict[str, list[str]] = {}
     queue = ["Category:Effects"]
     visited: set[str] = set()
-    while queue and len(visited) < 250:
+    # Do not cap the category walk at an arbitrary number: the Effects tree
+    # contains many nested categories and every one is part of the index.
+    while queue:
         category = queue.pop(0)
         if category in visited:
             continue
@@ -15094,7 +15097,7 @@ async def _logo_wiki_context(question: str) -> str:
                 continue
             search = await _logo_wiki_api({
                 "action": "query", "list": "search", "srsearch": search_query.strip(),
-                "srnamespace": 0, "srlimit": 10,
+                "srnamespace": 0, "srlimit": 50,
             })
             search_titles.extend(
                 item.get("title", "") for item in search.get("query", {}).get("search", [])
@@ -15110,6 +15113,24 @@ async def _logo_wiki_context(question: str) -> str:
             " ", question, flags=re.IGNORECASE,
         )
         query_name_norm = _wiki_norm(query_name)
+        # Probe likely page-title spellings directly as well as using search.
+        # This finds low-ranked/obscure effects even when many similarly named
+        # pages exist.
+        title_candidates = list(dict.fromkeys([
+            query_name.strip(),
+            query_name.strip().replace(" ", "-"),
+            query_name.strip().replace(" ", "_"),
+        ]))
+        for candidate in title_candidates:
+            if not candidate:
+                continue
+            direct = await _logo_wiki_api({
+                "action": "query", "prop": "info",
+                "inprop": "url", "titles": candidate,
+            })
+            for page in direct.get("query", {}).get("pages", {}).values():
+                if page.get("title") and page.get("missing") is None:
+                    search_titles.insert(0, page["title"])
         exact_titles = [
             title for title in dict.fromkeys(search_titles)
             if _wiki_norm(title) == question_norm

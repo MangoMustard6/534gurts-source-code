@@ -133,7 +133,9 @@ async function getLogoWikiCatalog(): Promise<Array<{ title: string; category: st
   const categories = new Set<string>(['Category:Effects']);
   const members: Record<string, string[]> = {};
   const pages = new Map<string, { title: string; category: string }>();
-  while (queue.length && visited.size < 250) {
+  // Walk the complete nested Effects tree; do not omit categories after an
+  // arbitrary count.
+  while (queue.length) {
     const category = queue.shift()!;
     if (visited.has(category)) continue;
     visited.add(category);
@@ -197,7 +199,7 @@ async function getLogoWikiContext(question: string): Promise<string> {
       if (!searchQuery.trim()) continue;
       const search = await logoWikiApi({
         action: 'query', list: 'search', srsearch: searchQuery.trim(),
-        srnamespace: '0', srlimit: '10',
+        srnamespace: '0', srlimit: '50',
       });
       searchTitles.push(...(search.query?.search ?? []).map((item: { title: string }) => item.title));
     }
@@ -206,6 +208,21 @@ async function getLogoWikiContext(question: string): Promise<string> {
       /\b(?:what|who|where|when|why|how|is|are|about|the|in|on|from|logo|editing|edit|wiki|effect|effects|preset|presets|command|th\/mp2|tell|me|please|can|you|does|do)\b/gi,
       ' ',
     ));
+    const queryName = question.replace(
+      /\b(?:what|who|where|when|why|how|is|are|about|the|in|on|from|logo|editing|edit|wiki|effect|effects|preset|presets|command|th\/mp2|tell|me|please|can|you|does|do)\b/gi,
+      ' ',
+    ).trim();
+    for (const candidate of [...new Set([
+      queryName, queryName.replace(/ /g, '-'), queryName.replace(/ /g, '_'),
+    ])]) {
+      if (!candidate) continue;
+      const direct = await logoWikiApi({
+        action: 'query', prop: 'info', inprop: 'url', titles: candidate,
+      });
+      for (const page of Object.values(direct.query?.pages ?? {}) as Array<Record<string, string>>) {
+        if (page.title && page.missing === undefined) searchTitles.unshift(page.title);
+      }
+    }
     const exactTitles = uniqueSearchTitles.filter((title) => {
       const normalized = normalizeWikiTitle(title);
       return normalized === questionNorm || questionNorm.includes(normalized) || normalized.includes(questionNorm)
