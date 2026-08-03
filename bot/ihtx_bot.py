@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Made preview1280 R3 replacement fail-safe: native completion is logged only after the R3 WAV is remuxed into the segment, with output existence and audio-stream verification.
 - 2026-08-03: [Python] Made preview1280 R3 verification concrete: resolve and invoke the absolute `rubberband-r3` binary, log its path/version and exact argv, then log successful completion.
 - 2026-08-03: [Python/TypeScript] Added boolean R3 toggles to preview1280 commands: `true` selects native Rubber Band R3 and `false` selects FFmpeg Rubber Band; preview1280what keeps its tempo boolean after the R3 toggle.
 - 2026-08-03: [Python] Made preview1280 pitch-engine selection explicit: `use_r3=True` runs native `rubberband-r3`, while `use_r3=False` runs only FFmpeg's `rubberband` filter; both branches now log their selected engine.
@@ -6907,8 +6908,15 @@ def _run_montage_segment(
     tempo_match = re.search(r"(?:^|[:=])tempo=([-+]?[0-9]*\.?[0-9]+)", pitch_filter)
     tempo = float(tempo_match.group(1)) if tempo_match else 1.0
 
-    # Render the visual stream and the unmodified segment audio first.
+    # Render only the visual stream and unmodified audio first. The FFmpeg
+    # rubberband filter is deliberately removed from this command; native R3
+    # is installed in the remux below.
     base_cmd = cmd[:af_index] + cmd[af_index + 2:]
+    print(
+        f"[preview1280-r3] removed FFmpeg rubberband filter "
+        f"segment={segment_name}; native replacement required",
+        flush=True,
+    )
     ok, err = _run_ffmpeg_raw(base_cmd, timeout=timeout)
     if not ok:
         return False, err
@@ -6974,13 +6982,6 @@ def _run_montage_segment(
             flush=True,
         )
         return False, result.stderr[-1500:]
-    print(
-        f"[preview1280-r3] completed native Rubber Band R3 "
-        f"binary={r3_bin} segment={segment_name} "
-        f"pitch={semitones:+.3f}st {mode} exit=0",
-        flush=True,
-    )
-
     remux = segment_path + ".r3.avi"
     ok, err = _run_ffmpeg_raw([
         "ffmpeg", "-y", "-i", segment_path, "-i", audio_out,
@@ -6989,7 +6990,25 @@ def _run_montage_segment(
     ], timeout=timeout)
     if not ok:
         return False, f"R3 remux failed: {err}"
+    if not os.path.exists(audio_out) or os.path.getsize(audio_out) == 0:
+        return False, "R3 produced no audio output."
+    if not os.path.exists(remux) or os.path.getsize(remux) == 0:
+        return False, "R3 remux produced no segment output."
+    final_audio = _ffprobe(
+        remux, "-select_streams", "a:0",
+        "-show_entries", "stream=codec_name",
+        "-of", "default=nw=1:nk=1",
+    ).strip()
+    if not final_audio:
+        return False, "R3 remux has no audio stream."
     os.replace(remux, segment_path)
+    print(
+        f"[preview1280-r3] completed native Rubber Band R3 "
+        f"binary={r3_bin} segment={segment_name} "
+        f"pitch={semitones:+.3f}st {mode} exit=0 "
+        f"installed_audio={final_audio}",
+        flush=True,
+    )
     return True, ""
 
 
