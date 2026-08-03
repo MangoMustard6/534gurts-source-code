@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Preserved raw pitchtransition pair parameters through the IHTX export preprocessor so decimal values such as `-4.5,5` reach the Rubber Band automation unchanged.
 - 2026-08-03: [Python] Fixed standalone `pitchtransition -4.5,5` parsing so its comma remains part of the start/end pair instead of being treated as an effect delimiter.
 - 2026-08-03: [Python/TypeScript] Pitchtransition now accepts decimal and exponent pitch values and normalizes multi-voice mixing; solo transitions bypass amix to preserve the reference behavior.
 - 2026-08-02: [Python/TypeScript] Added `pitchtransition` / `pitchtrans` as a standalone and pipe-effect time-varying Rubber Band pitch sweep with optional multi-voice mixing.
@@ -3829,7 +3830,13 @@ def _apply_pipe_effects(
     # Preprocess effect parameters: expand lerp, replace $fc/$vd/$sr/$f, collapse constants.
     # Skip for effects whose params are raw FFmpeg/shell command strings
     # (they may contain '=' that is NOT a key=value separator).
-    _RAW_ARG_EFFECTS = {"ffmpeg", "leftsplit", "rightsplit", "gradientmap", "gmap", "imagemagick", "im", "geq"}
+    _RAW_ARG_EFFECTS = {
+        "ffmpeg", "leftsplit", "rightsplit", "gradientmap", "gmap",
+        "imagemagick", "im", "geq",
+        # pitchtransition owns its comma/semicolon numeric syntax. Do not
+        # send its pair text through generic math/key=value preprocessing.
+        "pitchtransition", "pitchtrans",
+    }
     effects = [
         (
             name,
