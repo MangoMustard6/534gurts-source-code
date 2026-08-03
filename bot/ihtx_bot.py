@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Expanded preview1280 help entries with the trailing R3 option and added the selected pitch engine (`R3 enabled`/`R3 disabled`) to every preview1280 result embed.
 - 2026-08-03: [Python] Added optional trailing `r3`/`native-r3` pitch-render toggle to preview1280, oppositep1280, the 640×360 preview variant, and preview1280what. It replaces the FFmpeg Rubber Band pitch pass with native Rubber Band R3 while preserving the intended semitone and tempo values.
 - 2026-08-03: [Python/TypeScript] Updated standalone `th/trim` to accept optional `[start]` and `[end]`: no timestamps trims `0` → media length, one timestamp trims `start` → media length, and two timestamps use the explicit range.
 - 2026-08-03: [Python/TypeScript] Removed partial Logo Editing Wiki effect-index limits: recursively walks all nested Effects categories, searches up to 50 results, and probes normalized page-title variants so obscure effects are retrieved by name.
@@ -8440,7 +8441,10 @@ async def preview1280_command(ctx: commands.Context, *args: str):
         try:
             embed_p1280 = discord.Embed(
                 title="Preview 1280 - FFmpeg command originally made by `MWTVE7691` then transported to typescript:",
-                description="use whatever sync to audio tag you want, I highly recommend notsobot's tag system (.t sync+)",
+                description=(
+                    f"Pitch engine: **{'R3 enabled' if use_r3 else 'R3 disabled'}**\n"
+                    "use whatever sync to audio tag you want, I highly recommend notsobot's tag system (.t sync+)"
+                ),
                 color=11578404,
             )
             await ctx.reply(
@@ -8549,7 +8553,10 @@ async def oppositep1280_command(ctx: commands.Context, *args: str):
         try:
             embed_op1280 = discord.Embed(
                 title="Opposite 1280 - Inverse TV-simulator montage",
-                description="All hue shifts negated · All pitch shifts inverted vs preview1280",
+                description=(
+                    f"All hue shifts negated · All pitch shifts inverted vs preview1280\n"
+                    f"Pitch engine: **{'R3 enabled' if use_r3 else 'R3 disabled'}**"
+                ),
                 color=11578404,
             )
             await ctx.reply(
@@ -8660,7 +8667,10 @@ async def preview1280_640x360resize_command(ctx: commands.Context, *args: str):
         try:
             embed_p1280r = discord.Embed(
                 title="Preview 1280 (640×360 output) — FFmpeg command originally by `yodelaiihiiho`:",
-                description="use whatever sync to audio tag you want, I highly recommend notsobot's tag system (.t sync+)",
+                description=(
+                    f"Pitch engine: **{'R3 enabled' if use_r3 else 'R3 disabled'}**\n"
+                    "use whatever sync to audio tag you want, I highly recommend notsobot's tag system (.t sync+)"
+                ),
                 color=11578404,
             )
             await ctx.reply(
@@ -8786,6 +8796,7 @@ async def preview1280what_command(
                 title="Preview 1280 FFmpeg Extended v8 v2+ (preview1280what??)",
                 description=(
                     f"start={start} · dur={dur} · target_len={target_len} · tempo={use_tempo_bool}\n"
+                    f"Pitch engine: **{'R3 enabled' if use_r3 else 'R3 disabled'}**\n"
                     "use .t sync+ or any audio-sync tag to sync to audio"
                 ),
                 color=11578404,
@@ -13195,8 +13206,8 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "fun",
-        "name": "th/preview1280with640x360resize [start] [dur]  (aliases: p1280ff!3, p1280w16:9r)",
-        "value": "Same 12-segment TV-simulator montage as preview1280 but the final output is locked to **640×360** regardless of input resolution. Defaults: start=1.85, dur=0.85",
+        "name": "th/preview1280with640x360resize [start] [dur] [r3]  (aliases: p1280ff!3, p1280w16:9r)",
+        "value": "Same 12-segment TV-simulator montage as preview1280 but the final output is locked to **640×360** regardless of input resolution. Defaults: start=1.85, dur=0.85. Add `r3` for native Rubber Band R3 pitches.",
     },
     {
         "cat": "fun",
