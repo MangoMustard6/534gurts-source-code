@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Added boolean R3 toggles to preview1280 commands: `true` selects native Rubber Band R3 and `false` selects FFmpeg Rubber Band; preview1280what keeps its tempo boolean after the R3 toggle.
 - 2026-08-03: [Python] Made preview1280 pitch-engine selection explicit: `use_r3=True` runs native `rubberband-r3`, while `use_r3=False` runs only FFmpeg's `rubberband` filter; both branches now log their selected engine.
 - 2026-08-03: [Python] Added explicit `[preview1280-r3]` runtime logs before and after every native Rubber Band R3 segment render, including segment name, pitch, tempo/time mode, and exit status.
 - 2026-08-03: [Python] Fixed preview1280 R3 pitch rendering to use native Rubber Band R3 `--pitch` and `--tempo` controls for fixed-pitch segments instead of a constant pitch map that could sound effectively unchanged.
@@ -6969,6 +6970,36 @@ def _preview_r3_flag(value: str) -> bool:
     return value.strip().lower() in {"r3", "native-r3", "rubberband-r3", "--r3"}
 
 
+def _preview_r3_toggle(value: str) -> bool | None:
+    """Return the requested R3 state for an explicit flag, or None otherwise."""
+    normalized = value.strip().lower()
+    if normalized in {"true", "yes", "on"}:
+        return True
+    if normalized in {"false", "no", "off"}:
+        return False
+    if _preview_r3_flag(normalized):
+        return True
+    return None
+
+
+def _split_preview_r3_args(args: tuple[str, ...]) -> tuple[list[str], bool | None]:
+    """Remove one R3 flag from command args and return its explicit state."""
+    remaining: list[str] = []
+    r3_state: bool | None = None
+    for arg in args:
+        toggle = _preview_r3_toggle(arg)
+        if toggle is not None and (
+            _preview_r3_flag(arg) or arg.strip().lower() in
+            {"true", "yes", "on", "1", "false", "no", "off", "0"}
+        ):
+            if r3_state is not None:
+                raise ValueError("multiple R3 toggles")
+            r3_state = toggle
+        else:
+            remaining.append(arg)
+    return remaining, r3_state
+
+
 def _run_preview1280(
     input_path: str,
     output_path: str,
@@ -8377,15 +8408,15 @@ async def deleteeffect_command(ctx: commands.Context, name: str = ""):
 async def preview1280_command(ctx: commands.Context, *args: str):
     """Create a 12-segment TV-simulator preview montage from an attached video.
 
-    Usage: th/preview1280 [start_offset] [segment_duration] [r3]
+    Usage: th/preview1280 [start_offset] [segment_duration] [r3=true|false]
     Default: start=1.85, duration=0.85
     """
     start = 1.85
     duration = 0.85
     use_r3 = False
     try:
-        numeric = [arg for arg in args if not _preview_r3_flag(arg)]
-        use_r3 = any(_preview_r3_flag(arg) for arg in args)
+        numeric, r3_state = _split_preview_r3_args(args)
+        use_r3 = r3_state is True
         if len(numeric) > 2:
             raise ValueError
         if numeric:
@@ -8393,7 +8424,7 @@ async def preview1280_command(ctx: commands.Context, *args: str):
         if len(numeric) == 2:
             duration = float(numeric[1])
     except ValueError:
-        await ctx.reply("❌ Usage: `th/preview1280 [start] [duration] [r3]`.")
+        await ctx.reply("❌ Usage: `th/preview1280 [start] [duration] [true|false]`.")
         return
     attachment = None
     source = await _resolve_media_source(ctx)
@@ -8401,8 +8432,8 @@ async def preview1280_command(ctx: commands.Context, *args: str):
     if source is None:
         await ctx.reply(
             "**IHTX Preview1280**\n"
-            "Attach a video and use `th/preview1280 [start] [duration] [r3]`.\n"
-            "Add `r3` after the duration to use native Rubber Band R3 for pitches.\n\n"
+            "Attach a video and use `th/preview1280 [start] [duration] [true|false]`.\n"
+            "The boolean after the duration selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`).\n\n"
             "Creates a 12-segment TV-simulator montage with hue shifts, "
             "displacement mapping, and pitch variations.\n\n"
             "Defaults: start=1.85s, duration=0.85s per segment.\n"
@@ -8488,7 +8519,7 @@ async def oppositep1280_command(ctx: commands.Context, *args: str):
     """Create a 12-segment inverse TV-simulator montage from an attached video.
 
     The *opposite* of preview1280: all hue shifts are negated and all pitch
-    shifts are inverted. Usage: th/oppositep1280 [start_offset] [segment_duration] [r3]
+    shifts are inverted. Usage: th/oppositep1280 [start_offset] [segment_duration] [r3=true|false]
     Aliases: th/op1280, th/opposite, th/opposite1280
     Default: start=1.85, duration=0.85
     """
@@ -8496,8 +8527,8 @@ async def oppositep1280_command(ctx: commands.Context, *args: str):
     duration = 0.85
     use_r3 = False
     try:
-        numeric = [arg for arg in args if not _preview_r3_flag(arg)]
-        use_r3 = any(_preview_r3_flag(arg) for arg in args)
+        numeric, r3_state = _split_preview_r3_args(args)
+        use_r3 = r3_state is True
         if len(numeric) > 2:
             raise ValueError
         if numeric:
@@ -8505,7 +8536,7 @@ async def oppositep1280_command(ctx: commands.Context, *args: str):
         if len(numeric) == 2:
             duration = float(numeric[1])
     except ValueError:
-        await ctx.reply("❌ Usage: `th/oppositep1280 [start] [duration] [r3]`.")
+        await ctx.reply("❌ Usage: `th/oppositep1280 [start] [duration] [true|false]`.")
         return
     attachment = None
     source = await _resolve_media_source(ctx)
@@ -8513,8 +8544,8 @@ async def oppositep1280_command(ctx: commands.Context, *args: str):
     if source is None:
         await ctx.reply(
             "**IHTX OppositeP1280**\n"
-            "Attach a video and use `th/oppositep1280 [start] [duration] [r3]`.\n"
-            "Add `r3` after the duration to use native Rubber Band R3 for pitches.\n\n"
+            "Attach a video and use `th/oppositep1280 [start] [duration] [true|false]`.\n"
+            "The boolean after the duration selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`).\n\n"
             "Creates a 12-segment TV-simulator montage with **inverse** hue shifts "
             "and **negated** pitch variations compared to preview1280.\n\n"
             "Defaults: start=1.85s, duration=0.85s per segment.\n"
@@ -8604,7 +8635,7 @@ async def oppositep1280_command(ctx: commands.Context, *args: str):
 async def preview1280_640x360resize_command(ctx: commands.Context, *args: str):
     """Same 12-segment TV-simulator montage as preview1280 but output is locked to 640x360.
 
-    Usage: th/preview1280with640x360resize [start_offset] [segment_duration] [r3]
+    Usage: th/preview1280with640x360resize [start_offset] [segment_duration] [r3=true|false]
     Aliases: th/p1280ff!3, th/p1280w16:9r
     Default: start=1.85, duration=0.85
     """
@@ -8612,8 +8643,8 @@ async def preview1280_640x360resize_command(ctx: commands.Context, *args: str):
     duration = 0.85
     use_r3 = False
     try:
-        numeric = [arg for arg in args if not _preview_r3_flag(arg)]
-        use_r3 = any(_preview_r3_flag(arg) for arg in args)
+        numeric, r3_state = _split_preview_r3_args(args)
+        use_r3 = r3_state is True
         if len(numeric) > 2:
             raise ValueError
         if numeric:
@@ -8621,7 +8652,7 @@ async def preview1280_640x360resize_command(ctx: commands.Context, *args: str):
         if len(numeric) == 2:
             duration = float(numeric[1])
     except ValueError:
-        await ctx.reply("❌ Usage: `th/preview1280with640x360resize [start] [duration] [r3]`.")
+        await ctx.reply("❌ Usage: `th/preview1280with640x360resize [start] [duration] [true|false]`.")
         return
     attachment = None
     source = await _resolve_media_source(ctx)
@@ -8629,8 +8660,8 @@ async def preview1280_640x360resize_command(ctx: commands.Context, *args: str):
     if source is None:
         await ctx.reply(
             "**IHTX Preview1280 (640×360 output)**\n"
-            "Attach a video and use `th/preview1280with640x360resize [start] [duration] [r3]`.\n"
-            "Add `r3` after the duration to use native Rubber Band R3 for pitches.\n\n"
+            "Attach a video and use `th/preview1280with640x360resize [start] [duration] [true|false]`.\n"
+            "The boolean after the duration selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`).\n\n"
             "Same 12-segment TV-simulator montage pipeline as `th/preview1280`, "
             "but the final output is always rescaled to **640×360** regardless of input resolution.\n\n"
             "Defaults: start=1.85s, duration=0.85s per segment.\n"
@@ -8718,7 +8749,7 @@ async def preview1280what_command(
 ):
     """28-segment TV-simulator extended montage (preview1280 FFmpeg Extended v8 v2+).
 
-    Usage: th/preview1280what [start] [dur] [target_len] [use_tempo=true|false] [r3]
+    Usage: th/preview1280what [start] [dur] [r3=true|false] [target_len] [use_tempo=true|false]
     Aliases: th/p1280what, th/p1280fev8v2plus
     Defaults: start=1.85, dur=0.85, target_len=5, use_tempo=false
     """
@@ -8728,8 +8759,19 @@ async def preview1280what_command(
     use_tempo = "false"
     use_r3 = False
     try:
-        positional = [arg for arg in args if not _preview_r3_flag(arg)]
-        use_r3 = any(_preview_r3_flag(arg) for arg in args)
+        raw_args = list(args)
+        r3_state: bool | None = None
+        # For p1280what, the toggle immediately after duration is R3.
+        # The later boolean remains the legacy tempo toggle.
+        if len(raw_args) >= 3:
+            after_duration = _preview_r3_toggle(raw_args[2])
+            if after_duration is not None:
+                r3_state = after_duration
+                raw_args.pop(2)
+        positional, other_r3_state = _split_preview_r3_args(tuple(raw_args))
+        if r3_state is not None and other_r3_state is not None:
+            raise ValueError
+        use_r3 = (r3_state if r3_state is not None else other_r3_state) is True
         if len(positional) > 4:
             raise ValueError
         if positional:
@@ -8741,14 +8783,14 @@ async def preview1280what_command(
         if len(positional) > 3:
             use_tempo = positional[3]
     except ValueError:
-        await ctx.reply("❌ Usage: `th/p1280what [start] [duration] [target_len] [true|false] [r3]`.")
+        await ctx.reply("❌ Usage: `th/p1280what [start] [duration] [true|false] [target_len] [tempo=true|false]`.")
         return
     source = await _resolve_media_source(ctx)
 
     if source is None:
         await ctx.reply(
             "**IHTX Preview1280what?? — FFmpeg Extended v8 v2+**\n"
-            "Attach a video and run `th/preview1280what [start] [dur] [target_len] [true|false] [r3]`.\n"
+            "Attach a video and run `th/preview1280what [start] [dur] [true|false] [target_len] [tempo=true|false]`.\n"
             "Creates a **28-segment** TV-simulator montage: 4 full-length segs + 23 half-length + "
             "1 looping long segment. Pass `true` as the 4th arg to enable tempo-stretching, "
             "or add `r3` after the duration/arguments for native Rubber Band R3 pitches.\n\n"
@@ -13226,25 +13268,25 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "fun",
-        "name": "th/preview1280 [start] [dur] [r3]  (aliases: p1280, pv1280)",
-        "value": "12-segment TV-simulator montage. Defaults: start=1.85, dur=0.85. Add r3 for native Rubber Band R3 pitches.",
+        "name": "th/preview1280 [start] [dur] [r3=true|false]  (aliases: p1280, pv1280)",
+        "value": "12-segment TV-simulator montage. Defaults: start=1.85, dur=0.85. The boolean selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`).",
     },
     {
         "cat": "fun",
-        "name": "th/oppositep1280 [start] [dur] [r3]  (aliases: op1280, opposite, opposite1280)",
-        "value": "Inverse TV-simulator montage: all hue shifts negated, all pitch shifts inverted vs preview1280. Defaults: start=1.85, dur=0.85. Add r3 for native Rubber Band R3 pitches.",
+        "name": "th/oppositep1280 [start] [dur] [r3=true|false]  (aliases: op1280, opposite, opposite1280)",
+        "value": "Inverse TV-simulator montage: all hue shifts negated, all pitch shifts inverted vs preview1280. Defaults: start=1.85, dur=0.85. The boolean selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`).",
     },
     {
         "cat": "fun",
-        "name": "th/preview1280with640x360resize [start] [dur] [r3]  (aliases: p1280ff!3, p1280w16:9r)",
-        "value": "Same 12-segment TV-simulator montage as preview1280 but the final output is locked to **640×360** regardless of input resolution. Defaults: start=1.85, dur=0.85. Add `r3` for native Rubber Band R3 pitches.",
+        "name": "th/preview1280with640x360resize [start] [dur] [r3=true|false]  (aliases: p1280ff!3, p1280w16:9r)",
+        "value": "Same 12-segment TV-simulator montage as preview1280 but the final output is locked to **640×360** regardless of input resolution. Defaults: start=1.85, dur=0.85. The boolean selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`).",
     },
     {
         "cat": "fun",
-        "name": "th/preview1280what [start] [dur] [target_len] [use_tempo] [r3]  (aliases: p1280what, p1280fev8v2plus)",
+        "name": "th/preview1280what [start] [dur] [r3] [target_len] [use_tempo]  (aliases: p1280what, p1280fev8v2plus)",
         "value": (
             "**28-segment** TV-simulator extended montage (FFmpeg Extended v8 v2+). "
-            "Add `r3` for native Rubber Band R3 pitches.\n"
+            "The boolean after duration selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`).\n"
             "4 full-length segs + 23 half-length segs + 1 looping long seg.\n"
             "Defaults: start=1.85 · dur=0.85 · target_len=5 · use_tempo=false\n"
             "Pass `true` as 4th arg to enable tempo-stretching via rubberband.\n"
@@ -15520,8 +15562,8 @@ Heavy (media processing):
 - th/syncaudio [alt] — sync video and audio durations
 - th/trim [start] [end] — trim audio/video/GIF; defaults to `0` → media length
 - th/concatenate <url1> <url2> ... [format] / th/concat — join 2-10 attachments/URLs into one file
-- th/preview1280 [start] [dur] [r3] — 12-segment TV-simulator montage; `r3` uses native Rubber Band R3 pitches
-- th/oppositep1280 [start] [dur] [r3] — inverse TV-simulator montage; `r3` uses native Rubber Band R3 pitches
+- th/preview1280 [start] [dur] [true|false] — 12-segment TV-simulator montage; boolean selects native R3 or FFmpeg Rubber Band
+- th/oppositep1280 [start] [dur] [true|false] — inverse TV-simulator montage; boolean selects native R3 or FFmpeg Rubber Band
 - th/invlum [n] — luma-inversion loop
 - th/lexg — re-apply last export effect chain to new media
 
