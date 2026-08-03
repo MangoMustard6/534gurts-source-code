@@ -74,28 +74,24 @@ export async function applyPitchTransition(
     for (let index = 0; index < voices.length; index += 1) {
       const voice = voices[index]!;
       const lines: string[] = [];
-      for (let step = 0; step <= Math.floor(duration / 0.01); step += 1) {
-        const time = Math.min(step * 0.01, duration);
-        const ratio =
-          `2^(((${time.toFixed(2)}/${duration})*((${voice.end})-(${voice.start}))+(${voice.start}))/12)`;
-        lines.push(`${time.toFixed(2)} rubberband pitch ${ratio};`);
+      for (let step = 0; step <= Math.floor((duration + transitionLatency) / 0.01); step += 1) {
+        const time = Math.min(step * 0.01, duration + transitionLatency);
+        const progress = Math.min(time, duration) / duration;
+        const pitch = voice.start + (voice.end - voice.start) * progress;
+        lines.push(`${Math.round(time * 48000)} ${pitch.toFixed(10)}`);
       }
       const commandFile = path.join(tmpDir, `transition_${index}.txt`);
       fs.writeFileSync(commandFile, `${lines.join('\n')}\n`);
+      const paddedFile = path.join(tmpDir, `padded_${index}.wav`);
+      const padded = await spawnAsync('ffmpeg', [
+        '-y', '-i', ctx.inputFile, '-vn', '-af',
+        `apad=pad_dur=${transitionLatency.toFixed(6)},atrim=duration=${(duration + transitionLatency).toFixed(6)}`,
+        '-c:a', 'pcm_s16le', paddedFile,
+      ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
+      if (padded.code !== 0) throw new Error(`pitchtransition padding failed: ${padded.stderr.slice(-500)}`);
       const voiceFile = path.join(tmpDir, `voice_${index}.wav`);
-      const rendered = await spawnAsync('ffmpeg', [
-        '-y', '-i', ctx.inputFile, '-vn',
-        // Normalize Rubber Band's filtered PTS before the intermediate WAV
-        // reaches the final export/mux step.
-        '-af',
-        // Add tail audio before Rubber Band so the final automation command
-        // is emitted, then remove the look-ahead delay and trim to source length.
-        `apad=pad_dur=${transitionLatency.toFixed(6)},` +
-        `atrim=duration=${(duration + transitionLatency).toFixed(6)},` +
-        `asendcmd=f=${commandFile},rubberband=phase=712923000,` +
-        `asetpts=PTS-STARTPTS,` +
-        `atrim=duration=${(duration + transitionLatency).toFixed(6)}`,
-        '-c:a', 'pcm_s16le', voiceFile,
+      const rendered = await spawnAsync('rubberband-r3', [
+        '-3', '--pitchmap', commandFile, '-t', '1', paddedFile, voiceFile,
       ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
       if (rendered.code !== 0) throw new Error(`pitchtransition voice ${index + 1} failed: ${rendered.stderr.slice(-500)}`);
       voiceFiles.push(voiceFile);
