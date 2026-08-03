@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Changed Logo Editing Wiki responses to deliver documented instructions directly without wiki URLs; links are only allowed when explicitly requested.
 - 2026-08-03: [Python/TypeScript] Expanded Logo Editing Wiki retrieval to include up to 6,000 characters of matched page instructions/content, added instruction/settings/how-to triggers, and instructed AI not to guess undocumented usage.
 - 2026-08-03: [Python] Wired Logo Editing Wiki context into both `autoreply2` message branches and fixed direct named-page retrieval so questions like “What is G Major 74?” return the wiki page instead of the built-in MP2 explanation.
 - 2026-08-03: [Python/TypeScript] Fixed named-effect wiki retrieval ranking: exact and hyphen/space-normalized matches such as `G Major 74` now appear before generic results, and the AI is told not to substitute the built-in `th/mp2` presets.
@@ -15142,8 +15143,7 @@ async def _logo_wiki_context(question: str) -> str:
                 if extract or page.get("title") in exact_titles:
                     extracts.append(
                         f"- {page.get('title', 'Wiki page')} — full wiki instructions/content:\n"
-                        f"  {extract[:6000]}\n"
-                        f"  Source: {page.get('fullurl', '')}"
+                        f"  {extract[:6000]}"
                     )
         catalog_text = ", ".join(
             f"{item['title']} [{item['category'].removeprefix('Category:')}]"
@@ -15179,7 +15179,9 @@ async def _logo_wiki_context(question: str) -> str:
             "parameters, or instructions, use the retrieved page content below. "
             "Do not infer or invent instructions from the bot command reference. "
             "If the wiki page does not document the requested instruction, say that "
-            "the wiki does not specify it and provide the source page.\n"
+            "the wiki does not specify it. Give the user the documented instructions "
+            "directly instead of sending them to the wiki. Do not include wiki URLs "
+            "or source links unless the user explicitly asks for a link.\n"
             + (
                 "IMPORTANT: This question is asking to browse the wiki/category contents. "
                 "Answer from the subcategory contents and wiki pages below. Do not replace "
@@ -15195,8 +15197,7 @@ async def _logo_wiki_context(question: str) -> str:
             f"{category_contents}\n"
             f"Effects catalog with parent category: {catalog_text}\n"
             + ("\nRelevant pages:\n" + "\n".join(extracts) if extracts else "")
-            + "\nWiki home: https://logo-editing.fandom.com/wiki/Logo_Editing_Wiki\n"
-            "Effects root: https://logo-editing.fandom.com/wiki/Category:Effects"
+            + "Answer with the instructions directly; do not send the user to the wiki."
         )
     except Exception as exc:
         print(f"[logo-wiki] lookup failed: {type(exc).__name__}: {exc}")
