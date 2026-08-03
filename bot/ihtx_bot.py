@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Made preview1280 argument parsing tolerant of space-, pipe-, semicolon-, and colon-separated R3 forms, and included received arguments in usage errors.
 - 2026-08-03: [Python] Fixed preview1280 argument parsing to accept documented `r3=true`/`r3=false` key-value toggles alongside bare booleans and R3 aliases.
 - 2026-08-03: [Python] Reduced th/ihtx export sizes across filters by using compressed CRF video and low-bitrate audio for intermediate and final outputs, with container-compatible MXF/AVI profiles.
 - 2026-08-03: [Python] Made th/ihtx output_format required and restricted final exports to supported FFmpeg/ffprobe-compatible containers; removed fallback to intermediate format.
@@ -7093,10 +7094,29 @@ def _preview_r3_toggle(value: str) -> bool | None:
 
 
 def _split_preview_r3_args(args: tuple[str, ...]) -> tuple[list[str], bool | None]:
-    """Remove one R3 flag from command args and return its explicit state."""
+    """Remove one R3 flag from command args and return its explicit state.
+
+    Prefix-command parsing can preserve a user-entered group such as
+    ``1.85|0.85|r3=true`` or ``r3:true`` as one Discord argument. Normalize
+    those equivalent separators here so the command and pipe syntaxes behave
+    consistently.
+    """
     remaining: list[str] = []
     r3_state: bool | None = None
+    expanded: list[str] = []
     for arg in args:
+        pieces = [arg]
+        if any(separator in arg for separator in ("|", ";")):
+            pieces = re.split(r"[|;]", arg)
+        elif re.match(r"^(?:r3|native-r3|rubberband-r3):", arg.strip().lower()):
+            pieces = [re.sub(
+                r"^((?:r3|native-r3|rubberband-r3)):",
+                r"\1=",
+                arg.strip(),
+                flags=re.IGNORECASE,
+            )]
+        expanded.extend(piece.strip() for piece in pieces if piece.strip())
+    for arg in expanded:
         toggle = _preview_r3_toggle(arg)
         if toggle is not None and (
             _preview_r3_flag(arg) or arg.strip().lower() in
@@ -8541,7 +8561,11 @@ async def preview1280_command(ctx: commands.Context, *args: str):
         if len(numeric) == 2:
             duration = float(numeric[1])
     except ValueError:
-        await ctx.reply("❌ Usage: `th/preview1280 [start] [duration] [true|false]`.")
+        shown_args = " ".join(args) or "(none)"
+        await ctx.reply(
+            "❌ Usage: `th/preview1280 [start] [duration] [true|false]`.\n"
+            f"Received: `{shown_args}`"
+        )
         return
     attachment = None
     source = await _resolve_media_source(ctx)
