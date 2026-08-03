@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Switched pitchtransition from FFmpeg's `rubberband=phase=712923000` filter to native Rubber Band R3 (`rubberband-r3 -3 --pitchmap`) for dynamic pitch sweeps; finite padding and MOV PCM output remain intact.
 - 2026-08-03: [Python/TypeScript] Final MOV pitchtransition outputs now encode audio with `-c:a pcm_s16le`; MP4 remains AAC for container compatibility.
 - 2026-08-03: [Python/TypeScript] Fixed pitchtransition start truncation by removing the post-Rubber-Band front trim; timestamp normalization now preserves the source beginning while retaining the finite tail.
 - 2026-08-03: [Python/TypeScript] Fixed pitchtransition endpoint truncation by retaining a finite latency tail through the audio render, mux, IHTX base render, and trim passes; bounded padding prevents runaway WAV output.
@@ -3519,7 +3520,7 @@ def _run_pitch_transition(
     """Sweep one or more voices linearly from start to end semitones.
 
     Pipe syntax: ``pitchtransition=-5,9;5,-9``.
-    Each voice is rendered with FFmpeg's asendcmd + rubberband filter and
+    Each voice is rendered with Rubber Band R3's native pitchmap mode and
     multiple voices are mixed with amix before being muxed back to the source.
     """
     raw = " ".join(pitch_params).strip()
@@ -3557,40 +3558,48 @@ def _run_pitch_transition(
         "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1",
     ).strip())
     with tempfile.TemporaryDirectory(prefix="pitchtransition_") as tmpdir:
-        # FFmpeg's Rubber Band filter has a small look-ahead/window delay.
-        # Remove it from the intermediate audio before the final video export;
-        # otherwise IHTX's subsequent export/trim pass makes the sweep sound
-        # late even though the requested pitch values are correct.
         transition_latency = 0.08
         voice_wavs: list[str] = []
         for index, (start, end) in enumerate(voices):
-            commands = []
-            for step in range(int(duration / 0.01) + 1):
-                t = min(step * 0.01, duration)
-                ratio = f"2^((({t:.2f}/{duration})*(({end})-({start}))+({start}))/12)"
-                commands.append(f"{t:.2f} rubberband pitch {ratio};")
-            cmd_file = os.path.join(tmpdir, f"transition_{index}.txt")
-            Path(cmd_file).write_text("\n".join(commands) + "\n")
-            wav = os.path.join(tmpdir, f"voice_{index}.wav")
+            padded = os.path.join(tmpdir, f"padded_{index}.wav")
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y", "-i", input_path, "-vn",
-                # Rubber Band can carry a non-zero input PTS through its
-                # internal window. Reset the filtered stream before writing
-                # the intermediate so export/mux timing starts at t=0.
-                "-af", (
-                    # Feed Rubber Band enough tail audio to emit the final
-                    # automation command, then remove its look-ahead delay.
-                    f"apad=pad_dur={transition_latency:.6f},"
-                    f"atrim=duration={duration + transition_latency:.6f},"
-                    f"asendcmd=f={cmd_file},rubberband=phase=712923000,"
-                    # Do not trim the front after Rubber Band: that removes
-                    # the beginning of the source audio. Normalize timestamps
-                    # without deleting the leading samples.
-                    f"asetpts=PTS-STARTPTS,"
-                    f"atrim=duration={duration + transition_latency:.6f}"
-                ),
-                "-c:a", "pcm_s16le", wav,
+                "-af", f"apad=pad_dur={transition_latency:.6f},"
+                       f"atrim=duration={duration + transition_latency:.6f}",
+                "-c:a", "pcm_s16le", padded,
             ], timeout=300)
+            if not ok:
+                return False, f"pitchtransition padding failed: {err}"
+            sample_rate_raw = _ffprobe(
+                padded, "-select_streams", "a:0",
+                "-show_entries", "stream=sample_rate",
+                "-of", "default=nw=1:nk=1",
+            ).strip()
+            try:
+                sample_rate = int(sample_rate_raw)
+            except ValueError:
+                return False, "pitchtransition: could not determine audio sample rate."
+            pitch_map = os.path.join(tmpdir, f"transition_{index}.map")
+            map_lines = []
+            for step in range(int((duration + transition_latency) / 0.01) + 1):
+                t = min(step * 0.01, duration + transition_latency)
+                progress = min(t, duration) / duration
+                pitch = start + (end - start) * progress
+                map_lines.append(f"{round(t * sample_rate)} {pitch:.10f}")
+            Path(pitch_map).write_text("\n".join(map_lines) + "\n")
+            wav = os.path.join(tmpdir, f"voice_{index}.wav")
+            try:
+                result = subprocess.run(
+                    ["rubberband-r3", "-3", "--pitchmap", pitch_map,
+                     "-t", "1", padded, wav],
+                    capture_output=True, text=True, timeout=300,
+                )
+                ok = result.returncode == 0
+                err = result.stderr[-2000:] if not ok else ""
+            except subprocess.TimeoutExpired:
+                ok, err = False, "Rubber Band R3 timed out (>300s)"
+            except Exception as exc:
+                ok, err = False, str(exc)
             if not ok:
                 return False, f"pitchtransition voice {index + 1} failed: {err}"
             voice_wavs.append(wav)
