@@ -168,14 +168,38 @@ async function getLogoWikiContext(question: string): Promise<string> {
   try {
     const catalog = await getLogoWikiCatalog();
     const words = new Set((question.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []));
+    const normalizeWikiTitle = (value: string): string =>
+      value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const questionNorm = normalizeWikiTitle(question);
     const titleMatches = catalog.filter((item) =>
       [...(item.title.toLowerCase().match(/[a-z0-9]{3,}/g) ?? [])].some((word) => words.has(word)),
-    ).slice(0, 8);
-    const search = await logoWikiApi({
-      action: 'query', list: 'search', srsearch: question, srnamespace: '0', srlimit: '6',
+    );
+    const searchQueries = [...new Set([
+      question,
+      question.replace(/\b(?:what|is|about|the|wiki|effect|preset|th\/mp2)\b/gi, ' '),
+      question.replace(/ /g, '-'),
+    ])];
+    const searchTitles: string[] = [];
+    for (const searchQuery of searchQueries) {
+      if (!searchQuery.trim()) continue;
+      const search = await logoWikiApi({
+        action: 'query', list: 'search', srsearch: searchQuery.trim(),
+        srnamespace: '0', srlimit: '10',
+      });
+      searchTitles.push(...(search.query?.search ?? []).map((item: { title: string }) => item.title));
+    }
+    const uniqueSearchTitles = [...new Set(searchTitles)];
+    const exactTitles = uniqueSearchTitles.filter((title) => {
+      const normalized = normalizeWikiTitle(title);
+      return normalized === questionNorm || questionNorm.includes(normalized) || normalized.includes(questionNorm);
     });
-    const searchTitles = (search.query?.search ?? []).map((item: { title: string }) => item.title);
-    const titles = [...new Set([...titleMatches.map((item) => item.title), ...searchTitles])].slice(0, 8);
+    const titles = [...new Set([
+      ...exactTitles,
+      ...uniqueSearchTitles,
+      ...titleMatches.sort((a, b) =>
+        Number(normalizeWikiTitle(b.title) === questionNorm) - Number(normalizeWikiTitle(a.title) === questionNorm),
+      ).map((item) => item.title),
+    ])].slice(0, 12);
     const extracts: string[] = [];
     if (titles.length) {
       const data = await logoWikiApi({
@@ -202,6 +226,7 @@ async function getLogoWikiContext(question: string): Promise<string> {
     const wikiCategoryIntent = /\b(?:wiki|categor(?:y|ies)|subcategory|subcategor(?:y|ies)|show|list|view|contents?|members?)\b/i.test(question);
     return `\n\nLIVE LOGO EDITING WIKI CONTEXT
 Use this public wiki context for logo editing and video-effect questions. Do not invent details not present here; link source pages when useful.
+When a named effect or preset is found in the wiki, treat the wiki page as authoritative for that name. Do not substitute a similarly named IHTX command preset such as G-Major_17 or th/mp2.
 ${wikiCategoryIntent ? 'IMPORTANT: This question is asking to browse wiki/category contents. Answer from the subcategory contents and wiki pages below. Do not replace the answer with the bot’s built-in th/mp2 preset list unless the user explicitly asks for the bot command itself.\n' : ''}\
 The Effects root category was recursively inspected. These are the available subcategories; use them when the user asks about categories or wants effects grouped by category:
 Subcategories: ${categoryText}
