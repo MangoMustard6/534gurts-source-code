@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Fixed wiki-chat intent detection for `th/mp2`, presets, categories, and subcategories; category questions now explicitly prioritize Logo Editing Wiki contents over the built-in MP2 command reference.
 - 2026-08-03: [Python/TypeScript] Added live member lists for every recursively discovered Logo Editing Wiki subcategory, including effect pages and nested categories, so AI can browse category contents rather than only names.
 - 2026-08-03: [Python/TypeScript] Exposed the recursively discovered Logo Editing Wiki Effects subcategory names directly to AI context, while retaining each effect's parent category for grouped answers.
 - 2026-08-03: [Python/TypeScript] Added live Logo Editing Wiki retrieval to both AI chatbots: recursively indexes Category:Effects and nested categories, then fetches relevant effect pages with bounded caching and source links.
@@ -14979,7 +14980,9 @@ def _build_chat_system_prompt(profile: dict, username: str, prefix: str) -> str:
 def _logo_wiki_relevant(question: str) -> bool:
     return bool(re.search(
         r"\blogo[\s-]*edit(?:ing|ed)?\b|\b(?:video|audio)\s+effects?\b|"
-        r"\b(?:effect|transition|geq|ffmpeg|filter|edit(?:ing)?)\b",
+        r"\b(?:effect|transition|geq|ffmpeg|filter|edit(?:ing)?)\b|"
+        r"\b(?:wiki|categor(?:y|ies)|subcategory|subcategor(?:y|ies)|"
+        r"preset(?:s)?|logo|mp2|th/mp2)\b",
         question,
         re.IGNORECASE,
     ))
@@ -15095,11 +15098,24 @@ async def _logo_wiki_context(question: str) -> str:
             )
             category_details.append(f"- {label}: {member_text}")
         category_contents = "\n".join(category_details)[:16_000]
+        wiki_category_intent = bool(re.search(
+            r"\b(?:wiki|categor(?:y|ies)|subcategory|subcategor(?:y|ies)|"
+            r"show|list|view|contents?|members?)\b",
+            question,
+            re.IGNORECASE,
+        ))
         return (
             "\n\nLIVE LOGO EDITING WIKI CONTEXT\n"
             "Use this public wiki context for logo editing and video-effect questions. "
             "Do not invent details not present here; cite/link the source pages when useful.\n"
-            "The Effects root category has been recursively inspected. "
+            + (
+                "IMPORTANT: This question is asking to browse the wiki/category contents. "
+                "Answer from the subcategory contents and wiki pages below. Do not replace "
+                "the answer with the bot's built-in th/mp2 preset list unless the user "
+                "explicitly asks for the bot command itself.\n"
+                if wiki_category_intent else ""
+            )
+            + "The Effects root category has been recursively inspected. "
             "These are the available subcategories; use them when the user asks "
             "about categories or wants effects grouped by category:\n"
             f"Subcategories: {category_text}\n"
