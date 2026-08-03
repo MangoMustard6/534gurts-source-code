@@ -93,7 +93,7 @@ export async function applyPitchTransition(
         `apad=pad_dur=${transitionLatency.toFixed(6)},` +
         `atrim=duration=${(duration + transitionLatency).toFixed(6)},` +
         `asendcmd=f=${commandFile},rubberband=phase=712923000,` +
-        `atrim=start=${transitionLatency},asetpts=PTS-STARTPTS,` +
+        `asetpts=PTS-STARTPTS,` +
         `atrim=duration=${(duration + transitionLatency).toFixed(6)}`,
         '-c:a', 'pcm_s16le', voiceFile,
       ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });

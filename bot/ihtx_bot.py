@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Fixed pitchtransition start truncation by removing the post-Rubber-Band front trim; timestamp normalization now preserves the source beginning while retaining the finite tail.
 - 2026-08-03: [Python/TypeScript] Fixed pitchtransition endpoint truncation by retaining a finite latency tail through the audio render, mux, IHTX base render, and trim passes; bounded padding prevents runaway WAV output.
 - 2026-08-03: [Python/TypeScript] Preserved the final pitchtransition endpoint by padding audio before Rubber Band processing, then compensating latency and trimming only after the tail is emitted.
 - 2026-08-03: [Python/TypeScript] Fixed pitchtransition export delay by compensating Rubber Band look-ahead and resetting audio/video PTS during per-export trim and final concat; full IHTX output now starts both streams at t=0.
@@ -3581,7 +3582,10 @@ def _run_pitch_transition(
                     f"apad=pad_dur={transition_latency:.6f},"
                     f"atrim=duration={duration + transition_latency:.6f},"
                     f"asendcmd=f={cmd_file},rubberband=phase=712923000,"
-                    f"atrim=start={transition_latency},asetpts=PTS-STARTPTS,"
+                    # Do not trim the front after Rubber Band: that removes
+                    # the beginning of the source audio. Normalize timestamps
+                    # without deleting the leading samples.
+                    f"asetpts=PTS-STARTPTS,"
                     f"atrim=duration={duration + transition_latency:.6f}"
                 ),
                 "-c:a", "pcm_s16le", wav,
