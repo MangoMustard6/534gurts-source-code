@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Pitchtransition now accepts decimal and exponent pitch values and normalizes multi-voice mixing; solo transitions bypass amix to preserve the reference behavior.
 - 2026-08-02: [Python/TypeScript] Added `pitchtransition` / `pitchtrans` as a standalone and pipe-effect time-varying Rubber Band pitch sweep with optional multi-voice mixing.
 - 2026-08-02: [Python/TypeScript] Fixed adjacent pipe assignments such as `mp=-7|7 volume=2`: the parser now keeps each effect separate instead of attaching the next effect as a parameter.
 - 2026-08-02: [Python] Pipe chains now automatically skip unknown effect names while preserving valid effects; an all-unknown chain returns the original media unchanged.
@@ -3562,17 +3563,24 @@ def _run_pitch_transition(
                 return False, f"pitchtransition voice {index + 1} failed: {err}"
             voice_wavs.append(wav)
 
-        mixed = os.path.join(tmpdir, "mixed.wav")
-        mix_cmd = ["ffmpeg", "-y"]
-        for wav in voice_wavs:
-            mix_cmd += ["-i", wav]
-        mix_cmd += [
-            "-filter_complex", f"amix=inputs={len(voice_wavs)}:duration=longest:dropout_transition=0",
-            "-c:a", "pcm_s16le", mixed,
-        ]
-        ok, err = _run_ffmpeg_raw(mix_cmd, timeout=300)
-        if not ok:
-            return False, f"pitchtransition mix failed: {err}"
+        if len(voice_wavs) == 1:
+            # Match the reference CLI: a solo transition is not passed through
+            # an unnecessary mixer, preserving its original level and tone.
+            mixed = voice_wavs[0]
+        else:
+            mixed = os.path.join(tmpdir, "mixed.wav")
+            mix_cmd = ["ffmpeg", "-y"]
+            for wav in voice_wavs:
+                mix_cmd += ["-i", wav]
+            mix_cmd += [
+                "-filter_complex",
+                f"amix=inputs={len(voice_wavs)}:duration=longest:"
+                "dropout_transition=0:normalize=1",
+                "-c:a", "pcm_s16le", mixed,
+            ]
+            ok, err = _run_ffmpeg_raw(mix_cmd, timeout=300)
+            if not ok:
+                return False, f"pitchtransition mix failed: {err}"
 
         if has_video:
             return _run_ffmpeg_raw([

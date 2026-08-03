@@ -91,14 +91,21 @@ export async function applyPitchTransition(
       voiceFiles.push(voiceFile);
     }
 
-    const mixed = path.join(tmpDir, 'mixed.wav');
-    const mixArgs = ['-y', ...voiceFiles.flatMap((file) => ['-i', file]),
-      '-filter_complex', `amix=inputs=${voiceFiles.length}:duration=longest:dropout_transition=0`,
-      '-c:a', 'pcm_s16le', mixed];
-    const mixedResult = await spawnAsync('ffmpeg', mixArgs, {
-      timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS,
-    });
-    if (mixedResult.code !== 0) throw new Error(`pitchtransition mix failed: ${mixedResult.stderr.slice(-500)}`);
+    let mixed: string;
+    if (voiceFiles.length === 1) {
+      // Match the reference CLI: a solo transition bypasses the mixer.
+      mixed = voiceFiles[0]!;
+    } else {
+      mixed = path.join(tmpDir, 'mixed.wav');
+      const mixArgs = ['-y', ...voiceFiles.flatMap((file) => ['-i', file]),
+        '-filter_complex',
+        `amix=inputs=${voiceFiles.length}:duration=longest:dropout_transition=0:normalize=1`,
+        '-c:a', 'pcm_s16le', mixed];
+      const mixedResult = await spawnAsync('ffmpeg', mixArgs, {
+        timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS,
+      });
+      if (mixedResult.code !== 0) throw new Error(`pitchtransition mix failed: ${mixedResult.stderr.slice(-500)}`);
+    }
 
     const hasVideo = await spawnAsync('ffprobe', [
       '-v', 'error', '-select_streams', 'v:0',
