@@ -2,7 +2,7 @@
 ihtx: engine — run the IHTX TagScript workflow on an attachment.
 
 Syntax in a tag:
-    {ihtx:repetitions duration noTrim format pipe_effects}
+    {ihtx:repetitions duration noTrim format [output_format] pipe_effects}
 
 Examples:
     {ihtx:1 10 false mp4 speed=2}
@@ -13,7 +13,8 @@ Parameters:
     repetitions — integer number of processing passes
     duration    — duration expression (supports decimals, awk math)
     noTrim      — true/yes/+ preserves full length; false/no/- trims to duration
-    format      — output format: mp4, gif, webm, mov, etc.
+    format      — intermediate render format: mp4, gif, webm, mov, etc.
+    output_format — optional final export format; defaults to format.
     pipe_effects — standard IHTX comma-delimited effect chain
 
 The engine grabs the first attachment from the invoking message or its reply.
@@ -47,14 +48,14 @@ class IHTXEngine(BaseEngine):
         args_str = content.strip()
         if not args_str:
             return EngineResult(
-                error="ihtx: provide args — repetitions duration noTrim format effects"
+                error="ihtx: provide args — repetitions duration noTrim format [output_format] effects"
             )
 
-        # Parse: reps duration noTrim format pipe_effects
-        parts = args_str.split(None, 4)
+        # Parse: reps duration noTrim format [output_format] pipe_effects
+        parts = args_str.split()
         if len(parts) < 5:
             return EngineResult(
-                error="ihtx: need all 5 args — repetitions duration noTrim format effects"
+                error="ihtx: need repetitions duration noTrim format effects"
             )
 
         try:
@@ -65,7 +66,10 @@ class IHTXEngine(BaseEngine):
         duration_expr = parts[1]
         no_trim = parts[2]
         export_format = parts[3].lstrip(".")
-        pipe_effects = parts[4]
+        known_formats = {"mp4", "mkv", "mxf", "mov", "avi", "webm", "gif"}
+        has_output_format = len(parts) >= 6 and parts[4].lstrip(".").lower() in known_formats
+        output_format = parts[4].lstrip(".") if has_output_format else export_format
+        pipe_effects = " ".join(parts[5:] if has_output_format else parts[4:])
 
         # Locate attachment
         attachment = None
@@ -89,7 +93,7 @@ class IHTXEngine(BaseEngine):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             input_path = os.path.join(tmpdir, f"input{suffix}")
-            output_path = os.path.join(tmpdir, "output.mp4")
+            output_path = os.path.join(tmpdir, f"output.{output_format or 'mp4'}")
 
             try:
                 await _dl(attachment, input_path)
@@ -105,6 +109,7 @@ class IHTXEngine(BaseEngine):
                 duration_expr,
                 no_trim,
                 export_format,
+                output_format,
                 pipe_effects,
             )
 
@@ -121,5 +126,5 @@ class IHTXEngine(BaseEngine):
             out_bytes = Path(output_path).read_bytes()
 
         return EngineResult(
-            files=[discord.File(io.BytesIO(out_bytes), filename="ihtx_output.mp4")]
+            files=[discord.File(io.BytesIO(out_bytes), filename=f"ihtx_output.{output_format or 'mp4'}")]
         )

@@ -17,3 +17,4 @@
 - [Pitchtransition tail preservation](pitchtransition-tail.md) — pad before Rubber Band, then compensate latency and trim so the final endpoint is not cut.
 - [Wiki chat retrieval paths](wiki-chat-retrieval-paths.md) — attach Logo Editing Wiki context to every AI response path, including autoreply2 and command-named effect questions.
 - [Preview1280 R3 pitch toggle](preview1280-r3-toggle.md) — trailing `r3` selects native Rubber Band R3 while preserving montage pitch values, timing, and visuals.
+- [IHTX output format](ihtx-output-format.md) — optional format after intermediate format keeps renders in one container and converts only the final export.

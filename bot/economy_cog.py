@@ -428,6 +428,7 @@ class EconomyCog(commands.Cog, name="Economy"):
         duration="Seconds or awk expr for pipe mode, e.g. 5 or vidlen/2 (default: full video).",
         no_trim="Skip trim in pipe mode.",
         export_fmt="Output container for pipe mode: mp4 (default), mkv, mov, avi.",
+        output_fmt="Optional final output container after the intermediate format, e.g. mp4 then mov.",
     )
     @app_commands.autocomplete(effect=_preset_autocomplete)
     async def ihtxgen(
@@ -441,6 +442,7 @@ class EconomyCog(commands.Cog, name="Economy"):
         duration: str = "vidlen",
         no_trim: bool = False,
         export_fmt: str = "mov",
+        output_fmt: str = "",
     ) -> None:
         use_pipe = bool(pipe_effects and pipe_effects.strip())
 
@@ -474,11 +476,12 @@ class EconomyCog(commands.Cog, name="Economy"):
                 # e.g. "10 0.483 - mp4 huehsv 0.5;negate;multipitch=1|6|7"
                 _custom_parsed = _parse_ihtx_custom_args(effect.strip())
                 if _custom_parsed is not None:
-                    _c_reps, _c_dur, _c_notrim, _c_fmt, _c_pe = _custom_parsed
+                    _c_reps, _c_dur, _c_notrim, _c_fmt, _c_output_fmt, _c_pe = _custom_parsed
                     repetitions = _c_reps
                     duration = _c_dur
                     no_trim = _c_notrim.lower() in {"true", "yes", "+"}
                     export_fmt = _c_fmt or "mov"
+                    output_fmt = _c_output_fmt if _c_output_fmt != _c_fmt else ""
                     pipe_effects = _c_pe
                     use_pipe = True
                 elif effect.strip() and not effect.strip().split()[0][:1].isdigit():
@@ -507,8 +510,9 @@ class EconomyCog(commands.Cog, name="Economy"):
                                 "Example: `roxi ihtx ffmpeg(-vf huesaturation=saturation=1:strength=100)`\n"
                                 "Example: `roxi ihtx negate,huehsv=0.5`\n\n"
                                 "**Full custom syntax:**\n"
-                                "`<exports> <duration> <no_trim> <format> <pipe effects>`\n"
-                                "Example: `10 0.483 - mp4 huehsv 0.5;negate;multipitch=1|6|7`\n\n"
+                                 "`<exports> <duration> <no_trim> <format> [<output_format>] <pipe effects>`\n"
+                                 "Example: `10 0.483 - mp4 huehsv 0.5;negate;multipitch=1|6|7`\n"
+                                 "Example with final conversion: `10 0.4 - mp4 mov huehsv=0.5`\n\n"
                                 "Or use the dedicated `pipe_effects:` parameter alongside `effect:`."
                             ),
                             color=0xED4245,
@@ -610,6 +614,7 @@ class EconomyCog(commands.Cog, name="Economy"):
             _dur_str = duration if duration != "vidlen" else "full video"
             _header = (
                 f"**Duration:** `{_dur_str}` · **Format:** `{export_fmt}`"
+                + (f" → **Output:** `{output_fmt}`" if output_fmt else "")
                 + (f" · **No trim:** yes" if no_trim else "")
                 + (f" · **Reps:** ×{repetitions}" if repetitions != 1 else "")
                 + f"\n**File:** `{media_filename}`"
@@ -647,7 +652,7 @@ class EconomyCog(commands.Cog, name="Economy"):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             input_path = os.path.join(tmpdir, f"input{suffix}")
-            out_final_ext = f".{export_fmt.lstrip('.')}" if use_pipe else out_ext
+            out_final_ext = f".{(output_fmt or export_fmt).lstrip('.')}" if use_pipe else out_ext
             output_path = os.path.join(tmpdir, f"output{out_final_ext}")
 
             # Download
@@ -703,6 +708,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                         repetitions, duration,
                         "true" if no_trim else "-",
                         export_fmt.lstrip(".") or "mov",
+                        output_fmt.lstrip(".") or None,
                         pipe_effects,
                         _on_progress,
                     )
@@ -888,7 +894,7 @@ class EconomyCog(commands.Cog, name="Economy"):
         parsed = _parse_ihtx_custom_args(args) if args else None
 
         if parsed is not None:
-            reps, dur, notrim, fmt, pe = parsed
+            reps, dur, notrim, fmt, output_fmt, pe = parsed
             await ctx.invoke(
                 self.ihtxgen,
                 effect="chaos",
@@ -897,6 +903,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                 duration=dur,
                 no_trim=notrim.lower() in {"true", "yes"},
                 export_fmt=fmt or "mov",
+                output_fmt="" if output_fmt == fmt else output_fmt,
             )
         else:
             first = (args.split()[0] if args else "").lower()
