@@ -6882,7 +6882,9 @@ def _run_montage_segment(
     """
     af_index = next((i for i, value in enumerate(cmd) if value == "-af"), -1)
     pitch_filter = cmd[af_index + 1] if af_index >= 0 and af_index + 1 < len(cmd) else ""
-    pitch_match = re.search(r"(?:^|:)pitch=([0-9.]+)", pitch_filter)
+    # FFmpeg's filter starts with `rubberband=pitch=...`; later options use
+    # `:pitch=...` in some generated variants.
+    pitch_match = re.search(r"(?:^|[:=])pitch=([-+]?[0-9]*\.?[0-9]+)", pitch_filter)
     segment_name = Path(segment_path).name
     if not use_r3:
         print(
@@ -6901,7 +6903,7 @@ def _run_montage_segment(
 
     ratio = float(pitch_match.group(1))
     semitones = 12.0 * math.log2(ratio)
-    tempo_match = re.search(r"(?:^|:)tempo=([0-9.]+)", pitch_filter)
+    tempo_match = re.search(r"(?:^|[:=])tempo=([-+]?[0-9]*\.?[0-9]+)", pitch_filter)
     tempo = float(tempo_match.group(1)) if tempo_match else 1.0
 
     # Render the visual stream and the unmodified segment audio first.
