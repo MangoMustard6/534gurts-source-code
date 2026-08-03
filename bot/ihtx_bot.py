@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Fixed preview1280 R3 pitch rendering to use native Rubber Band R3 `--pitch` and `--tempo` controls for fixed-pitch segments instead of a constant pitch map that could sound effectively unchanged.
 - 2026-08-03: [Python/TypeScript] Expanded preview1280 help entries with the trailing R3 option and added the selected pitch engine (`R3 enabled`/`R3 disabled`) to every preview1280 result embed.
 - 2026-08-03: [Python] Added optional trailing `r3`/`native-r3` pitch-render toggle to preview1280, oppositep1280, the 640×360 preview variant, and preview1280what. It replaces the FFmpeg Rubber Band pitch pass with native Rubber Band R3 while preserving the intended semitone and tempo values.
 - 2026-08-03: [Python/TypeScript] Updated standalone `th/trim` to accept optional `[start]` and `[end]`: no timestamps trims `0` → media length, one timestamp trims `start` → media length, and two timestamps use the explicit range.
@@ -6898,28 +6899,18 @@ def _run_montage_segment(
     if not ok:
         return False, f"R3 audio extraction failed: {err}"
 
-    sample_rate_raw = _ffprobe(
-        audio_in, "-select_streams", "a:0",
-        "-show_entries", "stream=sample_rate",
-        "-of", "default=nw=1:nk=1",
-    ).strip()
-    try:
-        sample_rate = int(sample_rate_raw)
-    except ValueError:
-        return False, "R3 could not determine segment audio sample rate."
-    seg_duration = _ffprobe_duration(segment_path)
-    if sample_rate <= 0 or seg_duration <= 0:
-        return False, "R3 could not determine segment audio duration."
-
-    pitch_map = os.path.join(tmpdir, f"r3_{Path(segment_path).stem}.map")
-    Path(pitch_map).write_text(
-        f"0 {semitones:.10f}\n"
-        f"{round(seg_duration * sample_rate)} {semitones:.10f}\n"
-    )
+    # These montage segments use fixed pitch values. Use R3's direct controls
+    # rather than a constant pitch map: pitch-map values are relative offsets
+    # and can be interpreted as a no-op when no initial pitch is supplied.
+    rb_args = ["rubberband-r3", "-3", f"--pitch={semitones:.10f}"]
+    if tempo and abs(tempo - 1.0) > 1e-9:
+        # FFmpeg's tempo factor is the inverse of Rubber Band's time ratio.
+        rb_args.append(f"--tempo={tempo:.10f}")
+    else:
+        rb_args.append("--time=1")
     try:
         result = subprocess.run(
-            ["rubberband-r3", "-3", "--pitchmap", pitch_map,
-             "-t", f"{tempo:.10f}", audio_in, audio_out],
+            rb_args + [audio_in, audio_out],
             capture_output=True, text=True, timeout=timeout,
         )
     except Exception as exc:
