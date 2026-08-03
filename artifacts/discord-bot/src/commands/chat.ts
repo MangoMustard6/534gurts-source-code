@@ -166,7 +166,17 @@ async function getLogoWikiCatalog(): Promise<Array<{ title: string; category: st
 async function getLogoWikiContext(question: string): Promise<string> {
   if (!needsLogoWiki(question)) return '';
   try {
-    const catalog = await getLogoWikiCatalog();
+    let catalog: Array<{ title: string; category: string }> = [];
+    try {
+      catalog = await Promise.race([
+        getLogoWikiCatalog(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('category index timeout')), 25_000),
+        ),
+      ]);
+    } catch (error) {
+      console.warn('[logo-wiki] category index unavailable; using direct page search:', error);
+    }
     const words = new Set((question.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []));
     const normalizeWikiTitle = (value: string): string =>
       value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -189,9 +199,15 @@ async function getLogoWikiContext(question: string): Promise<string> {
       searchTitles.push(...(search.query?.search ?? []).map((item: { title: string }) => item.title));
     }
     const uniqueSearchTitles = [...new Set(searchTitles)];
+    const queryNameNorm = normalizeWikiTitle(question.replace(
+      /\b(?:what|who|where|when|why|how|is|are|about|the|in|on|from|logo|editing|edit|wiki|effect|effects|preset|presets|command|th\/mp2|tell|me|please|can|you|does|do)\b/gi,
+      ' ',
+    ));
     const exactTitles = uniqueSearchTitles.filter((title) => {
       const normalized = normalizeWikiTitle(title);
-      return normalized === questionNorm || questionNorm.includes(normalized) || normalized.includes(questionNorm);
+      return normalized === questionNorm || questionNorm.includes(normalized) || normalized.includes(questionNorm)
+        || (queryNameNorm.length > 0 && (normalized === queryNameNorm
+          || queryNameNorm.includes(normalized) || normalized.includes(queryNameNorm)));
     });
     const titles = [...new Set([
       ...exactTitles,
@@ -208,7 +224,9 @@ async function getLogoWikiContext(question: string): Promise<string> {
       });
       for (const page of Object.values(data.query?.pages ?? {}) as Array<Record<string, string>>) {
         const extract = (page.extract ?? '').replace(/\s+/g, ' ').trim();
-        if (extract) extracts.push(`- ${page.title}: ${extract.slice(0, 1800)}\n  Source: ${page.fullurl ?? ''}`);
+        if (extract || exactTitles.includes(page.title)) {
+          extracts.push(`- ${page.title}: ${extract.slice(0, 1800)}\n  Source: ${page.fullurl ?? ''}`);
+        }
       }
     }
     const catalogText = catalog.slice(0, 500)

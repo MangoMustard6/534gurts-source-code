@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Wired Logo Editing Wiki context into both `autoreply2` message branches and fixed direct named-page retrieval so questions like “What is G Major 74?” return the wiki page instead of the built-in MP2 explanation.
 - 2026-08-03: [Python/TypeScript] Fixed named-effect wiki retrieval ranking: exact and hyphen/space-normalized matches such as `G Major 74` now appear before generic results, and the AI is told not to substitute the built-in `th/mp2` presets.
 - 2026-08-03: [Python/TypeScript] Fixed wiki-chat intent detection for `th/mp2`, presets, categories, and subcategories; category questions now explicitly prioritize Logo Editing Wiki contents over the built-in MP2 command reference.
 - 2026-08-03: [Python/TypeScript] Added live member lists for every recursively discovered Logo Editing Wiki subcategory, including effect pages and nested categories, so AI can browse category contents rather than only names.
@@ -15044,7 +15045,15 @@ async def _logo_wiki_context(question: str) -> str:
     if not _logo_wiki_relevant(question):
         return ""
     try:
-        catalog = await _logo_wiki_category_index()
+        try:
+            catalog = await asyncio.wait_for(
+                _logo_wiki_category_index(), timeout=25
+            )
+        except asyncio.TimeoutError:
+            # Exact page search below is still useful when the full nested
+            # category crawl is slow or temporarily unavailable.
+            print("[logo-wiki] category index timed out; using direct page search")
+            catalog = []
         words = {
             word.lower() for word in re.findall(r"[a-z0-9]{3,}", question.lower())
         }
@@ -15075,11 +15084,28 @@ async def _logo_wiki_context(question: str) -> str:
             search_titles.extend(
                 item.get("title", "") for item in search.get("query", {}).get("search", [])
             )
+        # Prefer search results that contain a recognizable named effect. The
+        # user's sentence often includes words such as "what", "wiki", or
+        # "preset", so comparing the whole sentence to a page title is not
+        # sufficient.
+        query_name = re.sub(
+            r"\b(?:what|who|where|when|why|how|is|are|about|the|in|on|from|"
+            r"logo|editing|edit|wiki|effect|effects|preset|presets|command|"
+            r"th/mp2|tell|me|please|can|you|does|do)\b",
+            " ", question, flags=re.IGNORECASE,
+        )
+        query_name_norm = _wiki_norm(query_name)
         exact_titles = [
             title for title in dict.fromkeys(search_titles)
             if _wiki_norm(title) == question_norm
             or question_norm in _wiki_norm(title)
             or _wiki_norm(title) in question_norm
+            or (
+                query_name_norm
+                and (_wiki_norm(title) == query_name_norm
+                     or query_name_norm in _wiki_norm(title)
+                     or _wiki_norm(title) in query_name_norm)
+            )
         ]
         titles = list(dict.fromkeys(
             exact_titles
@@ -15099,7 +15125,7 @@ async def _logo_wiki_context(question: str) -> str:
             })
             for page in data.get("query", {}).get("pages", {}).values():
                 extract = re.sub(r"\s+", " ", page.get("extract", "")).strip()
-                if extract:
+                if extract or page.get("title") in exact_titles:
                     extracts.append(
                         f"- {page.get('title', 'Wiki page')}: {extract[:1800]}\n"
                         f"  Source: {page.get('fullurl', '')}"
@@ -16755,6 +16781,8 @@ async def on_message(message: discord.Message):
                 no_ping = uid2 in autoreply2_no_mention
                 has_attachments = bool(message.attachments)
                 system2 = _build_autoreply2_system_prompt(uid2)
+                if message.content:
+                    system2 += await _logo_wiki_context(message.content)
                 reply2_text = None
                 if not has_attachments:
                     if time.time() < _ar2_rate_limited_until:
@@ -16817,6 +16845,8 @@ async def on_message(message: discord.Message):
 
                 # System prompt: personality + command reference
                 system2 = _build_autoreply2_system_prompt(uid2)
+                if message.content:
+                    system2 += await _logo_wiki_context(message.content)
                 if _OWNER_PERSONAS.get(uid2) and uid2 != OWNER_ID:
                     system2 += "\n\nYou are speaking with a trusted bot collaborator. Be warm and encouraging."
 
