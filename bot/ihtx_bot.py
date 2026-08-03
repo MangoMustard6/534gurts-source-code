@@ -15045,14 +15045,26 @@ async def _logo_wiki_context(question: str) -> str:
     if not _logo_wiki_relevant(question):
         return ""
     try:
-        try:
-            catalog = await asyncio.wait_for(
-                _logo_wiki_category_index(), timeout=25
-            )
-        except asyncio.TimeoutError:
-            # Exact page search below is still useful when the full nested
-            # category crawl is slow or temporarily unavailable.
-            print("[logo-wiki] category index timed out; using direct page search")
+        wiki_category_intent = bool(re.search(
+            r"\b(?:categor(?:y|ies)|subcategory|subcategor(?:y|ies)|"
+            r"contents?|members?)\b|"
+            r"\b(?:show|list|view)\s+(?:the\s+)?(?:effects?|"
+            r"subcategor(?:y|ies)|categor(?:y|ies))\b",
+            question,
+            re.IGNORECASE,
+        ))
+        # Named-effect questions should respond quickly. A full recursive
+        # category crawl is only needed when the user is actually browsing
+        # categories; direct page search is enough for a named effect.
+        if wiki_category_intent:
+            try:
+                catalog = await asyncio.wait_for(
+                    _logo_wiki_category_index(), timeout=25
+                )
+            except asyncio.TimeoutError:
+                print("[logo-wiki] category index timed out; using direct page search")
+                catalog = []
+        else:
             catalog = []
         words = {
             word.lower() for word in re.findall(r"[a-z0-9]{3,}", question.lower())
@@ -15153,12 +15165,6 @@ async def _logo_wiki_context(question: str) -> str:
             )
             category_details.append(f"- {label}: {member_text}")
         category_contents = "\n".join(category_details)[:16_000]
-        wiki_category_intent = bool(re.search(
-            r"\b(?:wiki|categor(?:y|ies)|subcategory|subcategor(?:y|ies)|"
-            r"show|list|view|contents?|members?)\b",
-            question,
-            re.IGNORECASE,
-        ))
         return (
             "\n\nLIVE LOGO EDITING WIKI CONTEXT\n"
             "Use this public wiki context for logo editing and video-effect questions. "
@@ -16810,6 +16816,8 @@ async def on_message(message: discord.Message):
                             if "429" in str(_groq_ar2_exc) or "rate_limit" in str(_groq_ar2_exc).lower():
                                 _ar2_rate_limited_until = time.time() + 300
                                 reply2_text = _autoreply2_quota_fallback(uid2)
+                if not reply2_text:
+                    reply2_text = "I couldn't render an AI response this time—please try that wiki question again."
                 if reply2_text:
                     await asyncio.sleep(random.uniform(5, 7.5))
                     chunks2 = [reply2_text[i:i+1900] for i in range(0, len(reply2_text), 1900)]
@@ -16880,6 +16888,8 @@ async def on_message(message: discord.Message):
                                 _ar2_rate_limited_until = time.time() + 300
                                 reply2_text = _autoreply2_quota_fallback(uid2)
 
+                if not reply2_text:
+                    reply2_text = "I couldn't render an AI response this time—please try that wiki question again."
                 if reply2_text:
                     await asyncio.sleep(random.uniform(5, 7.5))
                     chunks2 = [reply2_text[i:i+1900] for i in range(0, len(reply2_text), 1900)]

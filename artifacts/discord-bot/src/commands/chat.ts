@@ -166,16 +166,19 @@ async function getLogoWikiCatalog(): Promise<Array<{ title: string; category: st
 async function getLogoWikiContext(question: string): Promise<string> {
   if (!needsLogoWiki(question)) return '';
   try {
+    const wikiCategoryIntent = /\b(?:categor(?:y|ies)|subcategory|subcategor(?:y|ies)|contents?|members?)\b|\b(?:show|list|view)\s+(?:the\s+)?(?:effects?|subcategor(?:y|ies)|categor(?:y|ies))\b/i.test(question);
     let catalog: Array<{ title: string; category: string }> = [];
-    try {
-      catalog = await Promise.race([
-        getLogoWikiCatalog(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('category index timeout')), 25_000),
-        ),
-      ]);
-    } catch (error) {
-      console.warn('[logo-wiki] category index unavailable; using direct page search:', error);
+    if (wikiCategoryIntent) {
+      try {
+        catalog = await Promise.race([
+          getLogoWikiCatalog(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('category index timeout')), 25_000),
+          ),
+        ]);
+      } catch (error) {
+        console.warn('[logo-wiki] category index unavailable; using direct page search:', error);
+      }
     }
     const words = new Set((question.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []));
     const normalizeWikiTitle = (value: string): string =>
@@ -241,7 +244,6 @@ async function getLogoWikiContext(question: string): Promise<string> {
           .map((member) => member.replace(/^Category:/, '')).join(', ')}`;
       })
       .filter(Boolean).join('\n').slice(0, 16_000);
-    const wikiCategoryIntent = /\b(?:wiki|categor(?:y|ies)|subcategory|subcategor(?:y|ies)|show|list|view|contents?|members?)\b/i.test(question);
     return `\n\nLIVE LOGO EDITING WIKI CONTEXT
 Use this public wiki context for logo editing and video-effect questions. Do not invent details not present here; link source pages when useful.
 When a named effect or preset is found in the wiki, treat the wiki page as authoritative for that name. Do not substitute a similarly named IHTX command preset such as G-Major_17 or th/mp2.
