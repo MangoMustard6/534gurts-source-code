@@ -111,7 +111,7 @@ let logoWikiCatalog: {
 } | null = null;
 
 function needsLogoWiki(question: string): boolean {
-  return /\blogo[\s-]*edit(?:ing|ed)?\b|\b(?:video|audio)\s+effects?\b|\b(?:effect|transition|geq|ffmpeg|filter|edit(?:ing)?)\b/i.test(question);
+  return /\blogo[\s-]*edit(?:ing|ed)?\b|\b(?:video|audio)\s+effects?\b|\b(?:effect|transition|geq|ffmpeg|filter|edit(?:ing)?)\b|\b(?:wiki|categor(?:y|ies)|subcategory|subcategor(?:y|ies)|presets?|logo|mp2|th\/mp2)\b/i.test(question);
 }
 
 async function logoWikiApi(params: Record<string, string>): Promise<any> {
@@ -199,8 +199,10 @@ async function getLogoWikiContext(question: string): Promise<string> {
           .map((member) => member.replace(/^Category:/, '')).join(', ')}`;
       })
       .filter(Boolean).join('\n').slice(0, 16_000);
+    const wikiCategoryIntent = /\b(?:wiki|categor(?:y|ies)|subcategory|subcategor(?:y|ies)|show|list|view|contents?|members?)\b/i.test(question);
     return `\n\nLIVE LOGO EDITING WIKI CONTEXT
 Use this public wiki context for logo editing and video-effect questions. Do not invent details not present here; link source pages when useful.
+${wikiCategoryIntent ? 'IMPORTANT: This question is asking to browse wiki/category contents. Answer from the subcategory contents and wiki pages below. Do not replace the answer with the bot’s built-in th/mp2 preset list unless the user explicitly asks for the bot command itself.\n' : ''}\
 The Effects root category was recursively inspected. These are the available subcategories; use them when the user asks about categories or wants effects grouped by category:
 Subcategories: ${categoryText}
 Subcategory contents (effect pages and nested categories):
