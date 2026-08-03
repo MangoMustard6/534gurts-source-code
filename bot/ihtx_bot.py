@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Added live Logo Editing Wiki retrieval to both AI chatbots: recursively indexes Category:Effects and nested categories, then fetches relevant effect pages with bounded caching and source links.
 - 2026-08-03: [Python/TypeScript] Expanded `th/ffmpeg` and raw `ffmpeg(...)` pipe support for quoted `geq` expressions, nested parentheses/brackets, `filter_complex`, `$fc/$vd/$sr/$fr/$w/$h` variables, and `lerp` math; protected inner FFmpeg assignments from pipe splitting.
 - 2026-08-03: [Python/TypeScript] Switched pitchtransition from FFmpeg's `rubberband=phase=712923000` filter to native Rubber Band R3 (`rubberband-r3 -3 --pitchmap`) for dynamic pitch sweeps; finite padding and MOV PCM output remain intact.
 - 2026-08-03: [Python/TypeScript] Final MOV pitchtransition outputs now encode audio with `-c:a pcm_s16le`; MP4 remains AAC for container compatibility.
@@ -198,6 +199,14 @@ except Exception:
     _smiley_preview_available = False
 
 _preview_cache: dict[str, str] = {}
+
+# Logo Editing Wiki knowledge cache.  The category index is intentionally
+# cached separately from page extracts so a temporary Fandom outage does not
+# make normal chat unavailable.
+_LOGO_WIKI_API = "https://logo-editing.fandom.com/api.php"
+_logo_wiki_categories: tuple[float, list[dict]] | None = None
+_logo_wiki_pages: dict[str, tuple[float, str]] = {}
+_LOGO_WIKI_TTL = 6 * 60 * 60
 
 try:
     import groq as _groq_lib
@@ -14965,6 +14974,116 @@ def _build_chat_system_prompt(profile: dict, username: str, prefix: str) -> str:
     return base
 
 
+def _logo_wiki_relevant(question: str) -> bool:
+    return bool(re.search(
+        r"\blogo[\s-]*edit(?:ing|ed)?\b|\b(?:video|audio)\s+effects?\b|"
+        r"\b(?:effect|transition|geq|ffmpeg|filter|edit(?:ing)?)\b",
+        question,
+        re.IGNORECASE,
+    ))
+
+
+async def _logo_wiki_api(params: dict) -> dict:
+    timeout = aiohttp.ClientTimeout(total=15)
+    headers = {"User-Agent": "IHTX-Discord-Bot/1.0 (logo-editing wiki assistant)"}
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+        async with session.get(_LOGO_WIKI_API, params={**params, "format": "json"}) as response:
+            response.raise_for_status()
+            return await response.json()
+
+
+async def _logo_wiki_category_index() -> list[dict]:
+    global _logo_wiki_categories
+    now = time.time()
+    if _logo_wiki_categories and now - _logo_wiki_categories[0] < _LOGO_WIKI_TTL:
+        return _logo_wiki_categories[1]
+    found: dict[str, dict] = {}
+    queue = ["Category:Effects"]
+    visited: set[str] = set()
+    while queue and len(visited) < 250:
+        category = queue.pop(0)
+        if category in visited:
+            continue
+        visited.add(category)
+        params = {
+            "action": "query", "list": "categorymembers",
+            "cmtitle": category, "cmlimit": "max",
+            "cmtype": "page|subcat",
+        }
+        while True:
+            data = await _logo_wiki_api(params)
+            for item in data.get("query", {}).get("categorymembers", []):
+                title = item.get("title", "")
+                if not title:
+                    continue
+                if item.get("ns") == 14:
+                    queue.append(title)
+                else:
+                    found[title] = {"title": title, "category": category}
+            continuation = data.get("continue")
+            if not continuation:
+                break
+            params.update(continuation)
+    result = list(found.values())
+    _logo_wiki_categories = (now, result)
+    return result
+
+
+async def _logo_wiki_context(question: str) -> str:
+    """Return bounded, relevant Logo Editing Wiki context for the model."""
+    if not _logo_wiki_relevant(question):
+        return ""
+    try:
+        catalog = await _logo_wiki_category_index()
+        words = {
+            word.lower() for word in re.findall(r"[a-z0-9]{3,}", question.lower())
+        }
+        title_matches = [
+            item for item in catalog
+            if words.intersection(re.findall(r"[a-z0-9]{3,}", item["title"].lower()))
+        ][:8]
+        search = await _logo_wiki_api({
+            "action": "query", "list": "search", "srsearch": question,
+            "srnamespace": 0, "srlimit": 6,
+        })
+        search_titles = [
+            item.get("title", "") for item in search.get("query", {}).get("search", [])
+        ]
+        titles = list(dict.fromkeys(
+            [item["title"] for item in title_matches] + search_titles
+        ))[:8]
+        extracts: list[str] = []
+        if titles:
+            data = await _logo_wiki_api({
+                "action": "query", "prop": "extracts|info",
+                "explaintext": 1, "exlimit": len(titles),
+                "inprop": "url", "titles": "|".join(titles),
+            })
+            for page in data.get("query", {}).get("pages", {}).values():
+                extract = re.sub(r"\s+", " ", page.get("extract", "")).strip()
+                if extract:
+                    extracts.append(
+                        f"- {page.get('title', 'Wiki page')}: {extract[:1800]}\n"
+                        f"  Source: {page.get('fullurl', '')}"
+                    )
+        catalog_text = ", ".join(
+            f"{item['title']} [{item['category'].removeprefix('Category:')}]"
+            for item in catalog[:500]
+        )[:14_000]
+        return (
+            "\n\nLIVE LOGO EDITING WIKI CONTEXT\n"
+            "Use this public wiki context for logo editing and video-effect questions. "
+            "Do not invent details not present here; cite/link the source pages when useful.\n"
+            f"Effects category catalog (including nested categories): {catalog_text}\n"
+            + ("\nRelevant pages:\n" + "\n".join(extracts) if extracts else "")
+            + "\nWiki home: https://logo-editing.fandom.com/wiki/Logo_Editing_Wiki\n"
+            "Effects root: https://logo-editing.fandom.com/wiki/Category:Effects"
+        )
+    except Exception as exc:
+        print(f"[logo-wiki] lookup failed: {type(exc).__name__}: {exc}")
+        return ""
+
+
 def _get_chat_channel_history(channel_id: int) -> deque:
     if channel_id not in _chat_channel_histories:
         _chat_channel_histories[channel_id] = deque(maxlen=_CHAT_CHANNEL_MAX)
@@ -15148,7 +15267,9 @@ async def chat(ctx: commands.Context, *, question: str = ""):
     profile = _increment_chat_profile(user_id)
     if question:
         _extract_chat_name(question, profile)
-    system_identity = _build_chat_system_prompt(profile, username, current_prefix)
+        system_identity = _build_chat_system_prompt(profile, username, current_prefix)
+        if question:
+            system_identity += await _logo_wiki_context(question)
 
     # Per-channel rolling history (shared across all users in the channel)
     channel_hist = _get_chat_channel_history(channel_id)

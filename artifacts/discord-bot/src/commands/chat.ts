@@ -101,9 +101,93 @@ LANGUAGE RULES (always apply):
 - Never switch languages unless the user does first.
 - If the language is ambiguous, default to English.`;
 
-function buildSystemPrompt(profile: UserProfile, username: string, channelName: string): string {
+const LOGO_WIKI_API = 'https://logo-editing.fandom.com/api.php';
+const LOGO_WIKI_TTL_MS = 6 * 60 * 60 * 1000;
+let logoWikiCatalog: { fetchedAt: number; items: Array<{ title: string; category: string }> } | null = null;
+
+function needsLogoWiki(question: string): boolean {
+  return /\blogo[\s-]*edit(?:ing|ed)?\b|\b(?:video|audio)\s+effects?\b|\b(?:effect|transition|geq|ffmpeg|filter|edit(?:ing)?)\b/i.test(question);
+}
+
+async function logoWikiApi(params: Record<string, string>): Promise<any> {
+  const url = `${LOGO_WIKI_API}?${new URLSearchParams({ ...params, format: 'json' })}`;
+  const response = await fetch(url, {
+    headers: { 'User-Agent': 'IHTX-Discord-Bot/1.0 (logo-editing wiki assistant)' },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`Logo Editing Wiki returned HTTP ${response.status}`);
+  return response.json();
+}
+
+async function getLogoWikiCatalog(): Promise<Array<{ title: string; category: string }>> {
+  if (logoWikiCatalog && Date.now() - logoWikiCatalog.fetchedAt < LOGO_WIKI_TTL_MS) {
+    return logoWikiCatalog.items;
+  }
+  const queue = ['Category:Effects'];
+  const visited = new Set<string>();
+  const pages = new Map<string, { title: string; category: string }>();
+  while (queue.length && visited.size < 250) {
+    const category = queue.shift()!;
+    if (visited.has(category)) continue;
+    visited.add(category);
+    let continuation: Record<string, string> | undefined;
+    do {
+      const data = await logoWikiApi({
+        action: 'query', list: 'categorymembers', cmtitle: category,
+        cmlimit: 'max', cmtype: 'page|subcat', ...(continuation ?? {}),
+      });
+      for (const item of data.query?.categorymembers ?? []) {
+        if (item.ns === 14) queue.push(item.title);
+        else if (item.title) pages.set(item.title, { title: item.title, category });
+      }
+      continuation = data.continue;
+    } while (continuation);
+  }
+  logoWikiCatalog = { fetchedAt: Date.now(), items: [...pages.values()] };
+  return logoWikiCatalog.items;
+}
+
+async function getLogoWikiContext(question: string): Promise<string> {
+  if (!needsLogoWiki(question)) return '';
+  try {
+    const catalog = await getLogoWikiCatalog();
+    const words = new Set((question.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []));
+    const titleMatches = catalog.filter((item) =>
+      [...(item.title.toLowerCase().match(/[a-z0-9]{3,}/g) ?? [])].some((word) => words.has(word)),
+    ).slice(0, 8);
+    const search = await logoWikiApi({
+      action: 'query', list: 'search', srsearch: question, srnamespace: '0', srlimit: '6',
+    });
+    const searchTitles = (search.query?.search ?? []).map((item: { title: string }) => item.title);
+    const titles = [...new Set([...titleMatches.map((item) => item.title), ...searchTitles])].slice(0, 8);
+    const extracts: string[] = [];
+    if (titles.length) {
+      const data = await logoWikiApi({
+        action: 'query', prop: 'extracts|info', explaintext: '1',
+        exlimit: String(titles.length), inprop: 'url', titles: titles.join('|'),
+      });
+      for (const page of Object.values(data.query?.pages ?? {}) as Array<Record<string, string>>) {
+        const extract = (page.extract ?? '').replace(/\s+/g, ' ').trim();
+        if (extract) extracts.push(`- ${page.title}: ${extract.slice(0, 1800)}\n  Source: ${page.fullurl ?? ''}`);
+      }
+    }
+    const catalogText = catalog.slice(0, 500)
+      .map((item) => `${item.title} [${item.category.replace(/^Category:/, '')}]`).join(', ').slice(0, 14_000);
+    return `\n\nLIVE LOGO EDITING WIKI CONTEXT
+Use this public wiki context for logo editing and video-effect questions. Do not invent details not present here; link source pages when useful.
+Effects catalog (root plus nested categories): ${catalogText}
+${extracts.length ? `Relevant pages:\n${extracts.join('\n')}\n` : ''}Wiki home: https://logo-editing.fandom.com/wiki/Logo_Editing_Wiki
+Effects root: https://logo-editing.fandom.com/wiki/Category:Effects`;
+  } catch (error) {
+    console.warn('[logo-wiki] lookup failed:', error);
+    return '';
+  }
+}
+
+async function buildSystemPrompt(profile: UserProfile, username: string, channelName: string, question: string): Promise<string> {
   let prompt = BASE_SYSTEM;
   prompt += `\n\nCurrent context: You are talking to ${username} in #${channelName}. The bot prefix is '${PREFIX}'. Refer to commands with the prefix, e.g. '${PREFIX}ihtx'.`;
+  prompt += await getLogoWikiContext(question);
 
   const { preferredName, interests, interactionCount } = profile;
   if (preferredName || interests.length || interactionCount) {
@@ -159,7 +243,7 @@ export async function handleChat(message: Message, args: string[]): Promise<void
   profile.interactionCount += 1;
   extractName(question, profile);
 
-  const systemInstruction = buildSystemPrompt(profile, username, channelName);
+   const systemInstruction = await buildSystemPrompt(profile, username, channelName, question);
   const history = getChannelHistory(channelId);
 
   const contents: GeminiMessage[] = [
