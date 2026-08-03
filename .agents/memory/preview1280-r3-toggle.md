@@ -3,8 +3,8 @@ name: Preview1280 R3 pitch toggle
 description: Trailing argument convention for native Rubber Band R3 pitch rendering in preview1280 montage commands.
 ---
 
-The preview1280 family keeps FFmpeg Rubber Band as the default pitch renderer. A boolean argument after the duration selects the engine: `true` runs the resolved native `rubberband-r3` binary with direct `--pitch`/`--tempo` controls, while `false` runs FFmpeg Rubber Band.
+The preview1280 family keeps FFmpeg Rubber Band as the default pitch renderer. A boolean argument after the duration selects the engine: `true` runs the resolved native `rubberband-r3` binary with direct semitone `--pitch`/`--tempo` controls, while `false` runs FFmpeg Rubber Band.
 
-**Why:** A constant pitch map was interpreted as a relative offset and could sound effectively unchanged; direct native controls make the R3 path actually apply each fixed segment's pitch. Runtime proof requires logging the resolved binary path, version, exact argv, and exit status.
+**Why:** A constant pitch map was interpreted as a relative offset and could sound effectively unchanged, and the CLI `--pitch` option expects semitones rather than the FFmpeg filter's ratio. Runtime proof requires logging the resolved binary path, version, exact argv, and final installed audio stream.
 
 **How to apply:** Keep the boolean optional after numeric duration; accept the same convention across preview1280, oppositep1280, the fixed-size preview variant, and preview1280what. In preview1280what, its later boolean remains the legacy tempo toggle.
