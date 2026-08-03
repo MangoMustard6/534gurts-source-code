@@ -68,6 +68,7 @@ export async function applyPitchTransition(
   const fs = await import('node:fs');
   const os = await import('node:os');
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitchtransition-'));
+  const transitionLatency = 0.08;
   try {
     const voiceFiles: string[] = [];
     for (let index = 0; index < voices.length; index += 1) {
@@ -84,7 +85,12 @@ export async function applyPitchTransition(
       const voiceFile = path.join(tmpDir, `voice_${index}.wav`);
       const rendered = await spawnAsync('ffmpeg', [
         '-y', '-i', ctx.inputFile, '-vn',
-        '-af', `asendcmd=f=${commandFile},rubberband=phase=712923000`,
+        // Normalize Rubber Band's filtered PTS before the intermediate WAV
+        // reaches the final export/mux step.
+        '-af',
+        `asendcmd=f=${commandFile},rubberband=phase=712923000,` +
+        `atrim=start=${transitionLatency},asetpts=PTS-STARTPTS,` +
+        `apad=whole_dur=${duration.toFixed(6)},atrim=duration=${duration.toFixed(6)}`,
         '-c:a', 'pcm_s16le', voiceFile,
       ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
       if (rendered.code !== 0) throw new Error(`pitchtransition voice ${index + 1} failed: ${rendered.stderr.slice(-500)}`);
@@ -114,7 +120,13 @@ export async function applyPitchTransition(
     const video = hasVideo.stdout.trim() === 'video';
     const remuxArgs = video
       ? ['-y', '-i', ctx.inputFile, '-i', mixed, '-map', '0:v:0', '-map', '1:a:0',
-        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', ctx.outputFile]
+        '-map_metadata', '-1', '-avoid_negative_ts', 'make_zero',
+        // Normalize the video timeline too; copying the source stream can
+        // preserve encoder delay that shifts it relative to processed audio.
+        '-vf', 'setpts=PTS-STARTPTS',
+        '-c:v', 'libx264', '-preset', 'fast', '-tune', 'zerolatency',
+        '-bf', '0', '-crf', '18',
+        '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-shortest', ctx.outputFile]
       : ['-y', '-i', mixed, '-c:a', 'aac', ctx.outputFile];
     const output = await spawnAsync('ffmpeg', remuxArgs, {
       timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS,
