@@ -428,7 +428,7 @@ class EconomyCog(commands.Cog, name="Economy"):
         duration="Seconds or awk expr for pipe mode, e.g. 5 or vidlen/2 (default: full video).",
         no_trim="Skip trim in pipe mode.",
         export_fmt="Output container for pipe mode: mp4 (default), mkv, mov, avi.",
-        output_fmt="Optional final output container after the intermediate format, e.g. mp4 then mov.",
+        output_fmt="Required final output container after the intermediate format, e.g. mp4 then mov.",
     )
     @app_commands.autocomplete(effect=_preset_autocomplete)
     async def ihtxgen(
@@ -445,6 +445,13 @@ class EconomyCog(commands.Cog, name="Economy"):
         output_fmt: str = "",
     ) -> None:
         use_pipe = bool(pipe_effects and pipe_effects.strip())
+        if use_pipe and not output_fmt.strip():
+            await ctx.reply(
+                "❌ `output_fmt` is required in pipe mode and must be one of: "
+                "`mp4`, `mov`, `mkv`, `mxf`, or `avi`.",
+                ephemeral=True,
+            )
+            return
 
         try:
             from bot.ihtx_bot import (
@@ -481,7 +488,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                     duration = _c_dur
                     no_trim = _c_notrim.lower() in {"true", "yes", "+"}
                     export_fmt = _c_fmt or "mov"
-                    output_fmt = _c_output_fmt if _c_output_fmt != _c_fmt else ""
+                    output_fmt = _c_output_fmt
                     pipe_effects = _c_pe
                     use_pipe = True
                 elif effect.strip() and not effect.strip().split()[0][:1].isdigit():
@@ -510,7 +517,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                                 "Example: `roxi ihtx ffmpeg(-vf huesaturation=saturation=1:strength=100)`\n"
                                 "Example: `roxi ihtx negate,huehsv=0.5`\n\n"
                                 "**Full custom syntax:**\n"
-                                 "`<exports> <duration> <no_trim> <format> [<output_format>] <pipe effects>`\n"
+                                 "`<exports> <duration> <no_trim> <format> <output_format> <pipe effects>`\n"
                                  "Example: `10 0.483 - mp4 huehsv 0.5;negate;multipitch=1|6|7`\n"
                                  "Example with final conversion: `10 0.4 - mp4 mov huehsv=0.5`\n\n"
                                 "Or use the dedicated `pipe_effects:` parameter alongside `effect:`."
@@ -708,7 +715,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                         repetitions, duration,
                         "true" if no_trim else "-",
                         export_fmt.lstrip(".") or "mov",
-                        output_fmt.lstrip(".") or None,
+                output_fmt.lstrip("."),
                         pipe_effects,
                         _on_progress,
                     )
@@ -903,7 +910,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                 duration=dur,
                 no_trim=notrim.lower() in {"true", "yes"},
                 export_fmt=fmt or "mov",
-                output_fmt="" if output_fmt == fmt else output_fmt,
+                output_fmt=output_fmt,
             )
         else:
             first = (args.split()[0] if args else "").lower()
