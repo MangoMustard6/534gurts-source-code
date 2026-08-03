@@ -133,7 +133,7 @@ function buildPages(message: Message, ownerId: string): HelpPage[] {
           '`th/folkvalley` *fv folk* — Music swap + brightness boost + overlay',
           '`th/vocoder [mode] <carrier_url>` *vocode* — FFT phase vocoder',
           '`th/scgv <carrier_url> [bandwidth] [...]` *sidechaingate_vocoder* — Sidechain-gate vocoder',
-          '`th/trim <start> <end>` · `th/repeat [n]` *rep* · `th/mirror <side>` · `th/huehsv <hue>` *hhsv* · `th/syncaudio` *sa* · `th/pipetest <fx>` *pt* · `th/lexg` *lec*',
+          '`th/trim [start] [end]` · `th/repeat [n]` *rep* · `th/mirror <side>` · `th/huehsv <hue>` *hhsv* · `th/syncaudio` *sa* · `th/pipetest <fx>` *pt* · `th/lexg` *lec*',
           '`th/download <url>` *dl* — Download any media URL; `th/videolength <url>` *vidlen* — Get duration',
         ].join('\n'),
       },
