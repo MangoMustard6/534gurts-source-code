@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Made preview1280 R3 verification concrete: resolve and invoke the absolute `rubberband-r3` binary, log its path/version and exact argv, then log successful completion.
 - 2026-08-03: [Python/TypeScript] Added boolean R3 toggles to preview1280 commands: `true` selects native Rubber Band R3 and `false` selects FFmpeg Rubber Band; preview1280what keeps its tempo boolean after the R3 toggle.
 - 2026-08-03: [Python] Made preview1280 pitch-engine selection explicit: `use_r3=True` runs native `rubberband-r3`, while `use_r3=False` runs only FFmpeg's `rubberband` filter; both branches now log their selected engine.
 - 2026-08-03: [Python] Added explicit `[preview1280-r3]` runtime logs before and after every native Rubber Band R3 segment render, including segment name, pitch, tempo/time mode, and exit status.
@@ -6924,7 +6925,28 @@ def _run_montage_segment(
     # These montage segments use fixed pitch values. Use R3's direct controls
     # rather than a constant pitch map: pitch-map values are relative offsets
     # and can be interpreted as a no-op when no initial pitch is supplied.
-    rb_args = ["rubberband-r3", "-3", f"--pitch={semitones:.10f}"]
+    r3_bin = shutil.which("rubberband-r3")
+    if not r3_bin:
+        return False, "Native Rubber Band R3 executable `rubberband-r3` was not found on PATH."
+    try:
+        version_result = subprocess.run(
+            [r3_bin, "--version"],
+            capture_output=True, text=True, timeout=10,
+        )
+        r3_version = (version_result.stdout or version_result.stderr).strip().splitlines()[0]
+        help_result = subprocess.run(
+            [r3_bin, "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        r3_help = f"{help_result.stdout}\n{help_result.stderr}"
+    except Exception as exc:
+        return False, f"Could not verify native Rubber Band R3 executable: {exc}"
+    # This Rubber Band build prints normal help with exit code 2 because no
+    # input/output files were supplied; the help signature is the verification.
+    if version_result.returncode != 0 or help_result.returncode not in (0, 2) or "Rubber Band" not in r3_help:
+        return False, f"Resolved `rubberband-r3` is not verifiable as Rubber Band R3: {r3_version}"
+
+    rb_args = [r3_bin, "-3", f"--pitch={semitones:.10f}"]
     if tempo and abs(tempo - 1.0) > 1e-9:
         # FFmpeg's tempo factor is the inverse of Rubber Band's time ratio.
         rb_args.append(f"--tempo={tempo:.10f}")
@@ -6932,7 +6954,9 @@ def _run_montage_segment(
         rb_args.append("--time=1")
     mode = f"tempo={tempo:.6f}" if tempo and abs(tempo - 1.0) > 1e-9 else "time=1"
     print(
-        f"[preview1280-r3] starting native rubberband-r3 "
+        f"[preview1280-r3] starting native Rubber Band R3 "
+        f"binary={r3_bin} version={r3_version!r} "
+        f"argv={rb_args[1:] + [audio_in, audio_out]!r} "
         f"segment={segment_name} pitch={semitones:+.3f}st {mode}",
         flush=True,
     )
@@ -6951,8 +6975,9 @@ def _run_montage_segment(
         )
         return False, result.stderr[-1500:]
     print(
-        f"[preview1280-r3] completed native rubberband-r3 "
-        f"segment={segment_name} pitch={semitones:+.3f}st {mode}",
+        f"[preview1280-r3] completed native Rubber Band R3 "
+        f"binary={r3_bin} segment={segment_name} "
+        f"pitch={semitones:+.3f}st {mode} exit=0",
         flush=True,
     )
 
