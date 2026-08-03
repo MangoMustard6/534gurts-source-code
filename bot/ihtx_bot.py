@@ -3511,18 +3511,21 @@ def _run_pitch_transition(
     raw = " ".join(pitch_params).strip()
     if raw.lower().startswith("--pitch"):
         raw = raw.split("=", 1)[1].strip() if "=" in raw else raw[len("--pitch"):].strip()
+    # Custom export parsing can normalize semicolons to spaces, so accept
+    # both `-7,7;7,-7` and the equivalent `-7,7 7,-7`.
+    number = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
+    pair_re = re.compile(rf"({number})\s*,\s*({number})")
+    matches = list(pair_re.finditer(raw))
+    compact_raw = re.sub(r"[\s;]+", "", raw)
+    compact_matches = "".join(
+        f"{match.group(1)},{match.group(2)}" for match in matches
+    )
+    if not matches or compact_matches != compact_raw:
+        return False, f"pitchtransition: invalid voice {raw!r}; expected start,end;start,end."
+
     voices: list[tuple[float, float]] = []
-    for voice in raw.split(";"):
-        voice = voice.strip()
-        if not voice:
-            continue
-        parts = [part.strip() for part in voice.split(",")]
-        if len(parts) != 2:
-            return False, f"pitchtransition: invalid voice {voice!r}; expected start,end."
-        try:
-            start, end = float(parts[0]), float(parts[1])
-        except ValueError:
-            return False, f"pitchtransition: start/end must be numbers in {voice!r}."
+    for match in matches:
+        start, end = float(match.group(1)), float(match.group(2))
         if not math.isfinite(start) or not math.isfinite(end):
             return False, "pitchtransition: start/end must be finite numbers."
         voices.append((start, end))

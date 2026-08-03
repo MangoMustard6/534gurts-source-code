@@ -36,13 +36,22 @@ export async function applyPitchTransition(
   params: string[],
 ): Promise<void> {
   const raw = params.join(' ').trim().replace(/^--pitch(?:=|\s*)/i, '');
-  const voices = raw.split(';').map((voice) => {
-    const parts = voice.split(',').map((part) => Number(part.trim()));
-    if (parts.length !== 2 || parts.some((value) => !Number.isFinite(value))) {
-      throw new Error(`pitchtransition: invalid voice \`${voice}\`; expected start,end`);
-    }
-    return { start: parts[0]!, end: parts[1]! };
-  }).filter((voice) => voice !== undefined);
+  // Custom export parsing can normalize semicolons to spaces, so accept both
+  // `-7,7;7,-7` and the equivalent `-7,7 7,-7`.
+  const number = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?';
+  const pairRe = new RegExp(`(${number})\\s*,\\s*(${number})`, 'g');
+  const matches = [...raw.matchAll(pairRe)];
+  const compactRaw = raw.replace(/[\s;]+/g, '');
+  const compactMatches = matches
+    .map((match) => `${match[1]},${match[2]}`)
+    .join('');
+  if (!matches.length || compactMatches !== compactRaw) {
+    throw new Error(`pitchtransition: invalid voice \`${raw}\`; expected start,end;start,end`);
+  }
+  const voices = matches.map((match) => ({
+    start: Number(match[1]),
+    end: Number(match[2]),
+  }));
 
   if (!voices.length) throw new Error('pitchtransition requires start,end[;start,end;...]');
   if (voices.length > 100) throw new Error('pitchtransition supports at most 100 voices');

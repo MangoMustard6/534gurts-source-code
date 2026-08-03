@@ -12,3 +12,4 @@
 - [Night Shift difficulty](nightshift-difficulty.md) — Easy, Normal, and Hard tune battery drain and animatronic movement; Normal is the default.
 - [Discord message length](discord-message-length.md) — clip FFmpeg and exception diagnostics before Discord replies or edits to stay under 2,000 characters.
 - [SCGV TypeScript paths](scgv-typescript-paths.md) — keep SCGV available through both the reusable pipe-effect runner and the standalone prefix command.
+- [Pitchtransition separators](pitchtransition-separators.md) — accept semicolon-separated voice pairs and the space-normalized form produced by custom exports.
