@@ -16,3 +16,4 @@
 - [Pitchtransition export timing](pitchtransition-export-timing.md) — compensate Rubber Band look-ahead and reset audio/video PTS through every IHTX export pass.
 - [Pitchtransition tail preservation](pitchtransition-tail.md) — pad before Rubber Band, then compensate latency and trim so the final endpoint is not cut.
 - [Wiki chat retrieval paths](wiki-chat-retrieval-paths.md) — attach Logo Editing Wiki context to every AI response path, including autoreply2 and command-named effect questions.
+- [Preview1280 R3 pitch toggle](preview1280-r3-toggle.md) — trailing `r3` selects native Rubber Band R3 while preserving montage pitch values, timing, and visuals.
