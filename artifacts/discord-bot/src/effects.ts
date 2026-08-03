@@ -130,7 +130,11 @@ export async function applyPitchTransition(
         '-vf', 'setpts=PTS-STARTPTS',
         '-c:v', 'libx264', '-preset', 'fast', '-tune', 'zerolatency',
         '-bf', '0', '-crf', '18',
-        '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-shortest', ctx.outputFile]
+        '-pix_fmt', 'yuv420p',
+        ...(path.extname(ctx.outputFile).toLowerCase() === '.mov'
+          ? ['-c:a', 'pcm_s16le']
+          : ['-c:a', 'aac', '-b:a', '192k']),
+        '-shortest', ctx.outputFile]
       : ['-y', '-i', mixed, '-c:a', 'aac', ctx.outputFile];
     const output = await spawnAsync('ffmpeg', remuxArgs, {
       timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS,

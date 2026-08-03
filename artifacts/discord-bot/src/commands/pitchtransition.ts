@@ -34,7 +34,7 @@ export async function handlePitchTransition(message: Message, rawArgs: string): 
   const status = await message.reply('⏳ Applying pitch transition…');
   try {
     const input = path.join(tmpDir, `input.${attachment.ext}`);
-    const outputExt = VIDEO_EXTENSIONS.has(attachment.ext) ? 'mp4' : 'm4a';
+    const outputExt = VIDEO_EXTENSIONS.has(attachment.ext) ? 'mov' : 'm4a';
     const output = path.join(tmpDir, `pitchtransition.${outputExt}`);
     await downloadUrl(attachment.url, input);
     await applyPitchTransition({ inputFile: input, outputFile: output, timeout: PROCESS_TIMEOUTS.FFMPEG_MS }, [raw]);
