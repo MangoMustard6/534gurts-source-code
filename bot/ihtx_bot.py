@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Fixed preview1280 parsing where a valid numeric start value `0` was mistaken for the bare false R3 toggle, causing `r3=true` to be reported as a duplicate toggle.
 - 2026-08-03: [Python] Made preview1280 argument parsing tolerant of space-, pipe-, semicolon-, and colon-separated R3 forms, and included received arguments in usage errors.
 - 2026-08-03: [Python] Fixed preview1280 argument parsing to accept documented `r3=true`/`r3=false` key-value toggles alongside bare booleans and R3 aliases.
 - 2026-08-03: [Python] Reduced th/ihtx export sizes across filters by using compressed CRF video and low-bitrate audio for intermediate and final outputs, with container-compatible MXF/AVI profiles.
@@ -7121,7 +7122,9 @@ def _split_preview_r3_args(args: tuple[str, ...]) -> tuple[list[str], bool | Non
         if toggle is not None and (
             _preview_r3_flag(arg) or arg.strip().lower() in
             {
-                "true", "yes", "on", "1", "false", "no", "off", "0",
+                # Bare 0/1 are valid numeric start/duration values. Numeric
+                # toggles remain available as explicit r3=0/r3=1.
+                "true", "yes", "on", "false", "no", "off",
             }
             or re.match(
                 r"^(?:r3|native-r3|rubberband-r3)="
