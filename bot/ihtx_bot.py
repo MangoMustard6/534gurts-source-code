@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Added third positional R3 toggle to preview1280/p1280 and oppositep1280/op1280 pipe effects; omitted toggle keeps FFmpeg Rubber Band.
 - 2026-08-03: [Python] Added optional th/ihtx output_format after format: intermediate renders use format, while the final concatenated export uses output_format.
 - 2026-08-03: [Python] Updated sierpinskiransomware/srw to the supplied native FFmpeg filtergraph, including explicit outa1 audio and positional Rubber Band pitch/tempo stages.
 - 2026-08-03: [Python] Updated sierpinskiransomware/srw to the supplied native FFmpeg filtergraph, including explicit outa1 audio and positional Rubber Band pitch/tempo stages.
@@ -4479,10 +4480,17 @@ def _apply_pipe_effects(
 
             # preview1280 (p1280) — full TV-simulator montage pipeline as a pipe step
             if name in ("preview1280", "p1280"):
+                _p1280_r3 = False
+                if len(params) > 2:
+                    _p1280_r3_state = _preview_r3_toggle(params[2])
+                    if _p1280_r3_state is None:
+                        return False, "preview1280 pipe R3 toggle must be true/false (or r3/native-r3)."
+                    _p1280_r3 = _p1280_r3_state
                 ok, err = _run_preview1280(
                     current, out,
                     start_offset=_pfloat(params, 0, 1.85),
                     segment_dur=_pfloat(params, 1, 0.85),
+                    use_r3=_p1280_r3,
                 )
                 if not ok:
                     return False, f"preview1280 pipe failed: {err}"
@@ -4491,10 +4499,17 @@ def _apply_pipe_effects(
 
             # oppositep1280 / op1280 — inverse TV-simulator montage pipeline as a pipe step
             if name in ("oppositep1280", "op1280"):
+                _op1280_r3 = False
+                if len(params) > 2:
+                    _op1280_r3_state = _preview_r3_toggle(params[2])
+                    if _op1280_r3_state is None:
+                        return False, "op1280 pipe R3 toggle must be true/false (or r3/native-r3)."
+                    _op1280_r3 = _op1280_r3_state
                 ok, err = _run_oppositep1280(
                     current, out,
                     start_offset=_pfloat(params, 0, 1.85),
                     segment_dur=_pfloat(params, 1, 0.85),
+                    use_r3=_op1280_r3,
                 )
                 if not ok:
                     return False, f"oppositep1280 pipe failed: {err}"
@@ -7035,6 +7050,10 @@ def _preview_r3_toggle(value: str) -> bool | None:
     if normalized in {"true", "yes", "on"}:
         return True
     if normalized in {"false", "no", "off"}:
+        return False
+    if normalized == "1":
+        return True
+    if normalized == "0":
         return False
     if _preview_r3_flag(normalized):
         return True
@@ -13328,12 +13347,12 @@ _HELP_ENTRIES: list[dict] = [
     {
         "cat": "fun",
         "name": "th/preview1280 [start] [dur] [r3=true|false]  (aliases: p1280, pv1280)",
-        "value": "12-segment TV-simulator montage. Defaults: start=1.85, dur=0.85. The boolean selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`).",
+        "value": "12-segment TV-simulator montage. Defaults: start=1.85, dur=0.85. The boolean selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`). Pipe form: `preview1280=1.85|0.85|true`.",
     },
     {
         "cat": "fun",
         "name": "th/oppositep1280 [start] [dur] [r3=true|false]  (aliases: op1280, opposite, opposite1280)",
-        "value": "Inverse TV-simulator montage: all hue shifts negated, all pitch shifts inverted vs preview1280. Defaults: start=1.85, dur=0.85. The boolean selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`).",
+        "value": "Inverse TV-simulator montage: all hue shifts negated, all pitch shifts inverted vs preview1280. Defaults: start=1.85, dur=0.85. The boolean selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`). Pipe form: `op1280=1.85|0.85|true`.",
     },
     {
         "cat": "fun",
