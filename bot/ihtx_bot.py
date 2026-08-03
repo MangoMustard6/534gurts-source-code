@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python/TypeScript] Fixed named-effect wiki retrieval ranking: exact and hyphen/space-normalized matches such as `G Major 74` now appear before generic results, and the AI is told not to substitute the built-in `th/mp2` presets.
 - 2026-08-03: [Python/TypeScript] Fixed wiki-chat intent detection for `th/mp2`, presets, categories, and subcategories; category questions now explicitly prioritize Logo Editing Wiki contents over the built-in MP2 command reference.
 - 2026-08-03: [Python/TypeScript] Added live member lists for every recursively discovered Logo Editing Wiki subcategory, including effect pages and nested categories, so AI can browse category contents rather than only names.
 - 2026-08-03: [Python/TypeScript] Exposed the recursively discovered Logo Editing Wiki Effects subcategory names directly to AI context, while retaining each effect's parent category for grouped answers.
@@ -15047,20 +15048,48 @@ async def _logo_wiki_context(question: str) -> str:
         words = {
             word.lower() for word in re.findall(r"[a-z0-9]{3,}", question.lower())
         }
+        def _wiki_norm(value: str) -> str:
+            return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+        question_norm = _wiki_norm(question)
         title_matches = [
             item for item in catalog
             if words.intersection(re.findall(r"[a-z0-9]{3,}", item["title"].lower()))
-        ][:8]
-        search = await _logo_wiki_api({
-            "action": "query", "list": "search", "srsearch": question,
-            "srnamespace": 0, "srlimit": 6,
-        })
-        search_titles = [
-            item.get("title", "") for item in search.get("query", {}).get("search", [])
+        ]
+        # Search exact/near-exact names separately. Fandom returns the exact
+        # "G-Major 74" pages, but generic catalog matches can otherwise push
+        # them past the eight-page prompt limit.
+        search_queries = list(dict.fromkeys([
+            question,
+            re.sub(r"\b(?:what|is|about|the|wiki|effect|preset|th/mp2)\b", " ", question, flags=re.IGNORECASE),
+            question.replace(" ", "-"),
+        ]))
+        search_titles: list[str] = []
+        for search_query in search_queries:
+            if not search_query.strip():
+                continue
+            search = await _logo_wiki_api({
+                "action": "query", "list": "search", "srsearch": search_query.strip(),
+                "srnamespace": 0, "srlimit": 10,
+            })
+            search_titles.extend(
+                item.get("title", "") for item in search.get("query", {}).get("search", [])
+            )
+        exact_titles = [
+            title for title in dict.fromkeys(search_titles)
+            if _wiki_norm(title) == question_norm
+            or question_norm in _wiki_norm(title)
+            or _wiki_norm(title) in question_norm
         ]
         titles = list(dict.fromkeys(
-            [item["title"] for item in title_matches] + search_titles
-        ))[:8]
+            exact_titles
+            + search_titles
+            + [item["title"] for item in sorted(
+                title_matches,
+                key=lambda item: _wiki_norm(item["title"]) == question_norm,
+                reverse=True,
+            )]
+        ))[:12]
         extracts: list[str] = []
         if titles:
             data = await _logo_wiki_api({
@@ -15108,6 +15137,9 @@ async def _logo_wiki_context(question: str) -> str:
             "\n\nLIVE LOGO EDITING WIKI CONTEXT\n"
             "Use this public wiki context for logo editing and video-effect questions. "
             "Do not invent details not present here; cite/link the source pages when useful.\n"
+            "When a named effect or preset is found in the wiki, treat the wiki page "
+            "as authoritative for that name. Do not substitute a similarly named IHTX "
+            "command preset such as G-Major_17 or th/mp2.\n"
             + (
                 "IMPORTANT: This question is asking to browse the wiki/category contents. "
                 "Answer from the subcategory contents and wiki pages below. Do not replace "
