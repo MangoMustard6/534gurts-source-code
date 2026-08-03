@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-03: [Python] Fixed preview1280 argument parsing to accept documented `r3=true`/`r3=false` key-value toggles alongside bare booleans and R3 aliases.
 - 2026-08-03: [Python] Reduced th/ihtx export sizes across filters by using compressed CRF video and low-bitrate audio for intermediate and final outputs, with container-compatible MXF/AVI profiles.
 - 2026-08-03: [Python] Made th/ihtx output_format required and restricted final exports to supported FFmpeg/ffprobe-compatible containers; removed fallback to intermediate format.
 - 2026-08-03: [Python] Added third positional R3 toggle to preview1280/p1280 and oppositep1280/op1280 pipe effects; omitted toggle keeps FFmpeg Rubber Band.
@@ -7072,6 +7073,12 @@ def _preview_r3_flag(value: str) -> bool:
 def _preview_r3_toggle(value: str) -> bool | None:
     """Return the requested R3 state for an explicit flag, or None otherwise."""
     normalized = value.strip().lower()
+    # Command help documents both a bare boolean and key/value forms such as
+    # `r3=true`; accept the key/value spelling before checking aliases.
+    if "=" in normalized:
+        key, assigned = normalized.split("=", 1)
+        if key in {"r3", "native-r3", "rubberband-r3"}:
+            normalized = assigned.strip()
     if normalized in {"true", "yes", "on"}:
         return True
     if normalized in {"false", "no", "off"}:
@@ -7093,7 +7100,14 @@ def _split_preview_r3_args(args: tuple[str, ...]) -> tuple[list[str], bool | Non
         toggle = _preview_r3_toggle(arg)
         if toggle is not None and (
             _preview_r3_flag(arg) or arg.strip().lower() in
-            {"true", "yes", "on", "1", "false", "no", "off", "0"}
+            {
+                "true", "yes", "on", "1", "false", "no", "off", "0",
+            }
+            or re.match(
+                r"^(?:r3|native-r3|rubberband-r3)="
+                r"(?:true|false|yes|no|on|off|1|0)$",
+                arg.strip().lower(),
+            )
         ):
             if r3_state is not None:
                 raise ValueError("multiple R3 toggles")
