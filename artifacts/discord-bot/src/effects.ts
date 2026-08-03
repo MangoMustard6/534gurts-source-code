@@ -23,6 +23,92 @@ export interface ProcessorContext {
   timeout?: number;
 }
 
+// ── Pitch transition ───────────────────────────────────────────────────
+
+/**
+ * Sweep one or more voices linearly between semitone values.
+ *
+ * Params use the uploaded pitch CLI syntax:
+ *   pitchtransition=-5,9;5,-9
+ */
+export async function applyPitchTransition(
+  ctx: ProcessorContext,
+  params: string[],
+): Promise<void> {
+  const raw = params.join(' ').trim().replace(/^--pitch(?:=|\s*)/i, '');
+  const voices = raw.split(';').map((voice) => {
+    const parts = voice.split(',').map((part) => Number(part.trim()));
+    if (parts.length !== 2 || parts.some((value) => !Number.isFinite(value))) {
+      throw new Error(`pitchtransition: invalid voice \`${voice}\`; expected start,end`);
+    }
+    return { start: parts[0]!, end: parts[1]! };
+  }).filter((voice) => voice !== undefined);
+
+  if (!voices.length) throw new Error('pitchtransition requires start,end[;start,end;...]');
+  if (voices.length > 100) throw new Error('pitchtransition supports at most 100 voices');
+
+  const durationResult = await spawnAsync('ffprobe', [
+    '-v', 'error', '-show_entries', 'format=duration',
+    '-of', 'default=noprint_wrappers=1:nokey=1', ctx.inputFile,
+  ], { timeout: 15_000 });
+  const duration = Number(durationResult.stdout.trim());
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw new Error('pitchtransition could not determine input duration');
+  }
+
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pitchtransition-'));
+  try {
+    const voiceFiles: string[] = [];
+    for (let index = 0; index < voices.length; index += 1) {
+      const voice = voices[index]!;
+      const lines: string[] = [];
+      for (let step = 0; step <= Math.floor(duration / 0.01); step += 1) {
+        const time = Math.min(step * 0.01, duration);
+        const ratio =
+          `2^(((${time.toFixed(2)}/${duration})*((${voice.end})-(${voice.start}))+(${voice.start}))/12)`;
+        lines.push(`${time.toFixed(2)} rubberband pitch ${ratio};`);
+      }
+      const commandFile = path.join(tmpDir, `transition_${index}.txt`);
+      fs.writeFileSync(commandFile, `${lines.join('\n')}\n`);
+      const voiceFile = path.join(tmpDir, `voice_${index}.wav`);
+      const rendered = await spawnAsync('ffmpeg', [
+        '-y', '-i', ctx.inputFile, '-vn',
+        '-af', `asendcmd=f=${commandFile},rubberband=phase=712923000`,
+        '-c:a', 'pcm_s16le', voiceFile,
+      ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
+      if (rendered.code !== 0) throw new Error(`pitchtransition voice ${index + 1} failed: ${rendered.stderr.slice(-500)}`);
+      voiceFiles.push(voiceFile);
+    }
+
+    const mixed = path.join(tmpDir, 'mixed.wav');
+    const mixArgs = ['-y', ...voiceFiles.flatMap((file) => ['-i', file]),
+      '-filter_complex', `amix=inputs=${voiceFiles.length}:duration=longest:dropout_transition=0`,
+      '-c:a', 'pcm_s16le', mixed];
+    const mixedResult = await spawnAsync('ffmpeg', mixArgs, {
+      timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS,
+    });
+    if (mixedResult.code !== 0) throw new Error(`pitchtransition mix failed: ${mixedResult.stderr.slice(-500)}`);
+
+    const hasVideo = await spawnAsync('ffprobe', [
+      '-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=codec_type', '-of', 'default=nw=1:nk=1', ctx.inputFile,
+    ], { timeout: 15_000 });
+    const video = hasVideo.stdout.trim() === 'video';
+    const remuxArgs = video
+      ? ['-y', '-i', ctx.inputFile, '-i', mixed, '-map', '0:v:0', '-map', '1:a:0',
+        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', ctx.outputFile]
+      : ['-y', '-i', mixed, '-c:a', 'aac', ctx.outputFile];
+    const output = await spawnAsync('ffmpeg', remuxArgs, {
+      timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS,
+    });
+    if (output.code !== 0) throw new Error(`pitchtransition output failed: ${output.stderr.slice(-500)}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 // ── Sidechain-gate vocoder ────────────────────────────────────────────
 
 /**
