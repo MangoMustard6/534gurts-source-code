@@ -6863,7 +6863,7 @@ def _generate_hald_cluts(workdir: str) -> list[str]:
     return paths
 
 
-def _montage_segment(
+def _run_montage_segment(
     cmd: list[str],
     segment_path: str,
     tmpdir: str,
