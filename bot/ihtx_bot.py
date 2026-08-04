@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Added hybrid `.audio put replace`/`.a put replace` and `/audio put replace`, with attachment/URL/reference resolution, duration-aware looping, `-longest`, and `-noloop`.
 - 2026-08-04: [Python] Added hybrid `th/voicify`/`/voicify`: converts uploaded audio to mono 48 kHz Opus Ogg and posts Discord's native voice-message payload with waveform metadata and flag 8192.
 - 2026-08-04: [Python] Removed the obsolete three-output `th/convert_legacy` command and its `th/conv` alias; the hybrid converter is now the only canonical convert command.
 - 2026-08-04: [Python] Added the hybrid `/convert`/`th/convert` transcoder; renamed the previous three-output converter to `th/convert_legacy` so the requested command owns the canonical name.
@@ -796,7 +797,8 @@ if not isinstance(_BOT_PREFIX, str) or not _BOT_PREFIX:
 # Intents and bot
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix=_BOT_PREFIX, intents=intents, help_command=None)
+_BOT_PREFIXES = list(dict.fromkeys([_BOT_PREFIX, ".", "th/"]))
+bot = commands.Bot(command_prefix=_BOT_PREFIXES, intents=intents, help_command=None)
 
 
 @bot.tree.interaction_check
@@ -8094,6 +8096,13 @@ async def on_ready():
             print("VoicifyCog loaded.")
         except Exception as _voicify_exc:
             print(f"Warning: VoicifyCog failed to load — {_voicify_exc}")
+    if "Audio" not in bot.cogs:
+        try:
+            from bot.audio_cog import setup as _audio_setup
+            await _audio_setup(bot)
+            print("AudioCog loaded.")
+        except Exception as _audio_exc:
+            print(f"Warning: AudioCog failed to load — {_audio_exc}")
     # Auto-sync slash commands in a background task so exceptions surface in
     # the console and don't silently fail inside on_ready's exception handler.
     async def _auto_sync_slash():
