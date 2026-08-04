@@ -24,3 +24,5 @@ In pipe mode, YTPMV scan is intentionally bare and fixed at start 0; reject all 
 Pipe YTPMV uses immediate pitch-source timing and preserves the generated scan when duration is `vidlen`; numeric pipe durations still use normal IHTX trimming.
 
 Pipe YTPMV omits the standalone pre-roll segment entirely, so its output begins with the pitch montage rather than a fade-in or two-second lead-in.
+
+YTPMV scan uses FFmpeg Rubber Band for all fixed pitch segments in both standalone and pipe modes; native R3 is not selected for this renderer.
