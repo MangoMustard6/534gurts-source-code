@@ -18,3 +18,5 @@ YTPMV scan source segments retain `volume=4`; its composed audio keeps the exist
 YTPMV scan pitch segments should be concatenated with the FFmpeg concat demuxer and individually duration-checked; concat protocol can drop the final short R3 segment.
 
 YTPMV scan is available as a dedicated pipe effect with an optional start parameter; its pitch-source segment begins after a combined 2.09375-second lead-in.
+
+In pipe mode, YTPMV scan is intentionally bare and fixed at start 0; reject all pipe parameters. Only the standalone command accepts a custom start.
