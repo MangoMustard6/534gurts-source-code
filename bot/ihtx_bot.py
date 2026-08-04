@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Switched standalone `th/ytpmvscan` back to FFmpeg Rubber Band so standalone and pipe YTPMV use the same pitch engine.
 - 2026-08-04: [Python] Restored standalone `th/ytpmvscan` to native Rubber Band R3 pitch processing while keeping pipe `ytpmvscan` on FFmpeg Rubber Band.
 - 2026-08-04: [Python] Switched both standalone and pipe `ytpmvscan` pitch segments back to FFmpeg Rubber Band by default; YTPMV no longer routes its fixed pitch sequence through native R3.
 - 2026-08-04: [Python] Removed YTPMV pipe mode's legacy fade-in segment and two-second pre-pitch segment; pipe output now starts directly with the pitch montage at source time 0.
@@ -9788,7 +9789,7 @@ def _run_ytpmvscan(
     start: float = 106.9,
     pipe_mode: bool = False,
 ) -> tuple[bool, str]:
-    """Render the YTPMV scan sequence with native Rubber Band R3 pitch passes."""
+    """Render the YTPMV scan sequence with FFmpeg Rubber Band pitch passes."""
     # Standalone mode keeps the original two-source timing. Pipe mode is
     # intentionally different: it starts at 0 and sends the pitch source
     # through immediately, without the 2.09375-second offset.
@@ -9840,19 +9841,19 @@ def _run_ytpmvscan(
         for index, semitones in enumerate(pitches, 1):
             segment = p(f"{index}.avi")
             ratio = 2 ** (semitones / 12.0)
-            # _run_montage_segment recognizes the pitch marker, removes this
-            # classic filter, and renders the actual shift with native R3.
+            # _run_montage_segment keeps this classic FFmpeg Rubber Band
+            # pitch filter for YTPMV's fixed pitch sequence.
             cmd = [
                 "ffmpeg", "-y", "-i", p("c.avi"),
                 "-af", f"rubberband=pitch={ratio:.10f}",
                 "-c:v", "ffv1", "-c:a", "pcm_s16le", "-t", "0.1875", segment,
             ]
-            # Standalone keeps the original native-R3 implementation, while
-            # the pipe effect intentionally uses the classic FFmpeg path.
-            ok, err = _run_montage_segment(cmd, segment, tmpdir, not pipe_mode, 240)
+            # Both standalone and pipe YTPMV use the classic FFmpeg Rubber
+            # Band pitch path; their timing and pre-roll behavior remain
+            # mode-specific.
+            ok, err = _run_montage_segment(cmd, segment, tmpdir, False, 240)
             if not ok:
-                engine = "native R3" if not pipe_mode else "FFmpeg Rubber Band"
-                return False, f"ytpmvscan {engine} pitch segment {index} failed: {err}"
+                return False, f"ytpmvscan FFmpeg Rubber Band pitch segment {index} failed: {err}"
             segment_duration = _ffprobe_duration(segment)
             if segment_duration < 0.16:
                 return False, (
@@ -9862,7 +9863,7 @@ def _run_ytpmvscan(
             if index == len(pitches):
                 print(
                     f"[ytpmvscan] verified final "
-                    f"{'native-R3' if not pipe_mode else 'FFmpeg-Rubber-Band'} pitch segment "
+                    f"FFmpeg-Rubber-Band pitch segment "
                     f"index={index} pitch={semitones:+.1f}st "
                     f"duration={segment_duration:.6f}s",
                     flush=True,
@@ -13811,7 +13812,7 @@ _HELP_ENTRIES: list[dict] = [
     {
         "cat": "fun",
         "name": "th/ytpmvscan [start]  (aliases: ytpmv, ytpmv_scan)",
-        "value": "YTPMV scan sequence using native Rubber Band R3 for standalone pitch segments. Attach or reply to a video. Standalone default start=106.9 seconds; pipe form uses FFmpeg Rubber Band, is fixed at start=0, and takes no parameters: `ytpmvscan`.",
+        "value": "YTPMV scan sequence using FFmpeg Rubber Band for standalone and pipe pitch segments. Attach or reply to a video. Standalone default start=106.9 seconds; pipe form is fixed at start=0 and takes no parameters: `ytpmvscan`.",
     },
     {
         "cat": "fun",
@@ -16109,7 +16110,7 @@ Heavy (media processing):
 - th/trim [start] [end] — trim audio/video/GIF; defaults to `0` → media length
 - th/concatenate <url1> <url2> ... [format] / th/concat — join 2-10 attachments/URLs into one file
 - th/preview1280 [start] [dur] [true|false] — 12-segment TV-simulator montage; boolean selects native R3 or FFmpeg Rubber Band
-- th/ytpmvscan [start] — YTPMV scan sequence; standalone pitch segments use native Rubber Band R3 (default start 106.9s). Pipe form uses FFmpeg Rubber Band at fixed start 0 with no parameters.
+- th/ytpmvscan [start] — YTPMV scan sequence; standalone and pipe pitch segments use FFmpeg Rubber Band (standalone default start 106.9s). Pipe form uses fixed start 0 with no parameters.
 - th/oppositep1280 [start] [dur] [true|false] — inverse TV-simulator montage; boolean selects native R3 or FFmpeg Rubber Band
 - th/invlum [n] — luma-inversion loop
 - th/lexg — re-apply last export effect chain to new media
