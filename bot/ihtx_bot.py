@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Removed YTPMV pipe mode's legacy fade-in segment and two-second pre-pitch segment; pipe output now starts directly with the pitch montage at source time 0.
 - 2026-08-04: [Python] Made pipe `ytpmvscan` start its pitch montage immediately at 0 and preserve its full generated length for `vidlen`, without the 2.09375-second offset.
 - 2026-08-04: [Python] Made YTPMV's 2.09375-second pre-pitch skip explicit with FFmpeg input seeking before `-i`, avoiding output-seek behavior that did not reliably advance the pitch source.
 - 2026-08-04: [Python] Corrected YTPMV timing so segment A starts exactly at `start` with a relative 0.09375s fade-in, while only the pitch source starts at `start + 2.09375s`.
@@ -9808,15 +9809,16 @@ def _run_ytpmvscan(
             f"and begins at {pitch_start:.4f}s",
             flush=True,
         )
-        ok, err = run([
-            "-stream_loop", "-1", "-ss", f"{start:.4f}", "-i", input_path,
-            "-vf", f"scale=640:360,setsar=1:1,fps=30,fade=in:d=0.3:st={fade_start:.4f}",
-            "-af", f"volume=4,afade=in:d=0.3:st={fade_start:.4f}",
-            "-t", "2",
-            "-c:v", "ffv1", "-c:a", "pcm_s16le", p("a.avi"),
-        ])
-        if not ok:
-            return False, f"ytpmvscan initial segment A failed: {err}"
+        if not pipe_mode:
+            ok, err = run([
+                "-stream_loop", "-1", "-ss", f"{start:.4f}", "-i", input_path,
+                "-vf", f"scale=640:360,setsar=1:1,fps=30,fade=in:d=0.3:st={fade_start:.4f}",
+                "-af", f"volume=4,afade=in:d=0.3:st={fade_start:.4f}",
+                "-t", "2",
+                "-c:v", "ffv1", "-c:a", "pcm_s16le", p("a.avi"),
+            ])
+            if not ok:
+                return False, f"ytpmvscan initial segment A failed: {err}"
         ok, err = run([
             "-stream_loop", "-1", "-ss", f"{pitch_start:.4f}", "-i", input_path,
             "-vf", "scale=640:360,setsar=1:1,fps=30",
@@ -9939,7 +9941,8 @@ def _run_ytpmvscan(
             return False, f"ytpmvscan reverb remux failed: {err}"
         final_concat_list = p("final_concat.txt")
         with open(final_concat_list, "w") as concat_file:
-            for segment in (p("a.avi"), p("h.avi")):
+            final_segments = (p("h.avi"),) if pipe_mode else (p("a.avi"), p("h.avi"))
+            for segment in final_segments:
                 concat_file.write(f"file '{segment}'\n")
         ok, err = run([
             "-f", "concat", "-safe", "0", "-i", final_concat_list,

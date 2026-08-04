@@ -22,3 +22,5 @@ YTPMV scan is available as a dedicated pipe effect fixed at start 0; its pitch-s
 In pipe mode, YTPMV scan is intentionally bare and fixed at start 0; reject all pipe parameters. Only the standalone command accepts a custom start.
 
 Pipe YTPMV uses immediate pitch-source timing and preserves the generated scan when duration is `vidlen`; numeric pipe durations still use normal IHTX trimming.
+
+Pipe YTPMV omits the standalone pre-roll segment entirely, so its output begins with the pitch montage rather than a fade-in or two-second lead-in.
