@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Added the hybrid `/convert`/`th/convert` transcoder; renamed the previous three-output converter to `th/convert_legacy` so the requested command owns the canonical name.
 - 2026-08-04: [Python] Switched standalone `th/ytpmvscan` back to FFmpeg Rubber Band so standalone and pipe YTPMV use the same pitch engine.
 - 2026-08-04: [Python] Restored standalone `th/ytpmvscan` to native Rubber Band R3 pitch processing while keeping pipe `ytpmvscan` on FFmpeg Rubber Band.
 - 2026-08-04: [Python] Switched both standalone and pipe `ytpmvscan` pitch segments back to FFmpeg Rubber Band by default; YTPMV no longer routes its fixed pitch sequence through native R3.
@@ -8072,6 +8073,14 @@ async def on_ready():
             print("NightShiftCog loaded.")
         except Exception as _nightshift_exc:
             print(f"Warning: NightShiftCog failed to load — {_nightshift_exc}")
+    # Load hybrid media conversion cog (/convert and th/convert).
+    if "Convert" not in bot.cogs:
+        try:
+            from bot.convert_cog import setup as _convert_setup
+            await _convert_setup(bot)
+            print("ConvertCog loaded.")
+        except Exception as _convert_exc:
+            print(f"Warning: ConvertCog failed to load — {_convert_exc}")
     # Auto-sync slash commands in a background task so exceptions surface in
     # the console and don't silently fail inside on_ready's exception handler.
     async def _auto_sync_slash():
@@ -18633,7 +18642,7 @@ _CONVERT_IMAGE_FMTS = {"png", "jpg", "jpeg", "webp"}
 _CONVERT_VIDEO_INPUT_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".gif"}
 
 
-@bot.command(name="convert", aliases=["conv"])
+@bot.command(name="convert_legacy", aliases=["conv"])
 async def convert_command(ctx: commands.Context, *, formats: str = "mp4/mp3/png"):
     """Convert an attached video into video + audio + image formats simultaneously.
 
