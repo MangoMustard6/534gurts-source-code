@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Added th/ytpmvscan, porting the supplied YTPMV scan sequence and routing all 15 pitch segments through native Rubber Band R3 with segment-duration audio normalization.
 - 2026-08-04: [Python] Normalized native preview1280 R3 tempo audio to each segment duration by looping short output and trimming long output before remux.
 - 2026-08-04: [Python] Fixed preview1280what parsing so the boolean after duration controls R3 while the later boolean controls legacy tempo, including grouped semicolon/pipe arguments.
 - 2026-08-03: [Python] Fixed preview1280 parsing where a valid numeric start value `0` was mistaken for the bare false R3 toggle, causing `r3=true` to be reported as a duplicate toggle.
@@ -8698,6 +8699,109 @@ async def preview1280_command(ctx: commands.Context, *args: str):
             await status_msg.edit(content=f"❌ Failed to upload result: {e}")
 
 
+@bot.command(name="ytpmvscan", aliases=["ytpmv", "ytpmv_scan"])
+async def ytpmvscan_command(ctx: commands.Context, *args: str):
+    """Render the YTPMV scan sequence with native Rubber Band R3 pitch shifts.
+
+    Usage: th/ytpmvscan [start]
+    Default start: 106.9 seconds.
+    """
+    start = 106.9
+    if len(args) > 1:
+        await ctx.reply("❌ Usage: `th/ytpmvscan [start]`.")
+        return
+    if args:
+        try:
+            start = float(args[0])
+            if not math.isfinite(start) or start < 0:
+                raise ValueError
+        except ValueError:
+            await ctx.reply("❌ Usage: `th/ytpmvscan [start]`.")
+            return
+
+    source = await _resolve_media_source(ctx)
+    if source is None:
+        await ctx.reply(
+            "**YTPMV Scan**\n"
+            "Attach a video or reply to one, then use "
+            "`th/ytpmvscan [start]`.\n"
+            "Default start is 106.9 seconds. All pitch segments use native "
+            "Rubber Band R3."
+        )
+        return
+    suffix = (
+        Path(source.filename).suffix.lower()
+        if isinstance(source, discord.Attachment)
+        else Path(urllib.parse.urlparse(source).path).suffix.lower() or ".mp4"
+    )
+    if suffix not in VIDEO_EXTENSIONS:
+        await ctx.reply(f"❌ `ytpmvscan` requires a video file. Got `{suffix}`.")
+        return
+    if isinstance(source, discord.Attachment) and source.size > MAX_FILE_SIZE:
+        await ctx.reply(
+            f"❌ File too large (max 25 MB). Your file is "
+            f"{source.size / 1024 / 1024:.1f} MB."
+        )
+        return
+
+    status_msg = await ctx.reply(
+        f"⚙️ Creating **YTPMV scan** from {start:.4f}s with "
+        "native Rubber Band R3 pitch segments… this will take a while."
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = os.path.join(tmpdir, f"input{suffix}")
+        output_path = os.path.join(tmpdir, "ytpmv_scan.mp4")
+        try:
+            await download_attachment(source, input_path)
+        except Exception as exc:
+            await status_msg.edit(content=f"❌ Failed to download your file: {exc}")
+            return
+        loop = asyncio.get_event_loop()
+        ok, err = await loop.run_in_executor(
+            None, _run_ytpmvscan, input_path, output_path, start
+        )
+        if not ok:
+            await status_msg.edit(
+                content=f"❌ YTPMV scan failed:\n```\n{err[-1500:]}\n```"
+            )
+            return
+        out_size = os.path.getsize(output_path)
+        if out_size > CATBOX_THRESHOLD:
+            await status_msg.edit(
+                content="⬆️ Output exceeds 10 MB — uploading to Catbox…"
+            )
+            cb_url = await _upload_to_catbox(output_path)
+            if cb_url:
+                await ctx.reply(f"✅ Done! [Download]({cb_url})\n{cb_url}")
+                await status_msg.delete()
+            else:
+                await status_msg.edit(
+                    content="❌ Output too large (>25 MB) and Catbox upload failed."
+                )
+            return
+        try:
+            embed = discord.Embed(
+                title="YTPMV Scan",
+                description=(
+                    f"Start: **{start:.4f}s**\n"
+                    "Pitch engine: **native Rubber Band R3**"
+                ),
+                color=11578404,
+            )
+            embed.add_field(
+                name="File Size",
+                value=f"{out_size / (1024 * 1024):.2f} MB",
+                inline=True,
+            )
+            await ctx.reply(
+                embed=embed,
+                file=discord.File(output_path, filename="ytpmv_scan.mp4"),
+            )
+            await status_msg.delete()
+        except discord.HTTPException as exc:
+            await status_msg.edit(content=f"❌ Failed to upload result: {exc}")
+
+
 @bot.command(name="oppositep1280", aliases=["op1280", "opposite", "opposite1280"])
 async def oppositep1280_command(ctx: commands.Context, *args: str):
     """Create a 12-segment inverse TV-simulator montage from an attached video.
@@ -9638,6 +9742,149 @@ def _ihtxsap_amix(layer_paths: list[str], output: str) -> tuple[bool, str]:
         output,
     ]
     return _run_ffmpeg_raw(cmd, timeout=180)
+
+
+def _run_ytpmvscan(
+    input_path: str,
+    output_path: str,
+    start: float = 106.9,
+) -> tuple[bool, str]:
+    """Render the YTPMV scan sequence with native Rubber Band R3 pitch passes."""
+    start2 = start + 2.0
+    start3 = start + 0.09375
+    pitches = [
+        -7.5, -2.5, -7.5, 0.5, -2.5, -0.5, -4.5, -9.5,
+        -5.5, -2.5, -5.5, -7.5, -3.5, -0.5, -3.5,
+    ]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        def p(name: str) -> str:
+            return os.path.join(tmpdir, name)
+
+        def run(args: list[str], timeout: int = 240) -> tuple[bool, str]:
+            return _run_ffmpeg_raw(["ffmpeg", "-y", *args], timeout=timeout)
+
+        ok, err = run([
+            "-stream_loop", "-1", "-i", input_path,
+            "-vf", f"scale=640:360,setsar=1:1,fps=30,fade=in:d=0.3:st={start3:.4f}",
+            "-af", f"volume=4,afade=in:d=0.3:st={start3:.4f}",
+            "-ss", f"{start:.4f}", "-t", "2",
+            "-c:v", "ffv1", "-c:a", "pcm_s16le", p("a.avi"),
+        ])
+        if not ok:
+            return False, f"ytpmvscan initial segment A failed: {err}"
+        ok, err = run([
+            "-stream_loop", "-1", "-i", input_path,
+            "-vf", "scale=640:360,setsar=1:1,fps=30",
+            "-af", "volume=4", "-ss", f"{start2:.4f}", "-t", "2",
+            "-c:v", "ffv1", "-c:a", "pcm_s16le", p("b.avi"),
+        ])
+        if not ok:
+            return False, f"ytpmvscan initial segment B failed: {err}"
+        ok, err = run([
+            "-i", p("b.avi"), "-af", "afade=out:st=0.1375:d=0.05",
+            "-c:v", "ffv1", "-c:a", "pcm_s16le", "-t", "0.375", p("c.avi"),
+        ])
+        if not ok:
+            return False, f"ytpmvscan segment C failed: {err}"
+
+        pitch_segments: list[str] = []
+        for index, semitones in enumerate(pitches, 1):
+            segment = p(f"{index}.avi")
+            ratio = 2 ** (semitones / 12.0)
+            # _run_montage_segment recognizes the pitch marker, removes this
+            # classic filter, and renders the actual shift with native R3.
+            cmd = [
+                "ffmpeg", "-y", "-i", p("c.avi"),
+                "-af", f"rubberband=pitch={ratio:.10f}",
+                "-c:v", "ffv1", "-c:a", "pcm_s16le", "-t", "0.1875", segment,
+            ]
+            ok, err = _run_montage_segment(cmd, segment, tmpdir, True, 240)
+            if not ok:
+                return False, f"ytpmvscan native R3 pitch segment {index} failed: {err}"
+            pitch_segments.append(segment)
+        muted = p("16.avi")
+        ok, err = run([
+            "-i", p("c.avi"), "-af", "volume=0",
+            "-c:v", "ffv1", "-c:a", "pcm_s16le",
+            "-ss", "0.1875", "-t", "0.1875", muted,
+        ])
+        if not ok:
+            return False, f"ytpmvscan muted segment failed: {err}"
+        pitch_segments.append(muted)
+
+        concat_pitch = "|".join(pitch_segments)
+        ok, err = run([
+            "-i", f"concat:{concat_pitch}",
+            "-c:v", "ffv1", "-c:a", "pcm_s16le", p("d.avi"),
+        ])
+        if not ok:
+            return False, f"ytpmvscan pitch concat failed: {err}"
+        for name, extra in (
+            ("e.avi", [
+                "-vf", "scale=640:360,setsar=1:1,fps=30,fade=in:d=0.2:st=0.3",
+                "-af", "atrim=end=2.625,adelay=281.25|281.25",
+            ]),
+            ("f.avi", ["-vf", "scale=640:360,setsar=1:1,fps=30"]),
+        ):
+            args = ["-i", p("d.avi"), *extra, "-c:v", "ffv1",
+                    "-c:a", "pcm_s16le", p(name)]
+            ok, err = run(args)
+            if not ok:
+                return False, f"ytpmvscan {name} render failed: {err}"
+
+        filter_complex = (
+            "[0:v]lutrgb=val/2:val/2:val/2,hflip,format=gbrp[base];"
+            "[1:v]pad=iw*2:ih*2:(iw-ow)/2:(ih-oh)/2,scale=iw/2:-1,format=gbrp[overlay];"
+            "[1:v]scale=iw/2:ih/2,lutrgb=r=0:g=0:b=0,"
+            "pad=iw*2:ih*2:(iw-ow)/2:(ih-oh)/2:color=0x00FF00,"
+            "gblur=12,format=rgba,negate,"
+            "colorchannelmixer=0:0:0:0:0:0:0:0:0:0:0:0:0:1:0:0[shadow];"
+            "[base][shadow]overlay=(W-w)/2+10:(H-h)/2+10,format=gbrp[tmp];"
+            "[tmp][overlay]blend=all_mode=addition,"
+            "zoompan=z='min(2,2-(on*0.18))':"
+            "x=iw/2-(iw/zoom/2):y=ih/2-(ih/zoom/2):s=640x360:d=0:fps=30[v];"
+            "[0:a][1:a]amix=2,volume=2[a]"
+        )
+        ok, err = run([
+            "-i", p("e.avi"), "-i", p("f.avi"),
+            "-filter_complex", filter_complex, "-map", "[v]", "-map", "[a]",
+            "-pix_fmt", "yuv420p", "-c:v", "ffv1", "-c:a", "pcm_s16le", p("g.avi"),
+        ])
+        if not ok:
+            return False, f"ytpmvscan visual composition failed: {err}"
+        sox_bin = shutil.which("sox")
+        if not sox_bin:
+            return False, "ytpmvscan requires the `sox` executable for reverb."
+        ok, err = run(["-i", p("g.avi"), p("before.wav")])
+        if not ok:
+            return False, f"ytpmvscan audio extraction failed: {err}"
+        try:
+            sox_result = subprocess.run(
+                [sox_bin, p("before.wav"), p("after.wav"), "reverb", "50"],
+                capture_output=True, text=True, timeout=120,
+            )
+        except Exception as exc:
+            return False, f"ytpmvscan sox reverb failed: {exc}"
+        if sox_result.returncode != 0:
+            return False, f"ytpmvscan sox reverb failed: {(sox_result.stderr or '')[-1000:]}"
+        ok, err = run([
+            "-i", p("g.avi"), "-i", p("after.wav"),
+            "-map", "0:v", "-map", "1:a", "-shortest",
+            "-c:v", "ffv1", "-c:a", "pcm_s16le", p("h.avi"),
+        ])
+        if not ok:
+            return False, f"ytpmvscan reverb remux failed: {err}"
+        ok, err = run([
+            "-i", f"concat:{p('a.avi')}|{p('h.avi')}",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "28",
+            "-c:a", "aac", "-b:a", "96k", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart", output_path,
+        ], timeout=300)
+        if not ok:
+            return False, f"ytpmvscan final render failed: {err}"
+        if not os.path.exists(output_path) or os.path.getsize(output_path) < 64:
+            return False, "ytpmvscan produced an empty output."
+        return True, ""
 
 
 def _run_ihtxsap(
@@ -13465,6 +13712,11 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "fun",
+        "name": "th/ytpmvscan [start]  (aliases: ytpmv, ytpmv_scan)",
+        "value": "YTPMV scan sequence using native Rubber Band R3 for all 15 pitch segments. Attach or reply to a video. Default start=106.9 seconds.",
+    },
+    {
+        "cat": "fun",
         "name": "th/oppositep1280 [start] [dur] [r3=true|false]  (aliases: op1280, opposite, opposite1280)",
         "value": "Inverse TV-simulator montage: all hue shifts negated, all pitch shifts inverted vs preview1280. Defaults: start=1.85, dur=0.85. The boolean selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`). Pipe form: `op1280=1.85|0.85|true`.",
     },
@@ -15269,7 +15521,7 @@ Heavy/effects commands:
     areverse, vreverse, channelblend=b|g|r, huehsv=val, multipitch=semis, mp=semis,
     lut=url, syncaudio, speed=factor, wave[=preset], tvsim[=params], tv,
     swirl=amount[;radius;xc;yc;fallout;is1to1], sierpinskiransomware/srw,
-    preview1280/p1280, oppositep1280/op1280, earthquake/nbfx, ssmp, mpsox/multipitchsox, folkvalley/fv,
+     preview1280/p1280, ytpmvscan/ytpmv, oppositep1280/op1280, earthquake/nbfx, ssmp, mpsox/multipitchsox, folkvalley/fv,
     vocoder, alimiter, freakzinga, fzgm156, multipitch2/mp2, multipitch3/mp3,
     jitter, randomjitter/rj, trim=start|end, leftsplit, rightsplit, ripple, scroll, pan,
     tile, watermark, ring, miui, reddit, caption, orb, deorb, chromashift,
@@ -15759,6 +16011,7 @@ Heavy (media processing):
 - th/trim [start] [end] — trim audio/video/GIF; defaults to `0` → media length
 - th/concatenate <url1> <url2> ... [format] / th/concat — join 2-10 attachments/URLs into one file
 - th/preview1280 [start] [dur] [true|false] — 12-segment TV-simulator montage; boolean selects native R3 or FFmpeg Rubber Band
+- th/ytpmvscan [start] — YTPMV scan sequence; all 15 pitch segments use native Rubber Band R3 (default start 106.9s)
 - th/oppositep1280 [start] [dur] [true|false] — inverse TV-simulator montage; boolean selects native R3 or FFmpeg Rubber Band
 - th/invlum [n] — luma-inversion loop
 - th/lexg — re-apply last export effect chain to new media
