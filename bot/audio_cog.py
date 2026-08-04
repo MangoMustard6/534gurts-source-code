@@ -63,7 +63,8 @@ async def _run(*args: str, timeout: float = FFMPEG_TIMEOUT) -> tuple[bytes, byte
         raise TimeoutError(f"{args[0]} timed out after {int(timeout)} seconds")
     if process.returncode:
         detail = stderr.decode("utf-8", "replace")[-1600:]
-        raise RuntimeError(f"{args[0]} failed: {detail}")
+        command = " ".join(args)
+        raise RuntimeError(f"{args[0]} failed: {detail}\nCommand: {command[-1200:]}")
     return stdout, stderr
 
 
@@ -250,6 +251,10 @@ class AudioCog(commands.Cog, name="Audio"):
                 audio_path, _ = await _resolve_source(
                     ctx, audio, attachments, next_index, directory, "audio.bin"
                 )
+                if os.path.getsize(media_path) == 0:
+                    raise ValueError("the base media download was empty")
+                if os.path.getsize(audio_path) == 0:
+                    raise ValueError("the replacement audio download was empty")
                 await status.edit(content="⚙️ Replacing audio with FFmpeg…")
                 output_path = os.path.join(directory, "audio-replaced.mp4")
                 await replace_audio(
@@ -260,9 +265,14 @@ class AudioCog(commands.Cog, name="Audio"):
                 output_size = os.path.getsize(output_path)
                 if output_size < 1024:
                     raise RuntimeError("the rendered output is empty")
-                await ctx.send(
-                    file=discord.File(output_path, filename="audio-replaced.mp4"),
-                )
+                try:
+                    await ctx.send(
+                        file=discord.File(output_path, filename="audio-replaced.mp4"),
+                    )
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Discord rejected the {output_size / 1024 / 1024:.1f} MB output: {exc}"
+                    ) from exc
                 await status.edit(content="✅ Audio replaced.")
         except Exception as exc:
             await status.edit(content=f"❌ Audio replacement failed: {str(exc)[:1600]}")

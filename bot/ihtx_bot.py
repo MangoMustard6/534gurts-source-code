@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Hardened `audio put replace` for MP3 replacement inputs with empty-download checks, full FFmpeg command diagnostics, and explicit Discord upload errors.
 - 2026-08-04: [Python] Hardened `audio put replace` output handling: validate non-empty MP4 output and require both video and replacement audio streams before upload.
 - 2026-08-04: [Python] Fixed `audio put replace` FFmpeg hangs by explicitly bounding output duration, including infinite-loop and longest/noloop paths.
 - 2026-08-04: [Python] Fixed dot-prefix command dispatch so `.audio`/`.a` reaches `process_commands`; the message gate now accepts every configured command prefix.
