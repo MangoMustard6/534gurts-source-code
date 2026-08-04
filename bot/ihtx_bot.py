@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Fixed `audio put replace` FFmpeg hangs by explicitly bounding output duration, including infinite-loop and longest/noloop paths.
 - 2026-08-04: [Python] Fixed dot-prefix command dispatch so `.audio`/`.a` reaches `process_commands`; the message gate now accepts every configured command prefix.
 - 2026-08-04: [Python] Added hybrid `.audio put replace`/`.a put replace` and `/audio put replace`, with attachment/URL/reference resolution, duration-aware looping, `-longest`, and `-noloop`.
 - 2026-08-04: [Python] Added hybrid `th/voicify`/`/voicify`: converts uploaded audio to mono 48 kHz Opus Ogg and posts Discord's native voice-message payload with waveform metadata and flag 8192.

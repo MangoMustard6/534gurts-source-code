@@ -171,6 +171,12 @@ async def replace_audio(
     has_visual = media_video or still_image
     should_loop = not noloop and audio_duration < media_duration
     should_pad = longest and noloop and audio_duration < media_duration
+    if longest:
+        target_duration = max(media_duration, audio_duration)
+    elif should_loop:
+        target_duration = media_duration
+    else:
+        target_duration = min(media_duration, audio_duration)
 
     command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
     if still_image:
@@ -193,10 +199,10 @@ async def replace_audio(
         command += ["-af", "apad"]
     if not longest:
         command += ["-shortest"]
-    if longest:
-        command += ["-t", str(max(media_duration, audio_duration))]
-    elif _is_still_image(media_path):
-        command += ["-t", str(min(media_duration, audio_duration))]
+    # Always bound the output explicitly. This prevents FFmpeg from waiting
+    # forever on an infinite stream_loop input when duration metadata is
+    # missing or unreliable.
+    command += ["-t", f"{target_duration:.6f}"]
     command += ["-movflags", "+faststart", output_path]
     await _run(*command)
 
