@@ -17,10 +17,11 @@ import tempfile
 import uuid
 from pathlib import Path
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
-from discord.http import MultipartParameters
+from discord.http import Route
 
 
 SUPPORTED_AUDIO = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".webm"}
@@ -140,7 +141,7 @@ async def _send_voice_message(
     *,
     reply_to: discord.Message | None = None,
 ) -> None:
-    """Post a raw voice-message multipart payload through discord.py's HTTP client."""
+    """Upload and post a native voice message using Discord's 3-stage API flow."""
     channel_id = getattr(channel, "id", None)
     state = getattr(channel, "_state", None)
     http = getattr(state, "http", None)
@@ -148,18 +149,51 @@ async def _send_voice_message(
         raise RuntimeError("this channel cannot send native voice messages")
 
     filename = "voice-message.ogg"
-    file = discord.File(path, filename=filename)
     waveform_b64 = base64.b64encode(waveform).decode("ascii")
     if len(waveform) != 256 or len(base64.b64decode(waveform_b64)) != 256:
         raise ValueError("internal waveform generation did not produce 256 samples")
+
+    # Native voice messages cannot use the ordinary multipart message upload.
+    # First reserve an attachment slot and obtain Discord's upload URL.
+    file_size = os.path.getsize(path)
+    upload_request = {
+        "files": [{"filename": filename, "file_size": file_size, "id": "0"}],
+    }
+    upload_response = await http.request(
+        Route("POST", "/channels/{channel_id}/attachments", channel_id=channel_id),
+        json=upload_request,
+    )
+    upload_info = (upload_response.get("attachments") or [{}])[0]
+    upload_url = upload_info.get("upload_url")
+    uploaded_filename = upload_info.get("upload_filename")
+    if not upload_url or not uploaded_filename:
+        raise RuntimeError("Discord did not return a voice-message upload URL")
+
+    # Upload the Ogg bytes to the pre-authorized Discord CDN URL.
+    token = getattr(http, "token", None)
+    headers = {"Content-Type": "audio/ogg"}
+    if token:
+        headers["Authorization"] = f"Bot {token}"
+    timeout = aiohttp.ClientTimeout(total=FFMPEG_TIMEOUT)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        with open(path, "rb") as audio:
+            async with session.put(upload_url, data=audio, headers=headers) as response:
+                if response.status not in {200, 201, 204}:
+                    detail = (await response.text())[-500:]
+                    raise RuntimeError(
+                        f"Discord audio upload failed with HTTP {response.status}: {detail}"
+                    )
+
     attachment = {
-        "id": 0,
+        "id": "0",
         "filename": filename,
+        "uploaded_filename": uploaded_filename,
         "duration_secs": round(duration, 3),
         "waveform": waveform_b64,
     }
+    # The final voice-message request must be JSON-only: no content and no
+    # multipart files. The uploaded_filename references the prior CDN upload.
     payload: dict[str, object] = {
-        "content": "",
         "flags": VOICE_MESSAGE_FLAG,
         "attachments": [attachment],
     }
@@ -169,21 +203,10 @@ async def _send_voice_message(
             "channel_id": str(reply_to.channel.id),
             "fail_if_not_exists": False,
         }
-    try:
-        with MultipartParameters(
-            payload=payload,
-            multipart=[{
-                "name": "files[0]",
-                "value": file.fp,
-                "filename": filename,
-                "content_type": "audio/ogg",
-            }],
-            files=[file],
-        ) as params:
-            await http.send_message(channel_id, params=params)
-    except Exception:
-        file.close()
-        raise
+    await http.request(
+        Route("POST", "/channels/{channel_id}/messages", channel_id=channel_id),
+        json=payload,
+    )
 
 
 class VoicifyCog(commands.Cog, name="Voicify"):
