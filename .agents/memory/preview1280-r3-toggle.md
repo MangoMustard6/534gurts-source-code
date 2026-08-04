@@ -11,7 +11,7 @@ The preview1280 family keeps FFmpeg Rubber Band as the default pitch renderer. A
 
 Native R3 tempo output is normalized to each rendered video segment by looping short audio and trimming long audio before remux.
 
-Standalone YTPMV uses the native R3 segment renderer for its fixed semitone sequence; pipe YTPMV uses the classic FFmpeg Rubber Band path.
+Both standalone and pipe YTPMV use the classic FFmpeg Rubber Band path; their timing behavior remains mode-specific.
 
 YTPMV scan source segments retain `volume=4`; its composed audio keeps the existing SoX reverb stage without an added FFmpeg echo.
 
@@ -25,4 +25,4 @@ Pipe YTPMV uses immediate pitch-source timing and preserves the generated scan w
 
 Pipe YTPMV omits the standalone pre-roll segment entirely, so its output begins with the pitch montage rather than a fade-in or two-second lead-in.
 
-YTPMV engine selection is mode-specific: standalone `th/ytpmvscan` uses native R3, while pipe `ytpmvscan` uses FFmpeg Rubber Band.
+YTPMV uses FFmpeg Rubber Band for both standalone `th/ytpmvscan` and pipe `ytpmvscan`.
