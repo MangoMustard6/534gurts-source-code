@@ -53,7 +53,7 @@ export async function handleWave(message: Message, rest: string): Promise<void> 
     return;
   }
 
-  const status = await message.reply(`⏳ Applying wave preset \`${presetName}\`…`);
+  const status = await message.reply(`🔧 Executing wave FFmpeg effect code \`${presetName}\`…`);
   const tmpDir = makeTempDir('wave');
   const startTime = Date.now();
 

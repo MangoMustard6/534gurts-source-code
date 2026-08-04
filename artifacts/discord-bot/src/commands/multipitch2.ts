@@ -162,7 +162,7 @@ export async function handleMultipitch2(message: Message, rawArgs: string): Prom
 
   const { pitches, waveHammer, sr } = parsed;
   const hammerLabel = waveHammer ? ` + ${waveHammer}` : '';
-  const status = await message.reply(`⏳ Starting multipitch2 — pitches: \`${pitches}\`${hammerLabel} (sr=${sr})…`);
+  const status = await message.reply(`🔧 Executing multipitch2 pitch-processing code — pitches: \`${pitches}\`${hammerLabel} (sr=${sr})…`);
 
   const edit = async (msg: string) => { try { await status.edit(msg); } catch { /* ignored */ } };
 

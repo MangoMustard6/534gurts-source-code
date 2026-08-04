@@ -108,7 +108,7 @@ export async function handleFfmpegProcess(message: Message, rawArgs: string): Pr
   }
 
   const argsDisplay = rawArgs.length <= 80 ? rawArgs : rawArgs.slice(0, 79) + '…';
-  const status = await message.reply(`⏳ Probing + processing \`${argsDisplay}\`…`);
+  const status = await message.reply(`🔎 Probing input, then executing FFmpeg video-processing code — \`${argsDisplay}\`…`);
 
   const tmpDir = makeTempDir('fmp');
   const startTime = Date.now();

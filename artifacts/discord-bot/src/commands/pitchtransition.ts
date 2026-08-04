@@ -31,7 +31,7 @@ export async function handlePitchTransition(message: Message, rawArgs: string): 
   }
 
   const tmpDir = makeTempDir('pitchtransition');
-  const status = await message.reply('⏳ Applying pitch transition…');
+  const status = await message.reply('🔧 Executing native Rubber Band R3 pitch-transition code…');
   try {
     const input = path.join(tmpDir, `input.${attachment.ext}`);
     const outputExt = VIDEO_EXTENSIONS.has(attachment.ext) ? 'mov' : 'm4a';

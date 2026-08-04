@@ -331,7 +331,7 @@ export async function handleGradientmap(message: Message, rest: string): Promise
     return;
   }
 
-  const status = await message.reply(`⏳ Applying gradient map (${cleaned.length} color stops)…`);
+  const status = await message.reply(`🔧 Executing gradient-map FFmpeg filter code (${cleaned.length} color stops)…`);
   const tmpDir = makeTempDir('gradientmap');
   const startTime = Date.now();
 

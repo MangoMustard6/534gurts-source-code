@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Replaced vague video-processing time notices with live operation/status text naming the active FFmpeg, native R3, SoX, concat, or preset processing stage.
 - 2026-08-04: [Python] Fixed YTPMV scan segment preservation by using the FFmpeg concat demuxer instead of concat protocol and validating all 15 native-R3 pitch segments, including the final -3.5 semitone segment.
 - 2026-08-04: [Python] Removed the extra YTPMV FFmpeg echo; the scan retains volume=4 on both initial source segments and the existing SoX reverb pass.
 - 2026-08-04: [Python] Added th/ytpmvscan, porting the supplied YTPMV scan sequence and routing all 15 pitch segments through native Rubber Band R3 with segment-duration audio normalization.
@@ -8216,7 +8217,7 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
 
     pipe_desc = f" | PIPE: `{pipe_raw}`" if pipe_raw else ""
     status_msg = await ctx.reply(
-        f"⚙️ **invlum** — `{powers}` power(s) × `{duration}s`{pipe_desc} … this may take a moment."
+        f"🔧 Executing invlum FFmpeg luma-stack code — `{powers}` power(s) × `{duration}s`{pipe_desc}…"
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -8326,7 +8327,9 @@ async def pipetest_command(ctx: commands.Context, *, effects: str = ""):
         return
 
     effect_label = effects[:120] + ("…" if len(effects) > 120 else "")
-    status_msg = await ctx.reply(f"⚙️ **pipetest** — `{effect_label}` … processing…")
+    status_msg = await ctx.reply(
+        f"🔧 Executing pipetest pipe-processing code — `{effect_label}`…"
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{suffix}")
@@ -8641,8 +8644,9 @@ async def preview1280_command(ctx: commands.Context, *args: str):
     duration = max(0.1, min(duration, 10.0))
 
     status_msg = await ctx.reply(
-        f"⚙️ Creating **preview1280** montage (start={start}s, dur={duration}s, "
-        f"pitch engine={'R3 enabled' if use_r3 else 'R3 disabled'})... this will take a while."
+        f"🔧 Executing preview1280 FFmpeg montage code "
+        f"(start={start}s, dur={duration}s, "
+        f"pitch engine={'native R3' if use_r3 else 'FFmpeg Rubber Band'})…"
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -8748,7 +8752,7 @@ async def ytpmvscan_command(ctx: commands.Context, *args: str):
 
     status_msg = await ctx.reply(
         f"⚙️ Creating **YTPMV scan** from {start:.4f}s with "
-        "native Rubber Band R3 pitch segments… this will take a while."
+        "executing native Rubber Band R3 pitch-segment code, then concat/reverb…"
     )
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{suffix}")
@@ -8858,7 +8862,7 @@ async def oppositep1280_command(ctx: commands.Context, *args: str):
 
     status_msg = await ctx.reply(
         f"⚙️ Creating **oppositep1280** montage (start={start}s, dur={duration}s, "
-        f"pitch engine={'R3 enabled' if use_r3 else 'R3 disabled'})... this will take a while."
+        f"pitch engine={'native R3' if use_r3 else 'FFmpeg Rubber Band'}) — executing inverse FFmpeg montage code…"
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -8974,7 +8978,7 @@ async def preview1280_640x360resize_command(ctx: commands.Context, *args: str):
 
     status_msg = await ctx.reply(
         f"⚙️ Creating **preview1280 (640×360)** montage (start={start}s, dur={duration}s, "
-        f"pitch engine={'R3 enabled' if use_r3 else 'R3 disabled'})... this will take a while."
+        f"pitch engine={'native R3' if use_r3 else 'FFmpeg Rubber Band'}) — executing 640×360 FFmpeg resize/montage code…"
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -9119,8 +9123,8 @@ async def preview1280what_command(
     status_msg = await ctx.reply(
         f"⚙️ Creating **preview1280what??** montage "
         f"(start={start}s, dur={dur}s, target_len={target_len}s, tempo={use_tempo_bool}, "
-        f"pitch engine={'R3 enabled' if use_r3 else 'R3 disabled'}) "
-        f"— 28 segments, this will take a while."
+        f"pitch engine={'native R3' if use_r3 else 'FFmpeg Rubber Band'}) "
+        f"— executing 28-segment FFmpeg montage code…"
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -9266,7 +9270,7 @@ async def multipitch_command(ctx: commands.Context, *, args: str = ""):
 
     pitch_str = ";".join(pitch_values)
     status_msg = await ctx.reply(
-        f"⚙️ Applying **multipitch** ({pitch_str}) via Rubber Band R3… this may take a moment."
+        f"🔧 Executing multipitch native-R3 processing code ({pitch_str})…"
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -9341,7 +9345,9 @@ async def pitchtransition_command(ctx: commands.Context, *, args: str = ""):
     if suffix not in _MULTIPITCH_AUDIO_EXTS:
         await ctx.reply(f"Unsupported file type `{suffix}`. Attach audio or video.")
         return
-    status_msg = await ctx.reply(f"⚙️ Applying **pitchtransition** (`{raw}`)…")
+    status_msg = await ctx.reply(
+        f"🔧 Executing native Rubber Band R3 pitch-map code (`{raw}`)…"
+    )
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{suffix}")
         output_path = os.path.join(
@@ -9451,7 +9457,7 @@ async def soundstretchmultipitch_command(ctx: commands.Context, *, args: str = "
 
     pitch_str = ";".join(pitch_values)
     status_msg = await ctx.reply(
-        f"⚙️ Applying **soundstretch multipitch** ({pitch_str}) via SoundTouch… this may take a moment."
+        f"🔧 Executing SoundTouch multipitch processing code ({pitch_str})…"
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -10284,7 +10290,11 @@ async def ihtxsap_command(ctx: commands.Context, *, args: str = "") -> None:
         return e
 
     loading_embed = _make_embed()
-    loading_embed.add_field(name="Status:", value="⏳ Downloading and processing…", inline=False)
+    loading_embed.add_field(
+        name="Status:",
+        value="⬇️ Downloading media, then executing IHTX-Sap audio-processing code…",
+        inline=False,
+    )
     loading_embed.add_field(name="🌤️ Weather Fact:", value=_fun_fact, inline=False)
     status_msg = await ctx.reply(embed=loading_embed, mention_author=False)
 
@@ -10439,7 +10449,9 @@ async def mpb_command(ctx: commands.Context, *, args: str = "") -> None:
         return
 
     pitch_display = " | ".join(pitch_values)
-    status_msg = await ctx.reply(f"⏳ Multipitch Bungee — `{pitch_display}` …")
+    status_msg = await ctx.reply(
+        f"🔧 Executing Bungee multipitch processing code — `{pitch_display}`…"
+    )
 
     async def _update(text: str) -> None:
         try:
@@ -10530,7 +10542,9 @@ async def ffmpeg_raw_command(ctx: commands.Context, *, args: str = ""):
         return
 
     args_display = args if len(args) <= 80 else args[:79] + "…"
-    status_msg = await ctx.reply(f"⏳ Processing `{args_display}`…")
+    status_msg = await ctx.reply(
+        f"🔧 Executing FFmpeg video-processing code — `{args_display}`…"
+    )
 
     start_time = time.time()
 
@@ -10735,7 +10749,9 @@ async def ffmpeg_process_command(ctx: commands.Context, *, args: str = ""):
         return
 
     args_display = args if len(args) <= 80 else args[:79] + "…"
-    status_msg = await ctx.reply(f"⏳ Probing + processing `{args_display}`…")
+    status_msg = await ctx.reply(
+        f"🔎 Probing input, then executing FFmpeg video-processing code — `{args_display}`…"
+    )
 
     start_time = time.time()
 
@@ -10972,7 +10988,7 @@ async def trim_command(ctx: commands.Context, *, args: str = ""):
         )
         return
 
-    status_msg = await ctx.reply(f"✂️ Trimming…")
+    status_msg = await ctx.reply("🔧 Executing FFmpeg trim-filter code…")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{suffix}")
@@ -11147,7 +11163,7 @@ async def stretch_to_length_command(ctx: commands.Context, *, args: str = ""):
         )
         return
 
-    status_msg = await ctx.reply("⏱️ Stretching…")
+    status_msg = await ctx.reply("🔧 Executing setpts/audio time-stretch processing code…")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{suffix}")
@@ -11300,7 +11316,7 @@ async def repeat_command(ctx: commands.Context, *, args: str = ""):
             for _ in range(n):
                 f.write(f"file '{safe_inp}'\n")
 
-        status_msg = await ctx.reply(f"⏳ Repeating {n}×…")
+        status_msg = await ctx.reply(f"🔧 Executing FFmpeg repeat/concat code ({n}×)…")
 
         def _run():
             return subprocess.run(
@@ -11399,7 +11415,9 @@ async def concatenate_command(ctx: commands.Context, *, args: str = ""):
         await ctx.reply(f"❌ Too many sources ({len(sources)}). Maximum is {_CONCAT_MAX_SOURCES}.")
         return
 
-    status_msg = await ctx.reply(f"🔗 Concatenating {len(sources)} files…")
+    status_msg = await ctx.reply(
+        f"🔧 Executing FFmpeg concat-demuxer code for {len(sources)} files…"
+    )
     loop = asyncio.get_event_loop()
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -11623,7 +11641,7 @@ async def join_command(ctx: commands.Context, *, args: str = ""):
         )
         return
 
-    status_msg = await ctx.reply("🔗 Joining 2 files…")
+    status_msg = await ctx.reply("🔧 Executing FFmpeg two-file join/concat code…")
     loop = asyncio.get_event_loop()
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -12198,7 +12216,9 @@ async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str =
         )
         return
 
-    status_msg = await ctx.reply(f"🪞 Applying `mirror={preset_key}` ({description})…")
+    status_msg = await ctx.reply(
+        f"🔧 Executing FFmpeg mirror-filter code — `{preset_key}` ({description})…"
+    )
 
     _image_exts = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -12328,7 +12348,8 @@ async def huehsv_command(
 
     bf_label = " betterfully" if bf else ""
     status_msg = await ctx.reply(
-        f"⚙️ Applying **huehsv** (hue={hue} sat={sat} lightness={lightness} cs={colorspace}{bf_label})… this may take a moment."
+        f"🔧 Executing huehsv/FFmpeg video-filter code "
+        f"(hue={hue} sat={sat} lightness={lightness} cs={colorspace}{bf_label})…"
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -12538,7 +12559,7 @@ async def lut2png_cmd(ctx: commands.Context, cube_url: str = ""):
     is_video = suffix in VIDEO_EXTENSIONS
     out_ext = get_output_ext(suffix, is_video) if suffix in SUPPORTED_EXTENSIONS else ".png"
 
-    status_msg = await ctx.reply("⚙️ Applying LUT via FFmpeg lut3d…")
+    status_msg = await ctx.reply("🔧 Executing FFmpeg lut3d video-filter code…")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"media{suffix}")
@@ -12658,7 +12679,7 @@ async def syncaudio_command(ctx: commands.Context, mode: str = ""):
 
     mode_label = "alt (audio→video)" if alt_mode else "default (video→audio)"
     status_msg = await ctx.reply(
-        f"⚙️ Running **syncaudio** ({mode_label})... this may take a moment."
+        f"🔧 Executing syncaudio {mode_label} PTS/tempo-processing code…"
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -12777,7 +12798,9 @@ async def swirl_command(ctx: commands.Context, *, args: str = ""):
         await ctx.reply(f"❌ Unsupported file type `{suffix}`. Attach a video or image.")
         return
 
-    status_msg = await ctx.reply(f"⏳ Applying swirl (amount={strength})…")
+    status_msg = await ctx.reply(
+        f"🔧 Executing FFmpeg/geq swirl video-filter code (amount={strength})…"
+    )
 
     out_suffix = suffix if is_image else ".mp4"
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -12866,7 +12889,9 @@ async def freakzingatesteffect_command(ctx: commands.Context, *, args: str = "")
         await ctx.reply(f"❌ `freakzingatesteffect` requires a video file. Got `{suffix}`.")
         return
 
-    status_msg = await ctx.reply("⚙️ Running **Freakzinga test effect**… this may take a while.")
+    status_msg = await ctx.reply(
+        "🔧 Executing Freakzinga FFmpeg/ImageMagick video-effect code…"
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{suffix}")
@@ -12990,7 +13015,9 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
         return
 
     param_str = f"curvature={curvature}"
-    status_msg = await ctx.reply(f"⏳ Applying TV simulator ({param_str})…")
+    status_msg = await ctx.reply(
+        f"🔧 Executing TV-simulator displacement-map FFmpeg code ({param_str})…"
+    )
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path  = os.path.join(tmpdir, f"input{suffix}")
@@ -13080,7 +13107,7 @@ async def folkvalley_command(ctx: commands.Context):
         await ctx.reply(f"❌ `th/folkvalley` requires a video file. Got `{suffix}`.")
         return
 
-    status_msg = await ctx.reply("⏳ Applying folkvalley effect…")
+    status_msg = await ctx.reply("🔧 Executing folkvalley FFmpeg video/audio-effect code…")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         input_path = os.path.join(tmpdir, f"input{suffix}")
@@ -13296,7 +13323,8 @@ async def scgv_command(ctx: commands.Context, *, args: str = ""):
         return
 
     status_msg = await ctx.reply(
-        f"⚙️ **scgv** — {bandwidth} bands · ratio={ratio} · detection={detection}… this may take a while."
+        f"🔧 Executing SCGV vocoder/filtergraph code — {bandwidth} bands · "
+        f"ratio={ratio} · detection={detection}…"
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
