@@ -16,3 +16,5 @@ The YTPMV scan command uses the same native R3 segment renderer for its fixed se
 YTPMV scan source segments retain `volume=4`; its composed audio keeps the existing SoX reverb stage without an added FFmpeg echo.
 
 YTPMV scan pitch segments should be concatenated with the FFmpeg concat demuxer and individually duration-checked; concat protocol can drop the final short R3 segment.
+
+YTPMV scan is available as a dedicated pipe effect with an optional start parameter; its pitch-source segment begins after a combined 2.09375-second lead-in.
