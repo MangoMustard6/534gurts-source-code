@@ -73,7 +73,13 @@ async def transcode_voice(input_path: str, output_path: str) -> None:
 
 
 async def _audio_metadata(path: str) -> tuple[float, bytes]:
-    """Return duration and Discord's 256-sample waveform bytes."""
+    """Return duration and Discord's normalized 256-sample waveform bytes.
+
+    Discord expects the attachment waveform to be a base64-encoded sequence
+    of 256 unsigned byte amplitudes. RMS plus per-file normalization gives the
+    client useful visual contrast; raw 16-bit peaks often render as a nearly
+    flat line for quiet or dynamically compressed recordings.
+    """
     raw, _ = await _run_process(
         "ffmpeg", "-hide_banner", "-loglevel", "error",
         "-i", path, "-f", "s16le", "-ac", "1", "-ar", "8000", "-",
@@ -96,13 +102,26 @@ async def _audio_metadata(path: str) -> tuple[float, bytes]:
     if not samples:
         raise ValueError("the converted audio contains no samples")
     bucket_count = 256
-    waveform = bytearray()
+    levels: list[float] = []
     for index in range(bucket_count):
         start = index * len(samples) // bucket_count
         end = max(start + 1, (index + 1) * len(samples) // bucket_count)
-        peak = max(abs(value) for value in samples[start:end])
-        waveform.append(min(255, round(peak / 32767 * 255)))
-    return duration, bytes(waveform)
+        bucket = samples[start:end]
+        rms = math.sqrt(sum(value * value for value in bucket) / len(bucket))
+        levels.append(rms)
+    floor = min(levels)
+    ceiling = max(levels)
+    spread = ceiling - floor
+    if spread < 1e-9:
+        # A constant/near-silent recording still needs a valid visible
+        # waveform rather than 256 zero bytes.
+        waveform = bytes([max(8, min(255, round(ceiling / 32767 * 255)))] * bucket_count)
+    else:
+        waveform = bytes(
+            max(8, min(255, round(8 + 247 * ((level - floor) / spread))))
+            for level in levels
+        )
+    return duration, waveform
 
 
 async def _save_attachment(attachment: discord.Attachment, path: str) -> None:
@@ -130,11 +149,14 @@ async def _send_voice_message(
 
     filename = "voice-message.ogg"
     file = discord.File(path, filename=filename)
+    waveform_b64 = base64.b64encode(waveform).decode("ascii")
+    if len(waveform) != 256 or len(base64.b64decode(waveform_b64)) != 256:
+        raise ValueError("internal waveform generation did not produce 256 samples")
     attachment = {
         "id": 0,
         "filename": filename,
         "duration_secs": round(duration, 3),
-        "waveform": base64.b64encode(waveform).decode("ascii"),
+        "waveform": waveform_b64,
     }
     payload: dict[str, object] = {
         "content": "",
