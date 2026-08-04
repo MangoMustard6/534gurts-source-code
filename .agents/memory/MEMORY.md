@@ -19,3 +19,4 @@
 - [Preview1280 R3 pitch toggle](preview1280-r3-toggle.md) — trailing `r3` selects native Rubber Band R3 while preserving montage pitch values, timing, and visuals.
 - [IHTX output format](ihtx-output-format.md) — optional format after intermediate format keeps renders in one container and converts only the final export.
 - [Hybrid media conversion](hybrid-media-conversion.md) — `/convert` and `th/convert` are the sole media conversion commands; the obsolete multi-output converter is removed.
+- [Discord voice-message payload](discord-voice-message-payload.md) — discord.py 2.7.1 lacks voice-message helpers; use raw flags 8192 plus Ogg/Opus attachment waveform metadata.
