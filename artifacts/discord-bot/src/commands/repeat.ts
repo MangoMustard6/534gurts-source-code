@@ -40,7 +40,7 @@ export async function handleRepeat(message: Message, rest: string): Promise<void
     return;
   }
 
-  const status = await message.reply(`⏳ Repeating ${n}×…`);
+  const status = await message.reply(`🔧 Executing FFmpeg repeat/concat code (${n}×)…`);
   const tmpDir = makeTempDir('repeat');
   const startTime = Date.now();
 

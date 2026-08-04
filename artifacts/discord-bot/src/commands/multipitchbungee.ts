@@ -239,7 +239,7 @@ export async function handleMultipitchBungee(message: Message): Promise<void> {
     return;
   }
 
-  const status = await message.reply(`⏳ Multipitch Bungee — pitches: **${pitchArg.replace(/,/g, ' | ')}**`);
+  const status = await message.reply(`🔧 Executing Bungee multipitch-processing code — pitches: **${pitchArg.replace(/,/g, ' | ')}**`);
 
   let last = '';
   const setStatus = async (s: string) => {
@@ -301,7 +301,7 @@ export async function handleMultipitchBungeeInteraction(slash: ChatInputCommandI
     try { await slash.editReply(s); } catch { /* ignore */ }
   };
 
-  await setStatus(`⏳ Multipitch Bungee — pitches: **${pitchArg.replace(/,/g, ' | ')}**`);
+  await setStatus(`🔧 Executing Bungee multipitch-processing code — pitches: **${pitchArg.replace(/,/g, ' | ')}**`);
 
   const tmpDir = makeTempDir('mpb');
   try {

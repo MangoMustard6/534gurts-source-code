@@ -67,7 +67,7 @@ export async function handleTrim(message: Message, rest: string): Promise<void> 
     return;
   }
 
-  const status = await message.reply('✂️ Trimming…');
+  const status = await message.reply('🔧 Executing FFmpeg trim-filter code…');
   const tmpDir = makeTempDir('trim');
   try {
     const input = path.join(tmpDir, `input.${source.ext}`);

@@ -643,7 +643,11 @@ class EconomyCog(commands.Cog, name="Economy"):
             return e
 
         loading_embed = _make_base_embed()
-        loading_embed.add_field(name="Status:", value="⏳ Downloading and processing your media…", inline=False)
+        loading_embed.add_field(
+            name="Status:",
+            value="⬇️ Downloading media, then executing the selected video-processing code…",
+            inline=False,
+        )
         loading_embed.add_field(name="🌤️ Weather Fact:", value=_fun_fact, inline=False)
         status_msg = await ctx.reply(embed=loading_embed, mention_author=False)
 
@@ -696,9 +700,16 @@ class EconomyCog(commands.Cog, name="Economy"):
                 while not _done_evt.is_set():
                     elapsed = int(time.monotonic() - _start_time)
                     if use_pipe:
-                        _phase = f"🔧 Running pipe effects…\n⏱️ **{elapsed}s elapsed**"
+                        _phase = (
+                            f"🔧 Executing pipe-processing code "
+                            f"(`{_pipe_effects_label(pipe_effects)}`)…\n"
+                            f"⏱️ **{elapsed}s elapsed**"
+                        )
                     else:
-                        _phase = f"🔧 Running FFmpeg `{effect}` preset…\n⏱️ **{elapsed}s elapsed**"
+                        _phase = (
+                            f"🔧 Executing FFmpeg `{effect}` video filter code…\n"
+                            f"⏱️ **{elapsed}s elapsed**"
+                        )
                     await _update(_phase)
                     try:
                         await asyncio.wait_for(_done_evt.wait(), timeout=4.0)

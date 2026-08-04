@@ -38,7 +38,7 @@ export async function handleScgv(message: Message, rest: string): Promise<void> 
   const tmpDir = makeTempDir('scgv');
   const inputPath = path.join(tmpDir, `input.${attachment.ext}`);
   const outputPath = path.join(tmpDir, 'sidechaingate_vocoder.mp4');
-  const status = await message.reply(`⏳ Applying SCGV vocoder (${params[0].slice(0, 80)})…`);
+  const status = await message.reply(`🔧 Executing SCGV vocoder/filtergraph code (${params[0].slice(0, 80)})…`);
 
   try {
     await downloadUrl(attachment.url, inputPath);

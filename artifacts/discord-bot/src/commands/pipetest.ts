@@ -120,7 +120,7 @@ export async function handlePipetest(message: Message, rest: string): Promise<vo
       }
 
       const presetLabel = waveParams[0] ?? 'custom';
-      const status = await message.reply(`⏳ Applying wave effect \`${presetLabel}\`…`);
+      const status = await message.reply(`🔧 Executing wave FFmpeg effect code \`${presetLabel}\`…`);
 
       await applyWave({ inputFile: inputPath, outputFile: outputPath }, waveParams);
 
@@ -152,7 +152,7 @@ export async function handlePipetest(message: Message, rest: string): Promise<vo
 
     } else if (isFfmpeg) {
       const raw = firstLower.startsWith('ffmpeg=') ? firstToken.slice('ffmpeg='.length) : tokens.slice(1).join(' ');
-      const status = await message.reply('⏳ Applying raw FFmpeg pipe effect…');
+      const status = await message.reply('🔧 Executing raw FFmpeg pipe-effect code…');
       await applyRawFfmpeg({ inputFile: inputPath, outputFile: outputPath }, raw);
       await status.edit({
         content: '✅ Raw FFmpeg pipe effect applied.',
@@ -164,7 +164,7 @@ export async function handlePipetest(message: Message, rest: string): Promise<vo
         ...tokens.slice(1),
       ];
       const carrier = vocoderParams[0] || '(missing carrier)';
-      const status = await message.reply(`⏳ Applying scgv vocoder with carrier \`${carrier.slice(0, 80)}\`…`);
+      const status = await message.reply(`🔧 Executing SCGV vocoder/filtergraph code with carrier \`${carrier.slice(0, 80)}\`…`);
 
       await applySidechainGateVocoder(
         { inputFile: inputPath, outputFile: outputPath },
@@ -219,7 +219,7 @@ export async function handlePipetest(message: Message, rest: string): Promise<vo
         return;
       }
 
-      const status = await message.reply(`⏳ Applying gradient map (${stopsResult.stops.length} stops)…`);
+      const status = await message.reply(`🔧 Executing gradient-map FFmpeg filter code (${stopsResult.stops.length} stops)…`);
 
       await applyGradientmap(
         { inputFile: inputPath, outputFile: outputPath },
