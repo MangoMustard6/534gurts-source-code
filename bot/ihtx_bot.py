@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Fixed YTPMV scan segment preservation by using the FFmpeg concat demuxer instead of concat protocol and validating all 15 native-R3 pitch segments, including the final -3.5 semitone segment.
 - 2026-08-04: [Python] Removed the extra YTPMV FFmpeg echo; the scan retains volume=4 on both initial source segments and the existing SoX reverb pass.
 - 2026-08-04: [Python] Added th/ytpmvscan, porting the supplied YTPMV scan sequence and routing all 15 pitch segments through native Rubber Band R3 with segment-duration audio normalization.
 - 2026-08-04: [Python] Normalized native preview1280 R3 tempo audio to each segment duration by looping short output and trimming long output before remux.
@@ -9802,6 +9803,19 @@ def _run_ytpmvscan(
             ok, err = _run_montage_segment(cmd, segment, tmpdir, True, 240)
             if not ok:
                 return False, f"ytpmvscan native R3 pitch segment {index} failed: {err}"
+            segment_duration = _ffprobe_duration(segment)
+            if segment_duration < 0.16:
+                return False, (
+                    f"ytpmvscan pitch segment {index} is too short "
+                    f"({segment_duration:.6f}s); expected about 0.1875s."
+                )
+            if index == len(pitches):
+                print(
+                    f"[ytpmvscan] verified final native-R3 pitch segment "
+                    f"index={index} pitch={semitones:+.1f}st "
+                    f"duration={segment_duration:.6f}s",
+                    flush=True,
+                )
             pitch_segments.append(segment)
         muted = p("16.avi")
         ok, err = run([
@@ -9813,9 +9827,12 @@ def _run_ytpmvscan(
             return False, f"ytpmvscan muted segment failed: {err}"
         pitch_segments.append(muted)
 
-        concat_pitch = "|".join(pitch_segments)
+        pitch_concat_list = p("pitch_concat.txt")
+        with open(pitch_concat_list, "w") as concat_file:
+            for segment in pitch_segments:
+                concat_file.write(f"file '{segment}'\n")
         ok, err = run([
-            "-i", f"concat:{concat_pitch}",
+            "-f", "concat", "-safe", "0", "-i", pitch_concat_list,
             "-c:v", "ffv1", "-c:a", "pcm_s16le", p("d.avi"),
         ])
         if not ok:
@@ -9877,8 +9894,12 @@ def _run_ytpmvscan(
         ])
         if not ok:
             return False, f"ytpmvscan reverb remux failed: {err}"
+        final_concat_list = p("final_concat.txt")
+        with open(final_concat_list, "w") as concat_file:
+            for segment in (p("a.avi"), p("h.avi")):
+                concat_file.write(f"file '{segment}'\n")
         ok, err = run([
-            "-i", f"concat:{p('a.avi')}|{p('h.avi')}",
+            "-f", "concat", "-safe", "0", "-i", final_concat_list,
             "-c:v", "libx264", "-preset", "medium", "-crf", "28",
             "-c:a", "aac", "-b:a", "96k", "-pix_fmt", "yuv420p",
             "-movflags", "+faststart", output_path,
