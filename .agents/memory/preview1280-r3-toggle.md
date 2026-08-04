@@ -20,3 +20,5 @@ YTPMV scan pitch segments should be concatenated with the FFmpeg concat demuxer 
 YTPMV scan is available as a dedicated pipe effect fixed at start 0; its pitch-source segment begins at start+2.09375 while the first segment begins exactly at start.
 
 In pipe mode, YTPMV scan is intentionally bare and fixed at start 0; reject all pipe parameters. Only the standalone command accepts a custom start.
+
+Pipe YTPMV uses immediate pitch-source timing and preserves the generated scan when duration is `vidlen`; numeric pipe durations still use normal IHTX trimming.
