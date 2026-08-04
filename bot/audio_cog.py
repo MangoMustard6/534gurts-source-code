@@ -93,6 +93,15 @@ async def _has_video(path: str) -> bool:
     return bool(stdout.strip())
 
 
+async def _stream_types(path: str) -> set[str]:
+    stdout, _ = await _run(
+        "ffprobe", "-v", "error",
+        "-show_entries", "stream=codec_type",
+        "-of", "default=nw=1:nk=1", path,
+    )
+    return {line.strip() for line in stdout.decode("utf-8", "replace").splitlines() if line.strip()}
+
+
 def _is_still_image(path: str) -> bool:
     return Path(path).suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
@@ -205,6 +214,13 @@ async def replace_audio(
     command += ["-t", f"{target_duration:.6f}"]
     command += ["-movflags", "+faststart", output_path]
     await _run(*command)
+    if not os.path.isfile(output_path) or os.path.getsize(output_path) < 1024:
+        raise RuntimeError("FFmpeg produced an empty output video")
+    streams = await _stream_types(output_path)
+    if has_visual and "video" not in streams:
+        raise RuntimeError("FFmpeg output is missing its video stream")
+    if "audio" not in streams:
+        raise RuntimeError("FFmpeg output is missing its replacement audio stream")
 
 
 class AudioCog(commands.Cog, name="Audio"):
@@ -241,8 +257,11 @@ class AudioCog(commands.Cog, name="Audio"):
                     longest=longest, noloop=noloop,
                 )
                 await status.edit(content="⬆️ Uploading result…")
+                output_size = os.path.getsize(output_path)
+                if output_size < 1024:
+                    raise RuntimeError("the rendered output is empty")
                 await ctx.send(
-                    file=discord.File(output_path, filename="audio-replaced.mp4")
+                    file=discord.File(output_path, filename="audio-replaced.mp4"),
                 )
                 await status.edit(content="✅ Audio replaced.")
         except Exception as exc:
