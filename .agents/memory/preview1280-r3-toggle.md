@@ -13,4 +13,4 @@ Native R3 tempo output is normalized to each rendered video segment by looping s
 
 The YTPMV scan command uses the same native R3 segment renderer for its fixed semitone sequence; classic FFmpeg rubberband is retained only as an internal pitch marker that the R3 renderer removes.
 
-YTPMV scan source segments retain `volume=4`; its composed audio then applies explicit FFmpeg echo before the existing SoX reverb stage.
+YTPMV scan source segments retain `volume=4`; its composed audio keeps the existing SoX reverb stage without an added FFmpeg echo.

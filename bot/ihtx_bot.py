@@ -8,7 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
-- 2026-08-04: [Python] Added explicit YTPMV scan echo after the composed audio mix while retaining volume=4 on both initial source segments and the existing SoX reverb pass.
+- 2026-08-04: [Python] Removed the extra YTPMV FFmpeg echo; the scan retains volume=4 on both initial source segments and the existing SoX reverb pass.
 - 2026-08-04: [Python] Added th/ytpmvscan, porting the supplied YTPMV scan sequence and routing all 15 pitch segments through native Rubber Band R3 with segment-duration audio normalization.
 - 2026-08-04: [Python] Normalized native preview1280 R3 tempo audio to each segment duration by looping short output and trimming long output before remux.
 - 2026-08-04: [Python] Fixed preview1280what parsing so the boolean after duration controls R3 while the later boolean controls legacy tempo, including grouped semicolon/pipe arguments.
@@ -9844,11 +9844,9 @@ def _run_ytpmvscan(
             "[tmp][overlay]blend=all_mode=addition,"
             "zoompan=z='min(2,2-(on*0.18))':"
             "x=iw/2-(iw/zoom/2):y=ih/2-(ih/zoom/2):s=640x360:d=0:fps=30[v];"
-            # Keep the supplied source gain at volume=4 in A/B, then add a
-            # deliberate echo after the visual-source mix. SoX reverb is
-            # applied afterward in the before.wav -> after.wav stage.
-            "[0:a][1:a]amix=2,volume=2,"
-            "aecho=0.8:0.9:60|120:0.35|0.2[a]"
+            # Keep the supplied source gain at volume=4 in A/B. SoX reverb
+            # is applied afterward in the before.wav -> after.wav stage.
+            "[0:a][1:a]amix=2,volume=2[a]"
         )
         ok, err = run([
             "-i", p("e.avi"), "-i", p("f.avi"),
