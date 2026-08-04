@@ -12,3 +12,5 @@ The audio replacement command uses a dedicated nested prefix group plus a manual
 Always pass an explicit finite `-t` output duration to FFmpeg, including when `-stream_loop -1` is used; relying on `-shortest` alone can hang when source duration metadata is ambiguous.
 
 Validate the rendered file with ffprobe before uploading: it must be non-empty and contain the expected video stream plus the replacement audio stream.
+
+For intermittent attachment failures, validate both downloaded source sizes and wrap the Discord send so the user sees whether resolution, FFmpeg, or upload failed.
