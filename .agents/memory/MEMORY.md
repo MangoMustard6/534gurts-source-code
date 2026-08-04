@@ -21,3 +21,4 @@
 - [Hybrid media conversion](hybrid-media-conversion.md) — `/convert` and `th/convert` are the sole media conversion commands; the obsolete multi-output converter is removed.
 - [Discord voice-message payload](discord-voice-message-payload.md) — discord.py 2.7.1 lacks voice-message helpers; use raw flags 8192 plus Ogg/Opus attachment waveform metadata.
 - [Audio put replace](audio-put-replace.md) — nested prefix parsing and typed slash registration share attachment, URL, and reply source resolution.
+- [Multiple prefix dispatch](multiple-prefix-dispatch.md) — if command_prefix accepts multiple prefixes, on_message gates must allow every prefix before process_commands.

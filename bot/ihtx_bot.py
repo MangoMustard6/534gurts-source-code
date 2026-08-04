@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Fixed dot-prefix command dispatch so `.audio`/`.a` reaches `process_commands`; the message gate now accepts every configured command prefix.
 - 2026-08-04: [Python] Added hybrid `.audio put replace`/`.a put replace` and `/audio put replace`, with attachment/URL/reference resolution, duration-aware looping, `-longest`, and `-noloop`.
 - 2026-08-04: [Python] Added hybrid `th/voicify`/`/voicify`: converts uploaded audio to mono 48 kHz Opus Ogg and posts Discord's native voice-message payload with waveform metadata and flag 8192.
 - 2026-08-04: [Python] Removed the obsolete three-output `th/convert_legacy` command and its `th/conv` alias; the hybrid converter is now the only canonical convert command.
@@ -17744,7 +17745,10 @@ async def on_message(message: discord.Message):
                         await message.reply(chunk, mention_author=(not no_ping and i == 0))
 
     # Always allow owners to manage the bot and allow all bot commands to run.
-    if not _is_owner_by_id(message.author.id) and not message.content.startswith(_BOT_PREFIX):
+    if (
+        not _is_owner_by_id(message.author.id)
+        and not any(message.content.startswith(prefix) for prefix in _BOT_PREFIXES)
+    ):
         keyword = _blocked_keyword_for_message(message.channel.id, message.content)
         if keyword:
             try:
