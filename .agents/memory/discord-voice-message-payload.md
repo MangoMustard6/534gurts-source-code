@@ -8,3 +8,5 @@ The installed discord.py 2.7.1 does not expose `MessageFlags(voice_message=True)
 **Why:** Sending the Ogg file through the normal `discord.File` API creates a regular audio attachment, not Discord's voice-message UI.
 
 **How to apply:** Keep the low-level upload isolated, use mono 48 kHz Opus at an appropriate voice bitrate, generate and normalize a 256-sample RMS waveform, and fail explicitly if Discord rejects the raw payload rather than silently downgrading.
+
+Native voice messages require Discord's three-stage upload flow: reserve the attachment at `/channels/{id}/attachments`, PUT the Ogg bytes to the returned upload URL, then send a JSON-only message referencing `uploaded_filename` with flag 8192 and waveform metadata. A direct multipart message upload can produce a voice message without a visible waveform.
