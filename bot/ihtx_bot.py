@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Normalized native preview1280 R3 tempo audio to each segment duration by looping short output and trimming long output before remux.
 - 2026-08-04: [Python] Fixed preview1280what parsing so the boolean after duration controls R3 while the later boolean controls legacy tempo, including grouped semicolon/pipe arguments.
 - 2026-08-03: [Python] Fixed preview1280 parsing where a valid numeric start value `0` was mistaken for the bare false R3 toggle, causing `r3=true` to be reported as a duplicate toggle.
 - 2026-08-03: [Python] Made preview1280 argument parsing tolerant of space-, pipe-, semicolon-, and colon-separated R3 forms, and included received arguments in usage errors.
@@ -7039,9 +7040,26 @@ def _run_montage_segment(
             flush=True,
         )
         return False, result.stderr[-1500:]
+    segment_duration = _ffprobe_duration(segment_path)
+    if segment_duration <= 0:
+        return False, "Could not determine video segment duration for R3 audio looping."
+    audio_looped = os.path.join(tmpdir, f"r3_looped_{Path(segment_path).stem}.wav")
+    # Native R3 changes the audio duration when --tempo is used. Normalize it
+    # to the already-rendered video segment: loop short output, trim long
+    # output, and reset timestamps so concat receives aligned A/V segments.
+    ok, err = _run_ffmpeg_raw([
+        "ffmpeg", "-y",
+        "-stream_loop", "-1", "-i", audio_out,
+        "-t", f"{segment_duration:.6f}",
+        "-af", "asetpts=PTS-STARTPTS",
+        "-c:a", "pcm_s16le",
+        audio_looped,
+    ], timeout=timeout)
+    if not ok:
+        return False, f"R3 tempo audio loop/trim failed: {err}"
     remux = segment_path + ".r3.avi"
     ok, err = _run_ffmpeg_raw([
-        "ffmpeg", "-y", "-i", segment_path, "-i", audio_out,
+        "ffmpeg", "-y", "-i", segment_path, "-i", audio_looped,
         "-map", "0:v", "-map", "1:a", "-c:v", "copy",
         "-c:a", "pcm_s16le", remux,
     ], timeout=timeout)
@@ -7063,7 +7081,7 @@ def _run_montage_segment(
         f"[preview1280-r3] completed native Rubber Band R3 "
         f"binary={r3_bin} segment={segment_name} "
         f"pitch={semitones:+.3f}st {mode} exit=0 "
-        f"installed_audio={final_audio}",
+        f"audio_looped_to={segment_duration:.6f}s installed_audio={final_audio}",
         flush=True,
     )
     return True, ""
