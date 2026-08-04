@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Made pipe `ytpmvscan` start its pitch montage immediately at 0 and preserve its full generated length for `vidlen`, without the 2.09375-second offset.
 - 2026-08-04: [Python] Made YTPMV's 2.09375-second pre-pitch skip explicit with FFmpeg input seeking before `-i`, avoiding output-seek behavior that did not reliably advance the pitch source.
 - 2026-08-04: [Python] Corrected YTPMV timing so segment A starts exactly at `start` with a relative 0.09375s fade-in, while only the pitch source starts at `start + 2.09375s`.
 - 2026-08-04: [Python] Fixed pipe `ytpmvscan` to be non-customizable and always start at 0; standalone `th/ytpmvscan [start]` remains configurable.
@@ -4534,12 +4535,11 @@ def _apply_pipe_effects(
 
             # ytpmvscan — full YTPMV scan montage as a dedicated pipe step.
             # Pipe mode is intentionally fixed: no parameters/customization,
-            # and the renderer removes the 2s + 0.09375s lead-in before pitch
-            # montage from source start 0.
+            # starts at source time 0, and begins the pitch source immediately.
             if name in ("ytpmvscan", "ytpmv", "ytpmv_scan"):
                 if params:
                     return False, "ytpmvscan pipe effect takes no parameters; use `ytpmvscan`."
-                ok, err = _run_ytpmvscan(current, out, 0.0)
+                ok, err = _run_ytpmvscan(current, out, 0.0, pipe_mode=True)
                 if not ok:
                     return False, f"ytpmvscan pipe failed: {err}"
                 current = out
@@ -5737,6 +5737,15 @@ def _run_ihtx_tagscript_workflow(
         no_trim_enabled = no_trim.lower() in {"true", "yes", "+"}
         if no_trim.lower() not in {"true", "yes", "+", "false", "no", "-"}:
             return False, "no_trim must be one of: true, yes, +, false, no, -."
+        preserve_ytpmv_vidlen = (
+            duration_expr.strip().lower() == "vidlen"
+            and any(
+                name in ("ytpmvscan", "ytpmv", "ytpmv_scan")
+                for name, _params in effects
+            )
+        )
+        if preserve_ytpmv_vidlen:
+            no_trim_enabled = True
 
         base_cmd = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
         base_cmd += ["-i", input_path] if no_trim_enabled else ["-stream_loop", "-1", "-i", input_path]
@@ -9774,12 +9783,13 @@ def _run_ytpmvscan(
     input_path: str,
     output_path: str,
     start: float = 106.9,
+    pipe_mode: bool = False,
 ) -> tuple[bool, str]:
     """Render the YTPMV scan sequence with native Rubber Band R3 pitch passes."""
-    # Keep `start` as the beginning of the first source segment. Only the
-    # second source segment (the pitch montage) advances by 2.09375 seconds;
-    # the fade-in timing is relative to segment A and must not shift with it.
-    pitch_start = start + 2.09375
+    # Standalone mode keeps the original two-source timing. Pipe mode is
+    # intentionally different: it starts at 0 and sends the pitch source
+    # through immediately, without the 2.09375-second offset.
+    pitch_start = 0.0 if pipe_mode else start + 2.09375
     fade_start = 0.09375
     pitches = [
         -7.5, -2.5, -7.5, 0.5, -2.5, -0.5, -4.5, -9.5,
