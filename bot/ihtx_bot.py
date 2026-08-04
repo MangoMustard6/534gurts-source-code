@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Removed the obsolete three-output `th/convert_legacy` command and its `th/conv` alias; the hybrid converter is now the only canonical convert command.
 - 2026-08-04: [Python] Added the hybrid `/convert`/`th/convert` transcoder; renamed the previous three-output converter to `th/convert_legacy` so the requested command owns the canonical name.
 - 2026-08-04: [Python] Switched standalone `th/ytpmvscan` back to FFmpeg Rubber Band so standalone and pipe YTPMV use the same pitch engine.
 - 2026-08-04: [Python] Restored standalone `th/ytpmvscan` to native Rubber Band R3 pitch processing while keeping pipe `ytpmvscan` on FFmpeg Rubber Band.
@@ -8076,6 +8077,10 @@ async def on_ready():
     # Load hybrid media conversion cog (/convert and th/convert).
     if "Convert" not in bot.cogs:
         try:
+            # Retire the old three-output prefix converter and its alias. The
+            # ConvertCog owns the canonical `convert` command now.
+            bot.remove_command("convert_legacy")
+            bot.remove_command("conv")
             from bot.convert_cog import setup as _convert_setup
             await _convert_setup(bot)
             print("ConvertCog loaded.")
