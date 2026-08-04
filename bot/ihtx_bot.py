@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Added `ytpmvscan` as a dedicated IHTX pipe effect; its pitch montage now removes the combined 2.09375-second lead-in before extracting the pitch source.
 - 2026-08-04: [Python] Replaced vague video-processing time notices with live operation/status text naming the active FFmpeg, native R3, SoX, concat, or preset processing stage.
 - 2026-08-04: [Python] Fixed YTPMV scan segment preservation by using the FFmpeg concat demuxer instead of concat protocol and validating all 15 native-R3 pitch segments, including the final -3.5 semitone segment.
 - 2026-08-04: [Python] Removed the extra YTPMV FFmpeg echo; the scan retains volume=4 on both initial source segments and the existing SoX reverb pass.
@@ -2897,6 +2898,7 @@ PIPE_EFFECT_NAMES = {
     "swirl",
     "sierpinskiransomware", "srw",
     "preview1280", "p1280", "scale1280",
+    "ytpmvscan", "ytpmv", "ytpmv_scan",
     "oppositep1280", "op1280",
     "earthquake", "nbfx",
     "ssmp", "soundstretchmultipitch",
@@ -4524,6 +4526,19 @@ def _apply_pipe_effects(
                 )
                 if not ok:
                     return False, f"oppositep1280 pipe failed: {err}"
+                current = out
+                continue
+
+            # ytpmvscan — full YTPMV scan montage as a dedicated pipe step.
+            # The optional first parameter is the source start time. The
+            # renderer removes the 2s + 0.09375s lead-in before pitch montage.
+            if name in ("ytpmvscan", "ytpmv", "ytpmv_scan"):
+                _ytpmv_start = _pfloat(params, 0, 106.9)
+                if not math.isfinite(_ytpmv_start) or _ytpmv_start < 0:
+                    return False, "ytpmvscan pipe start must be a non-negative number."
+                ok, err = _run_ytpmvscan(current, out, _ytpmv_start)
+                if not ok:
+                    return False, f"ytpmvscan pipe failed: {err}"
                 current = out
                 continue
 
@@ -9758,7 +9773,9 @@ def _run_ytpmvscan(
     start: float = 106.9,
 ) -> tuple[bool, str]:
     """Render the YTPMV scan sequence with native Rubber Band R3 pitch passes."""
-    start2 = start + 2.0
+    # The pitch montage begins after the original 2-second source offset plus
+    # the 0.09375-second scan alignment offset.
+    pitch_start = start + 2.09375
     start3 = start + 0.09375
     pitches = [
         -7.5, -2.5, -7.5, 0.5, -2.5, -0.5, -4.5, -9.5,
@@ -9783,7 +9800,7 @@ def _run_ytpmvscan(
         ok, err = run([
             "-stream_loop", "-1", "-i", input_path,
             "-vf", "scale=640:360,setsar=1:1,fps=30",
-            "-af", "volume=4", "-ss", f"{start2:.4f}", "-t", "2",
+            "-af", "volume=4", "-ss", f"{pitch_start:.4f}", "-t", "2",
             "-c:v", "ffv1", "-c:a", "pcm_s16le", p("b.avi"),
         ])
         if not ok:
@@ -13765,7 +13782,7 @@ _HELP_ENTRIES: list[dict] = [
     {
         "cat": "fun",
         "name": "th/ytpmvscan [start]  (aliases: ytpmv, ytpmv_scan)",
-        "value": "YTPMV scan sequence using native Rubber Band R3 for all 15 pitch segments. Attach or reply to a video. Default start=106.9 seconds.",
+        "value": "YTPMV scan sequence using native Rubber Band R3 for all 15 pitch segments. Attach or reply to a video. Default start=106.9 seconds. Pipe form: `ytpmvscan=106.9`.",
     },
     {
         "cat": "fun",
@@ -16063,7 +16080,7 @@ Heavy (media processing):
 - th/trim [start] [end] — trim audio/video/GIF; defaults to `0` → media length
 - th/concatenate <url1> <url2> ... [format] / th/concat — join 2-10 attachments/URLs into one file
 - th/preview1280 [start] [dur] [true|false] — 12-segment TV-simulator montage; boolean selects native R3 or FFmpeg Rubber Band
-- th/ytpmvscan [start] — YTPMV scan sequence; all 15 pitch segments use native Rubber Band R3 (default start 106.9s)
+- th/ytpmvscan [start] — YTPMV scan sequence; all 15 pitch segments use native Rubber Band R3 (default start 106.9s). Pipe form: `ytpmvscan=106.9`
 - th/oppositep1280 [start] [dur] [true|false] — inverse TV-simulator montage; boolean selects native R3 or FFmpeg Rubber Band
 - th/invlum [n] — luma-inversion loop
 - th/lexg — re-apply last export effect chain to new media
