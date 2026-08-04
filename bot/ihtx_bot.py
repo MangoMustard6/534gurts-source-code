@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Made YTPMV's 2.09375-second pre-pitch skip explicit with FFmpeg input seeking before `-i`, avoiding output-seek behavior that did not reliably advance the pitch source.
 - 2026-08-04: [Python] Corrected YTPMV timing so segment A starts exactly at `start` with a relative 0.09375s fade-in, while only the pitch source starts at `start + 2.09375s`.
 - 2026-08-04: [Python] Fixed pipe `ytpmvscan` to be non-customizable and always start at 0; standalone `th/ytpmvscan [start]` remains configurable.
 - 2026-08-04: [Python] Added `ytpmvscan` as a dedicated IHTX pipe effect; its pitch montage now removes the combined 2.09375-second lead-in before extracting the pitch source.
@@ -9791,19 +9792,25 @@ def _run_ytpmvscan(
         def run(args: list[str], timeout: int = 240) -> tuple[bool, str]:
             return _run_ffmpeg_raw(["ffmpeg", "-y", *args], timeout=timeout)
 
+        print(
+            f"[ytpmvscan] source start={start:.4f}s; "
+            f"pitch source skips {pitch_start - start:.5f}s "
+            f"and begins at {pitch_start:.4f}s",
+            flush=True,
+        )
         ok, err = run([
-            "-stream_loop", "-1", "-i", input_path,
+            "-stream_loop", "-1", "-ss", f"{start:.4f}", "-i", input_path,
             "-vf", f"scale=640:360,setsar=1:1,fps=30,fade=in:d=0.3:st={fade_start:.4f}",
             "-af", f"volume=4,afade=in:d=0.3:st={fade_start:.4f}",
-            "-ss", f"{start:.4f}", "-t", "2",
+            "-t", "2",
             "-c:v", "ffv1", "-c:a", "pcm_s16le", p("a.avi"),
         ])
         if not ok:
             return False, f"ytpmvscan initial segment A failed: {err}"
         ok, err = run([
-            "-stream_loop", "-1", "-i", input_path,
+            "-stream_loop", "-1", "-ss", f"{pitch_start:.4f}", "-i", input_path,
             "-vf", "scale=640:360,setsar=1:1,fps=30",
-            "-af", "volume=4", "-ss", f"{pitch_start:.4f}", "-t", "2",
+            "-af", "volume=4", "-t", "2",
             "-c:v", "ffv1", "-c:a", "pcm_s16le", p("b.avi"),
         ])
         if not ok:
