@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Corrected YTPMV timing so segment A starts exactly at `start` with a relative 0.09375s fade-in, while only the pitch source starts at `start + 2.09375s`.
 - 2026-08-04: [Python] Fixed pipe `ytpmvscan` to be non-customizable and always start at 0; standalone `th/ytpmvscan [start]` remains configurable.
 - 2026-08-04: [Python] Added `ytpmvscan` as a dedicated IHTX pipe effect; its pitch montage now removes the combined 2.09375-second lead-in before extracting the pitch source.
 - 2026-08-04: [Python] Replaced vague video-processing time notices with live operation/status text naming the active FFmpeg, native R3, SoX, concat, or preset processing stage.
@@ -9774,10 +9775,11 @@ def _run_ytpmvscan(
     start: float = 106.9,
 ) -> tuple[bool, str]:
     """Render the YTPMV scan sequence with native Rubber Band R3 pitch passes."""
-    # The pitch montage begins after the original 2-second source offset plus
-    # the 0.09375-second scan alignment offset.
+    # Keep `start` as the beginning of the first source segment. Only the
+    # second source segment (the pitch montage) advances by 2.09375 seconds;
+    # the fade-in timing is relative to segment A and must not shift with it.
     pitch_start = start + 2.09375
-    start3 = start + 0.09375
+    fade_start = 0.09375
     pitches = [
         -7.5, -2.5, -7.5, 0.5, -2.5, -0.5, -4.5, -9.5,
         -5.5, -2.5, -5.5, -7.5, -3.5, -0.5, -3.5,
@@ -9791,8 +9793,8 @@ def _run_ytpmvscan(
 
         ok, err = run([
             "-stream_loop", "-1", "-i", input_path,
-            "-vf", f"scale=640:360,setsar=1:1,fps=30,fade=in:d=0.3:st={start3:.4f}",
-            "-af", f"volume=4,afade=in:d=0.3:st={start3:.4f}",
+            "-vf", f"scale=640:360,setsar=1:1,fps=30,fade=in:d=0.3:st={fade_start:.4f}",
+            "-af", f"volume=4,afade=in:d=0.3:st={fade_start:.4f}",
             "-ss", f"{start:.4f}", "-t", "2",
             "-c:v", "ffv1", "-c:a", "pcm_s16le", p("a.avi"),
         ])
