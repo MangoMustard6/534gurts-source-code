@@ -10,3 +10,5 @@ The preview1280 family keeps FFmpeg Rubber Band as the default pitch renderer. A
 **How to apply:** Keep the boolean optional after numeric duration; accept bare booleans, `r3=true`/`r3=false`, and R3 aliases across preview1280, oppositep1280, the fixed-size preview variant, and preview1280what. Pipe forms use a third positional parameter, e.g. `preview1280=1.85|0.85|true` and `op1280=1.85|0.85|true`. In preview1280what, its later boolean remains the legacy tempo toggle.
 
 Native R3 tempo output is normalized to each rendered video segment by looping short audio and trimming long audio before remux.
+
+The YTPMV scan command uses the same native R3 segment renderer for its fixed semitone sequence; classic FFmpeg rubberband is retained only as an internal pitch marker that the R3 renderer removes.
