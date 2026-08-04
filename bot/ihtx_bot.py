@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Added hybrid `th/voicify`/`/voicify`: converts uploaded audio to mono 48 kHz Opus Ogg and posts Discord's native voice-message payload with waveform metadata and flag 8192.
 - 2026-08-04: [Python] Removed the obsolete three-output `th/convert_legacy` command and its `th/conv` alias; the hybrid converter is now the only canonical convert command.
 - 2026-08-04: [Python] Added the hybrid `/convert`/`th/convert` transcoder; renamed the previous three-output converter to `th/convert_legacy` so the requested command owns the canonical name.
 - 2026-08-04: [Python] Switched standalone `th/ytpmvscan` back to FFmpeg Rubber Band so standalone and pipe YTPMV use the same pitch engine.
@@ -8086,6 +8087,13 @@ async def on_ready():
             print("ConvertCog loaded.")
         except Exception as _convert_exc:
             print(f"Warning: ConvertCog failed to load — {_convert_exc}")
+    if "Voicify" not in bot.cogs:
+        try:
+            from bot.voicify_cog import setup as _voicify_setup
+            await _voicify_setup(bot)
+            print("VoicifyCog loaded.")
+        except Exception as _voicify_exc:
+            print(f"Warning: VoicifyCog failed to load — {_voicify_exc}")
     # Auto-sync slash commands in a background task so exceptions surface in
     # the console and don't silently fail inside on_ready's exception handler.
     async def _auto_sync_slash():
