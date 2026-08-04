@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Fixed preview1280what parsing so the boolean after duration controls R3 while the later boolean controls legacy tempo, including grouped semicolon/pipe arguments.
 - 2026-08-03: [Python] Fixed preview1280 parsing where a valid numeric start value `0` was mistaken for the bare false R3 toggle, causing `r3=true` to be reported as a duplicate toggle.
 - 2026-08-03: [Python] Made preview1280 argument parsing tolerant of space-, pipe-, semicolon-, and colon-separated R3 forms, and included received arguments in usage errors.
 - 2026-08-03: [Python] Fixed preview1280 argument parsing to accept documented `r3=true`/`r3=false` key-value toggles alongside bare booleans and R3 aliases.
@@ -7140,6 +7141,27 @@ def _split_preview_r3_args(args: tuple[str, ...]) -> tuple[list[str], bool | Non
     return remaining, r3_state
 
 
+def _expand_preview_args(args: tuple[str, ...]) -> list[str]:
+    """Expand grouped preview arguments without assigning boolean meaning."""
+    expanded: list[str] = []
+    for arg in args:
+        if any(separator in arg for separator in ("|", ";")):
+            pieces = re.split(r"[|;]", arg)
+        elif re.match(r"^(?:r3|native-r3|rubberband-r3):", arg.strip().lower()):
+            pieces = [re.sub(
+                r"^((?:r3|native-r3|rubberband-r3)):",
+                r"\1=",
+                arg.strip(),
+                flags=re.IGNORECASE,
+            )]
+        elif any(char.isspace() for char in arg.strip()):
+            pieces = shlex.split(arg)
+        else:
+            pieces = [arg]
+        expanded.extend(piece.strip() for piece in pieces if piece.strip())
+    return expanded
+
+
 def _run_preview1280(
     input_path: str,
     output_path: str,
@@ -8903,7 +8925,7 @@ async def preview1280what_command(
     use_tempo = "false"
     use_r3 = False
     try:
-        raw_args = list(args)
+        raw_args = _expand_preview_args(tuple(args))
         r3_state: bool | None = None
         # For p1280what, the toggle immediately after duration is R3.
         # The later boolean remains the legacy tempo toggle.
@@ -8912,20 +8934,28 @@ async def preview1280what_command(
             if after_duration is not None:
                 r3_state = after_duration
                 raw_args.pop(2)
-        positional, other_r3_state = _split_preview_r3_args(tuple(raw_args))
-        if r3_state is not None and other_r3_state is not None:
+        # If an explicit R3 alias was placed elsewhere, remove that alias.
+        # Do not scan bare later booleans: the final boolean is tempo.
+        if r3_state is None:
+            for index, value in enumerate(raw_args):
+                if _preview_r3_flag(value) or re.match(
+                    r"^(?:r3|native-r3|rubberband-r3)=",
+                    value.strip().lower(),
+                ):
+                    r3_state = _preview_r3_toggle(value)
+                    raw_args.pop(index)
+                    break
+        use_r3 = r3_state is True
+        if len(raw_args) > 4:
             raise ValueError
-        use_r3 = (r3_state if r3_state is not None else other_r3_state) is True
-        if len(positional) > 4:
-            raise ValueError
-        if positional:
-            start = float(positional[0])
-        if len(positional) > 1:
-            dur = float(positional[1])
-        if len(positional) > 2:
-            target_len = float(positional[2])
-        if len(positional) > 3:
-            use_tempo = positional[3]
+        if raw_args:
+            start = float(raw_args[0])
+        if len(raw_args) > 1:
+            dur = float(raw_args[1])
+        if len(raw_args) > 2:
+            target_len = float(raw_args[2])
+        if len(raw_args) > 3:
+            use_tempo = raw_args[3]
     except ValueError:
         await ctx.reply("❌ Usage: `th/p1280what [start] [duration] [true|false] [target_len] [tempo=true|false]`.")
         return
