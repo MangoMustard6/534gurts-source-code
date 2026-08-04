@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-04: [Python] Added `t!` as an additional command prefix while keeping `.` disabled.
 - 2026-08-04: [Python] Removed `.` from command prefixes; commands now require the configured `th/` prefix.
 - 2026-08-04: [Python] Hardened `audio put replace` for MP3 replacement inputs with empty-download checks, full FFmpeg command diagnostics, and explicit Discord upload errors.
 - 2026-08-04: [Python] Hardened `audio put replace` output handling: validate non-empty MP4 output and require both video and replacement audio streams before upload.
@@ -802,7 +803,7 @@ if not isinstance(_BOT_PREFIX, str) or not _BOT_PREFIX:
 # Intents and bot
 intents = discord.Intents.default()
 intents.message_content = True
-_BOT_PREFIXES = list(dict.fromkeys([_BOT_PREFIX, "th/"]))
+_BOT_PREFIXES = list(dict.fromkeys([_BOT_PREFIX, "th/", "t!"]))
 bot = commands.Bot(command_prefix=_BOT_PREFIXES, intents=intents, help_command=None)
 
 
