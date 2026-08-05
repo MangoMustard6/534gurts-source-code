@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-05: [Python] Connected `/ihtxgen` pipe status to real workflow callbacks: intermediate-format check, duration check, output-format check, base preparation, export code passes, final concatenation, and output-ready.
 - 2026-08-05: [Python] Expanded pipe code-workflow status to show duration, trim behavior, intermediate format, final output format, export count, and progress bar instead of pipe-effect names.
 - 2026-08-05: [Python] Expanded non-pipe `/ihtxgen` processing status into a code-workflow display with stages, FFmpeg code path, media/output details, elapsed time, and activity bar; pipe export progress remains unchanged.
 - 2026-08-05: [Python] Replaced pipe-effect processing status in `/ihtxgen` with export-only progress: `Export 1/N...` through `Export N/N!` and a 20-segment progress bar.
@@ -5910,6 +5911,14 @@ def _run_ihtx_tagscript_workflow(
     if abs(exports) > MAX_REPETITIONS:
         exports = MAX_REPETITIONS if exports > 0 else -MAX_REPETITIONS
 
+    def _progress(completed: int, total: int, stage: str) -> None:
+        if progress_callback:
+            try:
+                progress_callback(completed, total, stage)
+            except TypeError:
+                # Preserve compatibility with older callback consumers.
+                progress_callback(completed, total)
+
     if not re.fullmatch(r"[A-Za-z0-9]+", export_format):
         return False, "Export file format must be alphanumeric (example: mp4)."
     output_format = output_format.lstrip(".").lower()
@@ -5920,10 +5929,12 @@ def _run_ihtx_tagscript_workflow(
             + "."
         )
 
+    _progress(0, abs(exports), "Checking intermediate format")
     effects = _parse_pipe_effects(pipe_effects_str)
     if not effects:
         return False, "No pipe effects provided."
 
+    _progress(0, abs(exports), "Checking input duration")
     vidlen = _ffprobe_duration(input_path)
     if vidlen <= 0:
         return False, "Could not read input duration."
@@ -5931,6 +5942,7 @@ def _run_ihtx_tagscript_workflow(
     if not dur_ok:
         return False, dur_or_error
     dur = dur_or_error
+    _progress(0, abs(exports), "Checking output format")
     # A pitchtransition filter needs its Rubber Band tail to finish emitting
     # the final automation command. Keep that tail through every export pass.
     pitchtransition_tail = 0.08 if any(
@@ -5980,6 +5992,7 @@ def _run_ihtx_tagscript_workflow(
         if not no_trim_enabled:
             base_cmd += ["-t", effective_duration]
         base_cmd += ["-movflags", "+faststart", base]
+        _progress(0, total_exports, "Preparing base export")
         ok, err = _run_ffmpeg_raw(base_cmd, timeout=180)
         if not ok:
             return False, f"Base render failed: {err}"
@@ -5988,6 +6001,7 @@ def _run_ihtx_tagscript_workflow(
         _per_rep_timeout = 180 + (total_exports * 6)
         previous = base
         for i in range(1, total_exports + 2):
+            _progress(min(i - 1, total_exports), total_exports, f"Running export code {i}/{total_exports}")
             current = os.path.join(tmpdir, f"{i}.{export_format}")
             ok, err = _apply_pipe_effects(previous, current, effects, step_timeout=_per_rep_timeout)
             if not ok:
@@ -6027,8 +6041,8 @@ def _run_ihtx_tagscript_workflow(
             if probe == "0":
                 return False, f"Export {i} has no video frames (likely a filter or codec issue with format '{export_format}')."
             previous = current
-            if progress_callback and i <= total_exports:
-                progress_callback(i, total_exports)
+            if i <= total_exports:
+                _progress(i, total_exports, f"Export {i}/{total_exports} complete")
 
         concat_list = os.path.join(tmpdir, "concat.txt")
         sequence = range(total_exports, 0, -1) if exports < 0 else range(1, total_exports + 1)
@@ -6044,12 +6058,12 @@ def _run_ihtx_tagscript_workflow(
         ]
         concat_cmd.extend(_concat_codec_args(extension))
         concat_cmd.extend(["-movflags", "+faststart", final_output])
+        _progress(total_exports, total_exports, "Concatenating final output")
         ok, err = _run_ffmpeg_raw(concat_cmd, timeout=300)
         if not ok:
             return False, f"Concat failed: {err}"
         shutil.copyfile(final_output, output_path)
-        if progress_callback:
-            progress_callback(total_exports, total_exports)
+        _progress(total_exports, total_exports, "Final output ready")
         if dual_render:
             _mp4_sidecar = output_path + ".render.mp4"
             _run_ffmpeg_raw([
