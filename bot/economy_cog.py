@@ -428,7 +428,7 @@ class EconomyCog(commands.Cog, name="Economy"):
         duration="Seconds or awk expr for pipe mode, e.g. 5 or vidlen/2 (default: full video).",
         no_trim="Skip trim in pipe mode.",
         export_fmt="Output container for pipe mode: mp4 (default), mkv, mov, avi.",
-        output_fmt="Required final output container after the intermediate format, e.g. mp4 then mov.",
+        output_fmt="Optional final output container after the intermediate format; defaults to export_fmt.",
     )
     @app_commands.autocomplete(effect=_preset_autocomplete)
     async def ihtxgen(
@@ -445,13 +445,6 @@ class EconomyCog(commands.Cog, name="Economy"):
         output_fmt: str = "",
     ) -> None:
         use_pipe = bool(pipe_effects and pipe_effects.strip())
-        if use_pipe and not output_fmt.strip():
-            await ctx.reply(
-                "❌ `output_fmt` is required in pipe mode and must be one of: "
-                "`mp4`, `mov`, `mkv`, `mxf`, or `avi`.",
-                ephemeral=True,
-            )
-            return
 
         try:
             from bot.ihtx_bot import (
@@ -527,6 +520,11 @@ class EconomyCog(commands.Cog, name="Economy"):
                         ephemeral=True,
                     )
                     return
+
+        # A missing final format means that pipe mode should keep the
+        # intermediate export container rather than perform a conversion pass.
+        if use_pipe and not output_fmt.strip():
+            output_fmt = export_fmt or "mov"
 
         # Resolve media: slash attachment > url param > message attachment > reply attachment
         media_url: Optional[str] = None
