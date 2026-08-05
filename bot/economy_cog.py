@@ -687,9 +687,14 @@ class EconomyCog(commands.Cog, name="Economy"):
             _halfway_evt = asyncio.Event()
             _export_completed = 0
             _export_total = max(abs(repetitions), 1)
-            _status_tick = 0
+            _workflow_stage = "Starting IHTX code workflow"
 
-            def _export_status(completed: int, total: int, terminal: bool = False) -> str:
+            def _export_status(
+                completed: int,
+                total: int,
+                terminal: bool = False,
+                stage: str = "",
+            ) -> str:
                 total = max(total, 1)
                 completed = max(0, min(completed, total))
                 width = 20
@@ -700,6 +705,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                 duration_label = duration.strip() or "vidlen"
                 return (
                     f"🧩 **Code workflow**\n"
+                    f"**Step:** `{stage or 'Running IHTX workflow'}`\n"
                     f"**Duration:** `{duration_label}` · **Trim:** `{trim_label}`\n"
                     f"**Intermediate:** `{export_fmt.lstrip('.') or 'mov'}` · "
                     f"**Final:** `{output_fmt.lstrip('.')}`\n"
@@ -707,14 +713,17 @@ class EconomyCog(commands.Cog, name="Economy"):
                     f"`{bar}`"
                 )
 
-            def _on_progress(completed: int, total: int) -> None:
+            def _on_progress(completed: int, total: int, stage: str = "") -> None:
+                nonlocal _workflow_stage
                 nonlocal _export_completed, _export_total
                 _export_completed = max(0, completed)
                 _export_total = max(1, total)
+                if stage:
+                    _workflow_stage = stage
                 if total > 0 and completed / total >= 0.5:
                     loop.call_soon_threadsafe(_halfway_evt.set)
                 if use_pipe:
-                    status = _export_status(completed, total)
+                    status = _export_status(completed, total, stage=stage)
                     loop.call_soon_threadsafe(
                         lambda: asyncio.create_task(_update(status))
                     )
@@ -726,7 +735,6 @@ class EconomyCog(commands.Cog, name="Economy"):
                 )
 
             async def _tick() -> None:
-                nonlocal _status_tick
                 while not _done_evt.is_set():
                     elapsed = int(time.monotonic() - _start_time)
                     if use_pipe:
@@ -734,30 +742,15 @@ class EconomyCog(commands.Cog, name="Economy"):
                             _export_completed,
                             _export_total,
                             _export_completed >= _export_total,
+                            _workflow_stage,
                         )
                     else:
-                        _status_tick += 1
-                        workflow_stages = (
-                            "Preparing code workflow",
-                            "Building FFmpeg filter graph",
-                            "Applying video filter",
-                            "Encoding processed output",
-                        )
-                        stage = workflow_stages[(_status_tick - 1) % len(workflow_stages)]
-                        activity_width = 18
-                        activity_pos = (_status_tick - 1) % (activity_width + 1)
-                        activity_bar = (
-                            "·" * activity_pos
-                            + "◆"
-                            + "·" * (activity_width - activity_pos)
-                        )
                         media_kind = "video" if is_video else "audio"
                         _phase = (
                             f"🧩 **Code workflow**\n"
-                            f"**Stage:** {stage}\n"
+                            f"**Stage:** Running `{effect}` code\n"
                             f"**Code path:** `FFmpeg → {effect}`\n"
                             f"**Media:** `{media_kind}` · **Output:** `{out_final_ext.lstrip('.')}`\n"
-                            f"`{activity_bar}`\n"
                             f"⏱️ **{elapsed}s elapsed**"
                         )
                     await _update(_phase)
