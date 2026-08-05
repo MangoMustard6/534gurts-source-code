@@ -681,14 +681,33 @@ class EconomyCog(commands.Cog, name="Economy"):
                 await _update(f"❌ Download failed: `{exc}`", 0xED4245)
                 return
 
-            # Process — with a background ticker showing elapsed seconds
+            # Process — pipe mode reports export passes, not individual effects.
             loop = asyncio.get_event_loop()
             _done_evt = asyncio.Event()
             _halfway_evt = asyncio.Event()
+            _export_completed = 0
+            _export_total = max(abs(repetitions), 1)
+
+            def _export_status(completed: int, total: int, terminal: bool = False) -> str:
+                total = max(total, 1)
+                completed = max(0, min(completed, total))
+                width = 20
+                filled = round(width * completed / total)
+                bar = "█" * filled + "░" * (width - filled)
+                suffix = "!" if terminal or completed >= total else "..."
+                return f"🔧 Export {completed}/{total}{suffix}\n`{bar}`"
 
             def _on_progress(completed: int, total: int) -> None:
+                nonlocal _export_completed, _export_total
+                _export_completed = max(0, completed)
+                _export_total = max(1, total)
                 if total > 0 and completed / total >= 0.5:
                     loop.call_soon_threadsafe(_halfway_evt.set)
+                if use_pipe:
+                    status = _export_status(completed, total)
+                    loop.call_soon_threadsafe(
+                        lambda: asyncio.create_task(_update(status))
+                    )
 
             async def _halfway_notice() -> None:
                 await _halfway_evt.wait()
@@ -700,10 +719,10 @@ class EconomyCog(commands.Cog, name="Economy"):
                 while not _done_evt.is_set():
                     elapsed = int(time.monotonic() - _start_time)
                     if use_pipe:
-                        _phase = (
-                            f"🔧 Executing pipe-processing code "
-                            f"(`{_pipe_effects_label(pipe_effects)}`)…\n"
-                            f"⏱️ **{elapsed}s elapsed**"
+                        _phase = _export_status(
+                            _export_completed,
+                            _export_total,
+                            _export_completed >= _export_total,
                         )
                     else:
                         _phase = (

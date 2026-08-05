@@ -23,3 +23,4 @@
 - [Audio put replace](audio-put-replace.md) — nested prefix parsing and typed slash registration share attachment, URL, and reply source resolution.
 - [Multiple prefix dispatch](multiple-prefix-dispatch.md) — if command_prefix accepts multiple prefixes, on_message gates must allow every prefix before process_commands.
 - [Tvsim generator mapping](tvsim-generator-mapping.md) — Python TVSIM now follows the supplied genTvSim eight-parameter filtergraph and maps one processed video plus source audio.
+- [Pipe export progress](pipe-export-progress.md) — pipe-mode UI reports export passes with a 20-block bar, not individual effect names.

@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-05: [Python] Replaced pipe-effect processing status in `/ihtxgen` with export-only progress: `Export 1/N...` through `Export N/N!` and a 20-segment progress bar.
 - 2026-08-05: [Python] Increased TVSIM displacement contrast strength to `(1-ls)*(2.366666+0.4)` to reduce fine line artifacts near line sync 0.9–1.
 - 2026-08-05: [Python] Switched TVSIM back to the bundled legacy displacement map for faster renders while retaining the revised genTvSim filtergraph and parameter order.
 - 2026-08-05: [Python] Updated TVSIM `cDi` to loop the supplied Project Name 5.mp4 source, convert it to a duration-bounded local FFV1 `tvsim.mov`, and use it in the replacement genTvSim filtergraph.
@@ -5980,8 +5981,6 @@ def _run_ihtx_tagscript_workflow(
         ok, err = _run_ffmpeg_raw(base_cmd, timeout=180)
         if not ok:
             return False, f"Base render failed: {err}"
-        if progress_callback:
-            progress_callback(1, total_exports + 2)
 
         # Per-rep timeout scaling: base 180s + 6s per rep (so 1000 reps gets ~6180s)
         _per_rep_timeout = 180 + (total_exports * 6)
@@ -6026,8 +6025,8 @@ def _run_ihtx_tagscript_workflow(
             if probe == "0":
                 return False, f"Export {i} has no video frames (likely a filter or codec issue with format '{export_format}')."
             previous = current
-            if progress_callback:
-                progress_callback(i + 1, total_exports + 2)
+            if progress_callback and i <= total_exports:
+                progress_callback(i, total_exports)
 
         concat_list = os.path.join(tmpdir, "concat.txt")
         sequence = range(total_exports, 0, -1) if exports < 0 else range(1, total_exports + 1)
@@ -6047,6 +6046,8 @@ def _run_ihtx_tagscript_workflow(
         if not ok:
             return False, f"Concat failed: {err}"
         shutil.copyfile(final_output, output_path)
+        if progress_callback:
+            progress_callback(total_exports, total_exports)
         if dual_render:
             _mp4_sidecar = output_path + ".render.mp4"
             _run_ffmpeg_raw([
