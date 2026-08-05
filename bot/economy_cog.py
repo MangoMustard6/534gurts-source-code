@@ -687,6 +687,7 @@ class EconomyCog(commands.Cog, name="Economy"):
             _halfway_evt = asyncio.Event()
             _export_completed = 0
             _export_total = max(abs(repetitions), 1)
+            _status_tick = 0
 
             def _export_status(completed: int, total: int, terminal: bool = False) -> str:
                 total = max(total, 1)
@@ -695,7 +696,16 @@ class EconomyCog(commands.Cog, name="Economy"):
                 filled = round(width * completed / total)
                 bar = "█" * filled + "░" * (width - filled)
                 suffix = "!" if terminal or completed >= total else "..."
-                return f"🔧 Export {completed}/{total}{suffix}\n`{bar}`"
+                trim_label = "preserve full length" if no_trim else "trim to duration"
+                duration_label = duration.strip() or "vidlen"
+                return (
+                    f"🧩 **Code workflow**\n"
+                    f"**Duration:** `{duration_label}` · **Trim:** `{trim_label}`\n"
+                    f"**Intermediate:** `{export_fmt.lstrip('.') or 'mov'}` · "
+                    f"**Final:** `{output_fmt.lstrip('.')}`\n"
+                    f"**Exports:** {completed}/{total}{suffix}\n"
+                    f"`{bar}`"
+                )
 
             def _on_progress(completed: int, total: int) -> None:
                 nonlocal _export_completed, _export_total
@@ -716,6 +726,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                 )
 
             async def _tick() -> None:
+                nonlocal _status_tick
                 while not _done_evt.is_set():
                     elapsed = int(time.monotonic() - _start_time)
                     if use_pipe:
@@ -725,8 +736,28 @@ class EconomyCog(commands.Cog, name="Economy"):
                             _export_completed >= _export_total,
                         )
                     else:
+                        _status_tick += 1
+                        workflow_stages = (
+                            "Preparing code workflow",
+                            "Building FFmpeg filter graph",
+                            "Applying video filter",
+                            "Encoding processed output",
+                        )
+                        stage = workflow_stages[(_status_tick - 1) % len(workflow_stages)]
+                        activity_width = 18
+                        activity_pos = (_status_tick - 1) % (activity_width + 1)
+                        activity_bar = (
+                            "·" * activity_pos
+                            + "◆"
+                            + "·" * (activity_width - activity_pos)
+                        )
+                        media_kind = "video" if is_video else "audio"
                         _phase = (
-                            f"🔧 Executing FFmpeg `{effect}` video filter code…\n"
+                            f"🧩 **Code workflow**\n"
+                            f"**Stage:** {stage}\n"
+                            f"**Code path:** `FFmpeg → {effect}`\n"
+                            f"**Media:** `{media_kind}` · **Output:** `{out_final_ext.lstrip('.')}`\n"
+                            f"`{activity_bar}`\n"
                             f"⏱️ **{elapsed}s elapsed**"
                         )
                     await _update(_phase)
