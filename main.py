@@ -49,6 +49,14 @@ def main():
         if code == 0:
             print("[launcher] Bot exited cleanly.", flush=True)
             break
+        if code == 75:
+            print(
+                "[launcher] Discord rejected login with HTTP 429. "
+                "Stopping; start this workflow manually after the block clears.",
+                flush=True,
+                file=sys.stderr,
+            )
+            break
 
         print(
             f"[launcher] Bot exited with code {code}. "
