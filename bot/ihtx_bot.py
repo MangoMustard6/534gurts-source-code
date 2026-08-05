@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-05: [Python] Switched TVSIM back to the bundled legacy displacement map for faster renders while retaining the revised genTvSim filtergraph and parameter order.
 - 2026-08-05: [Python] Updated TVSIM `cDi` to loop the supplied Project Name 5.mp4 source, convert it to a duration-bounded local FFV1 `tvsim.mov`, and use it in the replacement genTvSim filtergraph.
 - 2026-08-05: [Python] Replaced the TVSIM renderer with the supplied `genTvSim` filtergraph and parameter order `ls,dz,vs,ph,it,sp,ag,st`, preserving audio and explicitly mapping one processed video stream.
 - 2026-08-04: [Python] Added `t!` as an additional command prefix while keeping `.` disabled.
@@ -1601,7 +1602,6 @@ def _run_huehsv(
 
 _TVSIM_DISPLACE_MAP = Path(__file__).parent / "displacemaps" / "tvsimulator.mov"
 _TVSIM_DISPLACE_MAP_URL  = "https://file.garden/aTXso15ukD3mnuPI/tv_sim_displacement_map.mov"
-_TVSIM_PROJECT_DISPLACE_URL = "https://file.garden/aX9mS1junENdw7e-/Project%20Name%205.mp4"
 _TVSIM_APERTURE_GRILL_URL = "https://file.garden/aTXso15ukD3mnuPI/tv_simulator_aperture_grill.png"
 _TVSIM_STATIC_URL        = "https://file.garden/aTXso15ukD3mnuPI/tv_simulator_static.mp4"
 
@@ -1843,21 +1843,6 @@ def _run_tvsim(
             raise RuntimeError(f"could not download TVSIM asset: {url}")
         return path
 
-    def _make_project_displacement(workdir: str) -> str:
-        path = os.path.join(workdir, "tvsim.mov")
-        ok, err = _run_ffmpeg_raw(
-            [
-                "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
-                "-stream_loop", "-1", "-i", _TVSIM_PROJECT_DISPLACE_URL,
-                "-t", f"{duration:.6f}",
-                "-an", "-c:v", "ffv1", "-preset", "ultrafast", path,
-            ],
-            timeout=180,
-        )
-        if not ok or not os.path.exists(path) or os.path.getsize(path) == 0:
-            raise RuntimeError(f"could not prepare TVSIM displacement source: {err}")
-        return path
-
     scroll = (
         f",scroll=v='lerp(8/{fr},0,({vs})^(1/3))'" if vs != 1 else ""
     )
@@ -1907,9 +1892,12 @@ def _run_tvsim(
         with tempfile.TemporaryDirectory(prefix="tvsim_assets_") as workdir:
             grill = _download_asset(_TVSIM_APERTURE_GRILL_URL, "ag.png", workdir) if ag else ""
             static = _download_asset(_TVSIM_STATIC_URL, "st.mp4", workdir) if st else ""
-            # The replacement generator uses Project Name 5.mp4 as cDi,
-            # looping it and converting to a local FFV1 movie for the filtergraph.
-            displacement = _make_project_displacement(workdir)
+            # Use the bundled legacy displacement map for faster local renders.
+            displacement = (
+                str(_TVSIM_DISPLACE_MAP)
+                if _TVSIM_DISPLACE_MAP.exists()
+                else _download_asset(_TVSIM_DISPLACE_MAP_URL, "ts.mov", workdir)
+            )
             c_ag = f"movie={_filter_path(grill)}"
             c_st = f"movie={_filter_path(static)}"
             c_di = f"movie={_filter_path(displacement)}"
