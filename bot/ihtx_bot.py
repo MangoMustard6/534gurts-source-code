@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-05: [Python] Replaced the TVSIM renderer with the supplied `genTvSim` filtergraph and parameter order `ls,dz,vs,ph,it,sp,ag,st`, preserving audio and explicitly mapping one processed video stream.
 - 2026-08-04: [Python] Added `t!` as an additional command prefix while keeping `.` disabled.
 - 2026-08-04: [Python] Removed `.` from command prefixes; commands now require the configured `th/` prefix.
 - 2026-08-04: [Python] Hardened `audio put replace` for MP3 replacement inputs with empty-download checks, full FFmpeg command diagnostics, and explicit Discord upload errors.
@@ -1603,7 +1604,7 @@ _TVSIM_APERTURE_GRILL_URL = "https://file.garden/aTXso15ukD3mnuPI/tv_simulator_a
 _TVSIM_STATIC_URL        = "https://file.garden/aTXso15ukD3mnuPI/tv_simulator_static.mp4"
 
 
-def _run_tvsim(
+def _run_tvsim_legacy(
     input_path: str,
     output_path: str,
     curvature: float = 0.0,       # arg 0: displacement strength (1=flat, 0=max curve)
@@ -1797,6 +1798,205 @@ def _run_tvsim(
     ]
 
     return _run_ffmpeg_raw(cmd, timeout=600)
+
+
+def _run_tvsim(
+    input_path: str,
+    output_path: str,
+    ls: float = 0.0,
+    dz: float = 1.0,
+    vs: float = 1.0,
+    ph: float = 0.0,
+    it: float = 0.0,
+    sp: float = 0.0,
+    ag: float = 0.0,
+    st: float = 0.0,
+    _in_split: bool = False,
+) -> tuple[bool, str]:
+    """Run the replacement TVSIM generator ported from the TypeScript bot.
+
+    Parameter order intentionally matches ``genTvSim``:
+    line_sync, detail_zoom, vertical_sync, phosphorescence, interlacing,
+    scan_phasing, aperture_grill, static.
+    """
+    if ls < 0 or ls > 1:
+        return False, "line_sync must be between 0 and 1"
+    if dz == 0:
+        return False, "detail_zoom must not be zero"
+
+    info = _ffprobe_video_info(input_path)
+    w = info.get("width") or 854
+    h = info.get("height") or 480
+    fr = info.get("r_frame_rate") or "30"
+    duration = _ffprobe_duration(input_path)
+    if duration <= 0:
+        return False, "could not determine input duration"
+
+    def _filter_path(path: str) -> str:
+        return str(path).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+
+    def _download_asset(url: str, suffix: str, workdir: str) -> str:
+        path = os.path.join(workdir, suffix)
+        if not _dl_file(url, path, timeout=60)[0]:
+            raise RuntimeError(f"could not download TVSIM asset: {url}")
+        return path
+
+    scroll = (
+        f",scroll=v='lerp(8/{fr},0,({vs})^(1/3))'" if vs != 1 else ""
+    )
+    lut = (
+        f",lutrgb='lerp(val,val*1.15,{ph})'"
+        f":'lerp(val,val*1.15+48,{ph})'"
+        f":'lerp(val,val*1.15+64,{ph})'"
+        if ph else ""
+    )
+    inter = (
+        f",geq=r='p(X,Y)*lerp(1,(sin(0.5+(Y/H-0.5)*(300/{dz}))+1)/2,{it})'"
+        f":g='p(X,Y)*lerp(1,(sin(0.5+(Y/H-0.5)*(300/{dz}))+1)/2,{it})'"
+        f":b='p(X,Y)*lerp(1,(sin(0.5+(Y/H-0.5)*(300/{dz}))+1)/2,{it})'"
+        if it else ""
+    )
+    s_base = f"-sin(0.5+(Y/H-0.5)*(5/{dz})-mod(T*16.666666*{sp},4.833333))*128-64"
+    scan1 = (
+        f",geq=r='min(p(X,Y)+max({s_base},0),255)'"
+        f":g='min(p(X,Y)+max({s_base},0),255)'"
+        f":b='min(p(X,Y)+max({s_base},0),255)'"
+        if sp else ""
+    )
+    s_base2 = f"cos(Y/H*(5/{dz})-mod(T*16.666666*{sp},5))*128-64"
+    scan2 = (
+        f",geq=r='min(p(X,Y)+max({s_base2},0),255)'"
+        f":g='min(p(X,Y)+max({s_base2},0),255)'"
+        f":b='min(p(X,Y)+max({s_base2},0),255)'"
+        if sp else ""
+    )
+    yuv1 = (
+        f"format=yuv444p,geq='p(mod((W/2)+(X-(W/2))/{dz},W),"
+        f"mod((H/2)+(Y-(H/2))/{dz},H))',"
+        if dz != 1 else ""
+    )
+    yuv2 = (
+        f"format=yuv444p,geq='mod(p((W/2)+(X-(W/2))/{dz},W),"
+        f"mod((H/2)+(Y-(H/2))/{dz},H))',"
+        if dz != 1 else ""
+    )
+    yuv_d = (
+        f"format=yuv444p,geq='p(mod(X,W),mod(Y/{dz},H))',"
+        if dz != 1 else ""
+    )
+    f_inline = f"{scroll}{lut}{inter}"
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="tvsim_assets_") as workdir:
+            grill = _download_asset(_TVSIM_APERTURE_GRILL_URL, "ag.png", workdir) if ag else ""
+            static = _download_asset(_TVSIM_STATIC_URL, "st.mp4", workdir) if st else ""
+            displacement = str(_TVSIM_DISPLACE_MAP) if _TVSIM_DISPLACE_MAP.exists() else (
+                _download_asset(_TVSIM_DISPLACE_MAP_URL, "ts.mov", workdir)
+            )
+            c_ag = f"movie={_filter_path(grill)}"
+            c_st = f"movie={_filter_path(static)}"
+            c_di = f"movie={_filter_path(displacement)}"
+            d = f"{duration:.6f}"
+            if st:
+                if ag:
+                    vf = (
+                        f"{c_ag}[ag];{c_st}:loop=(2^31)-1,trim=duration={d}[s];"
+                        f"[0]format=gbrp{f_inline}{scan1}[v1];"
+                        f"[ag]{yuv1}scale={w}:{h},format=gbrp[v2];"
+                        f"[v1][v2]blend=all_mode=multiply:all_opacity={ag},"
+                        f"huesaturation=0:0:{ag}/2:strength=100,format=gbrp[t];"
+                        f"[s]{yuv1}scale={w}:{h},format=gbrp[v3];"
+                        f"[t][v3]blend=all_mode=overlay:all_opacity=1:shortest=1"
+                        if ls == 1 else
+                        f"{c_di}:loop=(2^31)-1,trim=duration={d}[d];{c_ag}[ag];"
+                        f"{c_st}:loop=(2^31)-1,trim=duration={d}[s];"
+                        f"[0]scale=854:854,format=bgr32[00];"
+                        f"[d]{yuv_d}scale=854:854,eq=contrast='(1-{ls})*2.366666':"
+                        f"eval=frame,format=bgr32,hue=b=-0.033[x];"
+                        f"color=s=854x854:c=#808080,format=bgr32[y];"
+                        f"[00][x][y]displace=edge=wrap,scale={w}:{h},setsar=1,"
+                        f"format=gbrp{f_inline}{scan1}[v1];"
+                        f"[ag]{yuv2}scale={w}:{h},format=gbrp[v2];"
+                        f"[v1][v2]blend=all_mode=multiply:all_opacity={ag},"
+                        f"huesaturation=0:0:{ag}/2:strength=100[t];"
+                        f"[s]{yuv1}scale={w}:{h},format=gbrp[v3];"
+                        f"[t][v3]blend=all_mode=overlay:all_opacity=1:shortest=1"
+                    )
+                else:
+                    vf = (
+                        f"{c_st}:loop=(2^31)-1,trim=duration={d}[s];"
+                        f"[0]format=gbrp{f_inline}{scan1}[v1];"
+                        f"[s]{yuv1}scale={w}:{h},format=gbrp[v2];"
+                        f"[v1][v2]blend=all_mode=overlay:all_opacity=1:shortest=1"
+                        if ls == 1 else
+                        f"{c_di}:loop=(2^31)-1,trim=duration={d}[d];"
+                        f"{c_st}:loop=(2^31)-1,trim=duration={d}[s];"
+                        f"[0]scale=854:854,format=bgr32[00];"
+                        f"[d]{yuv_d}scale=854:854,eq=contrast='(1-{ls})*2.366666':"
+                        f"eval=frame,format=bgr32,hue=b=-0.033[x];"
+                        f"color=s=854x854:c=#808080,format=bgr32[y];"
+                        f"[00][x][y]displace=edge=wrap,scale={w}:{h},setsar=1,"
+                        f"format=yuv444p{f_inline}{scan2},format=gbrp[t];"
+                        f"[s]{yuv1}scale={w}:{h},format=gbrp[v3];"
+                        f"[t][v3]blend=all_mode=overlay:all_opacity=1:shortest=1"
+                    )
+            else:
+                if ag:
+                    vf = (
+                        f"{c_ag}[ag];[0]format=gbrp{f_inline}{scan1}[v1];"
+                        f"[ag]{yuv1}scale={w}:{h},format=gbrp[v2];"
+                        f"[v1][v2]blend=all_mode=multiply:all_opacity={ag},"
+                        f"huesaturation=0:0:{ag}/2:strength=100"
+                        if ls == 1 else
+                        f"{c_di}:loop=(2^31)-1,trim=duration={d}[d];{c_ag}[ag];"
+                        f"[0]scale=854:854,format=bgr32[00];"
+                        f"[d]{yuv_d}scale=854:854,eq=contrast='(1-{ls})*2.366666':"
+                        f"eval=frame,format=bgr32,hue=b=-0.033[x];"
+                        f"color=s=854x854:c=#808080,format=bgr32[y];"
+                        f"[00][x][y]displace=edge=wrap,scale={w}:{h},setsar=1,"
+                        f"format=gbrp{f_inline}{scan1}[v1];"
+                        f"[ag]{yuv2}scale={w}:{h},format=gbrp[v2];"
+                        f"[v1][v2]blend=all_mode=multiply:all_opacity={ag},"
+                        f"huesaturation=0:0:{ag}/2:strength=100"
+                    )
+                else:
+                    vf = (
+                        f"{f_inline}{scan1}".lstrip(",") or "null"
+                        if ls == 1 else
+                        f"{c_di}:loop=(2^31)-1,trim=duration={d}[d];"
+                        f"[0]scale=854:854,format=bgr32[00];"
+                        f"[d]{yuv_d}scale=854:854,eq=contrast='(1-{ls})*2.366666':"
+                        f"eval=frame,format=bgr32,hue=b=-0.033[x];"
+                        f"color=s=854x854:c=#808080,format=bgr32[y];"
+                        f"[00][x][y]displace=edge=wrap,scale={w}:{h},setsar=1,"
+                        f"format=yuv444p{f_inline}{scan2}"
+                    )
+
+            complex_filter = any(token in vf for token in ("[", "]", ";", "movie="))
+            if complex_filter:
+                # The supplied generator leaves the final video pad unlabeled.
+                # Label it explicitly so FFmpeg cannot auto-map the untouched
+                # input video alongside the processed stream.
+                vf = f"{vf}[v]"
+                cmd = [
+                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                    "-i", input_path, "-filter_complex", vf,
+                    "-map", "[v]",
+                    "-map", "0:a?", "-pix_fmt", "yuv420p",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-c:a", "aac", "-t", d, output_path,
+                ]
+            else:
+                cmd = [
+                    "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+                    "-i", input_path, "-vf", vf, "-map", "0:v:0",
+                    "-map", "0:a?", "-pix_fmt", "yuv420p",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                    "-c:a", "aac", "-t", d, output_path,
+                ]
+            return _run_ffmpeg_raw(cmd, timeout=600)
+    except Exception as exc:
+        return False, str(exc)
 
 
 # ---------- Folk Valley ----------
@@ -4675,14 +4875,14 @@ def _apply_pipe_effects(
             if name in ("tvsim", "tv"):
                 ok, err = _run_tvsim(
                     current, out,
-                    curvature=_pfloat(params, 0, 0.5),
-                    line_sync=_pfloat(params, 1, 1.0),
-                    detail_zoom=_pfloat(params, 2, 1.0),
-                    vertical_sync=_pfloat(params, 3, 0.0),
-                    phosphorescence=_pfloat(params, 4, 0.0),
-                    interlacing=_pfloat(params, 5, 0.0),
-                    aperture_grill=_pfloat(params, 6, 0.0),
-                    static_noise=_pfloat(params, 7, 0.0),
+                    ls=_pfloat(params, 0, 0.0),
+                    dz=_pfloat(params, 1, 1.0),
+                    vs=_pfloat(params, 2, 1.0),
+                    ph=_pfloat(params, 3, 0.0),
+                    it=_pfloat(params, 4, 0.0),
+                    sp=_pfloat(params, 5, 0.0),
+                    ag=_pfloat(params, 6, 0.0),
+                    st=_pfloat(params, 7, 0.0),
                     _in_split=_in_split,
                 )
                 if not ok:
@@ -13028,17 +13228,17 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
     """Apply a TV/CRT simulator effect to an attached video.
 
     Usage:
-      th/tvsim <curvature> [line_sync] [detail_zoom] [vertical_sync] [phosphorescence] [interlacing] [aperture_grill] [static]
+      th/tvsim <line_sync> [detail_zoom] [vertical_sync] [phosphorescence] [interlacing] [scan_phasing] [aperture_grill] [static]
 
     Parameters (all separated by spaces or pipes):
-      curvature      — 0-1, CRT warp strength (0=max curve, 1=flat/no warp). Required.
-      line_sync      — zoom factor for interlace/scan filters + disp map Y-stretch (default 1)
-      detail_zoom    — scroll speed; != 1 activates vertical scroll (default 1 = off)
-      vertical_sync  — phosphor lutrgb tint strength (default 0 = off)
-      phosphorescence — interlacing scanline darkening (default 0 = off)
-      interlacing    — scan phasing ripple (default 0 = off)
-      aperture_grill — grill PNG blend strength 0-1 (default 0 = off)
-      static         — static MP4 blend strength 0-1 (default 0 = off)
+      line_sync      — 0-1 displacement/line-sync value (default 0)
+      detail_zoom    — detail zoom factor (default 1)
+      vertical_sync  — scroll speed control (default 1)
+      phosphorescence — phosphor LUT strength (default 0)
+      interlacing    — interlace scanline strength (default 0)
+      scan_phasing   — scanline phase strength (default 0)
+      aperture_grill — grill PNG blend strength (default 0)
+      static         — static MP4 blend strength (default 0)
 
     Examples:
       th/tvsim 0.5
@@ -13057,8 +13257,8 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
     if not tokens:
         await ctx.reply(
             "**th/tvsim** — CRT/TV simulator effect\n"
-            "Attach a video and provide `curvature` (0–1, required).\n\n"
-            "**Usage:** `th/tvsim <curvature> [line_sync] [detail_zoom] [vert_sync] [phosphor] [interlace] [aperture_grill] [static]`\n"
+            "Attach a video and provide `line_sync` (0–1).\n\n"
+            "**Usage:** `th/tvsim <line_sync> [detail_zoom] [vertical_sync] [phosphor] [interlace] [scan] [aperture_grill] [static]`\n"
             "**Example:** `th/tvsim 0.5`\n"
             "**Full example:** `th/tvsim 0.3 1 1 0.4 0.5 0 0.6 0`\n"
             "**As pipe effect:** `th/ihtx 1 5 - mp4 tvsim=0.5`\n"
@@ -13066,16 +13266,16 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
         )
         return
 
-    curvature = _tp(0, 0.5)
-    if not (0.0 <= curvature <= 1.0):
-        await ctx.reply("❌ `curvature` must be between 0 and 1.")
+    line_sync = _tp(0, 0.0)
+    if not (0.0 <= line_sync <= 1.0):
+        await ctx.reply("❌ `line_sync` must be between 0 and 1.")
         return
 
-    line_sync       = _tp(1, 1.0)
-    detail_zoom     = _tp(2, 1.0)
-    vertical_sync   = _tp(3, 0.0)
-    phosphorescence = _tp(4, 0.0)
-    interlacing     = _tp(5, 0.0)
+    detail_zoom     = _tp(1, 1.0)
+    vertical_sync   = _tp(2, 1.0)
+    phosphorescence = _tp(3, 0.0)
+    interlacing     = _tp(4, 0.0)
+    scan_phasing    = _tp(5, 0.0)
     aperture_grill  = _tp(6, 0.0)
     static_noise    = _tp(7, 0.0)
 
@@ -13085,7 +13285,7 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
     if source is None:
         await ctx.reply(
             "❌ Attach a video to use `th/tvsim`.\n"
-            "**Usage:** `th/tvsim <curvature> [line_sync] [detail_zoom] [vert_sync] [phosphor] [interlace] [aperture_grill] [static]`"
+            "**Usage:** `th/tvsim <line_sync> [detail_zoom] [vertical_sync] [phosphor] [interlace] [scan] [aperture_grill] [static]`"
         )
         return
 
@@ -13098,7 +13298,7 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
         await ctx.reply(f"❌ `th/tvsim` requires a video file. Got `{suffix}`.")
         return
 
-    param_str = f"curvature={curvature}"
+    param_str = f"line_sync={line_sync}"
     status_msg = await ctx.reply(
         f"🔧 Executing TV-simulator displacement-map FFmpeg code ({param_str})…"
     )
@@ -13117,8 +13317,8 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
         ok, err = await loop.run_in_executor(
             None, _run_tvsim,
             input_path, output_path,
-            curvature, line_sync, detail_zoom,
-            vertical_sync, phosphorescence, interlacing,
+            line_sync, detail_zoom, vertical_sync,
+            phosphorescence, interlacing, scan_phasing,
             aperture_grill, static_noise,
         )
 
@@ -13142,8 +13342,8 @@ async def tvsim_command(ctx: commands.Context, *, args: str = ""):
             embed = discord.Embed(
                 title="IHTX Bot — th/tvsim",
                 description=(
-                    f"curvature={curvature} · line_sync={line_sync} · scroll={detail_zoom} · "
-                    f"phosphor={vertical_sync} · interlace={phosphorescence} · scan={interlacing} · "
+                    f"line_sync={line_sync} · detail_zoom={detail_zoom} · vertical_sync={vertical_sync} · "
+                    f"phosphorescence={phosphorescence} · interlacing={interlacing} · scan={scan_phasing} · "
                     f"aperture={aperture_grill} · static={static_noise}"
                 ),
                 color=11578404,
