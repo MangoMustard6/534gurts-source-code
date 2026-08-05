@@ -30,6 +30,7 @@ A Discord bot that applies destructive visual and audio effects to videos and im
 ## Architecture decisions
 
 - Bot token read from `DISCORD_TOKEN` env var at startup; exits cleanly if missing
+- Discord login HTTP 429 responses stop the Python launcher without retries; restart it manually after Discord clears the temporary block
 - All AI integrations (Gemini, Anthropic, fal, replicate) are optional — gracefully degrade if keys not set
 - System tools (ffmpeg, sox, imagemagick, rubberband) provided via Nix `stable-25_05` channel
 

@@ -17,4 +17,24 @@ except ImportError:
 
 from bot import ihtx_bot
 
-ihtx_bot.bot.run(os.environ["DISCORD_TOKEN"], reconnect=True)
+
+try:
+    ihtx_bot.bot.run(os.environ["DISCORD_TOKEN"], reconnect=True)
+except Exception as exc:
+    # A global Discord login block is not a recoverable bot crash. Let the
+    # launcher fail closed instead of retrying every few seconds and extending
+    # the block.
+    try:
+        import discord
+    except ImportError:
+        discord = None
+
+    if discord is not None and isinstance(exc, discord.HTTPException) and exc.status == 429:
+        print(
+            "[runner] Discord returned HTTP 429 during login; "
+            "stopping without automatic retry.",
+            flush=True,
+            file=sys.stderr,
+        )
+        raise SystemExit(75)
+    raise
