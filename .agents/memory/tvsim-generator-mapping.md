@@ -9,4 +9,4 @@ The active Python TVSIM renderer follows the supplied `genTvSim` parameter order
 
 **How to apply:** Keep the final filtergraph output explicitly labeled and map only that processed video pad plus `0:a?`; otherwise FFmpeg may auto-map the untouched source video as an extra stream.
 
-The current `cDi` displacement source is the supplied Project Name 5.mp4 URL, looped and converted to a local FFV1 `tvsim.mov` bounded to the input duration before being used by the filtergraph.
+The current `cDi` displacement source is the bundled legacy `bot/displacemaps/tvsimulator.mov`; the slower Project Name 5.mp4 conversion path was intentionally reverted while keeping the revised filtergraph.
