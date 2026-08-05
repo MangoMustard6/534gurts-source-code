@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-05: [Python] Increased TVSIM displacement contrast strength to `(1-ls)*(2.366666+0.4)` to reduce fine line artifacts near line sync 0.9–1.
 - 2026-08-05: [Python] Switched TVSIM back to the bundled legacy displacement map for faster renders while retaining the revised genTvSim filtergraph and parameter order.
 - 2026-08-05: [Python] Updated TVSIM `cDi` to loop the supplied Project Name 5.mp4 source, convert it to a duration-bounded local FFV1 `tvsim.mov`, and use it in the replacement genTvSim filtergraph.
 - 2026-08-05: [Python] Replaced the TVSIM renderer with the supplied `genTvSim` filtergraph and parameter order `ls,dz,vs,ph,it,sp,ag,st`, preserving audio and explicitly mapping one processed video stream.
@@ -1916,7 +1917,7 @@ def _run_tvsim(
                         f"{c_di}:loop=(2^31)-1,trim=duration={d}[d];{c_ag}[ag];"
                         f"{c_st}:loop=(2^31)-1,trim=duration={d}[s];"
                         f"[0]scale=854:854,format=bgr32[00];"
-                        f"[d]{yuv_d}scale=854:854,eq=contrast='(1-{ls})*2.366666':"
+                        f"[d]{yuv_d}scale=854:854,eq=contrast='(1-{ls})*(2.366666+0.4)':"
                         f"eval=frame,format=bgr32,hue=b=-0.033[x];"
                         f"color=s=854x854:c=#808080,format=bgr32[y];"
                         f"[00][x][y]displace=edge=wrap,scale={w}:{h},setsar=1,"
@@ -1937,7 +1938,7 @@ def _run_tvsim(
                         f"{c_di}:loop=(2^31)-1,trim=duration={d}[d];"
                         f"{c_st}:loop=(2^31)-1,trim=duration={d}[s];"
                         f"[0]scale=854:854,format=bgr32[00];"
-                        f"[d]{yuv_d}scale=854:854,eq=contrast='(1-{ls})*2.366666':"
+                        f"[d]{yuv_d}scale=854:854,eq=contrast='(1-{ls})*(2.366666+0.4)':"
                         f"eval=frame,format=bgr32,hue=b=-0.033[x];"
                         f"color=s=854x854:c=#808080,format=bgr32[y];"
                         f"[00][x][y]displace=edge=wrap,scale={w}:{h},setsar=1,"
@@ -1955,7 +1956,7 @@ def _run_tvsim(
                         if ls == 1 else
                         f"{c_di}:loop=(2^31)-1,trim=duration={d}[d];{c_ag}[ag];"
                         f"[0]scale=854:854,format=bgr32[00];"
-                        f"[d]{yuv_d}scale=854:854,eq=contrast='(1-{ls})*2.366666':"
+                        f"[d]{yuv_d}scale=854:854,eq=contrast='(1-{ls})*(2.366666+0.4)':"
                         f"eval=frame,format=bgr32,hue=b=-0.033[x];"
                         f"color=s=854x854:c=#808080,format=bgr32[y];"
                         f"[00][x][y]displace=edge=wrap,scale={w}:{h},setsar=1,"
@@ -1970,7 +1971,7 @@ def _run_tvsim(
                         if ls == 1 else
                         f"{c_di}:loop=(2^31)-1,trim=duration={d}[d];"
                         f"[0]scale=854:854,format=bgr32[00];"
-                        f"[d]{yuv_d}scale=854:854,eq=contrast='(1-{ls})*2.366666':"
+                        f"[d]{yuv_d}scale=854:854,eq=contrast='(1-{ls})*(2.366666+0.4)':"
                         f"eval=frame,format=bgr32,hue=b=-0.033[x];"
                         f"color=s=854x854:c=#808080,format=bgr32[y];"
                         f"[00][x][y]displace=edge=wrap,scale={w}:{h},setsar=1,"
