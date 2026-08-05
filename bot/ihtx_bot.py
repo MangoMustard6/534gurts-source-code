@@ -8,6 +8,8 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-05: [Python] Expanded pipe code-workflow status to show duration, trim behavior, intermediate format, final output format, export count, and progress bar instead of pipe-effect names.
+- 2026-08-05: [Python] Expanded non-pipe `/ihtxgen` processing status into a code-workflow display with stages, FFmpeg code path, media/output details, elapsed time, and activity bar; pipe export progress remains unchanged.
 - 2026-08-05: [Python] Replaced pipe-effect processing status in `/ihtxgen` with export-only progress: `Export 1/N...` through `Export N/N!` and a 20-segment progress bar.
 - 2026-08-05: [Python] Increased TVSIM displacement contrast strength to `(1-ls)*(2.366666+0.4)` to reduce fine line artifacts near line sync 0.9–1.
 - 2026-08-05: [Python] Switched TVSIM back to the bundled legacy displacement map for faster renders while retaining the revised genTvSim filtergraph and parameter order.
