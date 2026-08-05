@@ -8,3 +8,5 @@ The active Python TVSIM renderer follows the supplied `genTvSim` parameter order
 **Why:** The previous Python implementation used a different curvature-first parameter model, so pipe and standalone calls did not match the requested generator.
 
 **How to apply:** Keep the final filtergraph output explicitly labeled and map only that processed video pad plus `0:a?`; otherwise FFmpeg may auto-map the untouched source video as an extra stream.
+
+The current `cDi` displacement source is the supplied Project Name 5.mp4 URL, looped and converted to a local FFV1 `tvsim.mov` bounded to the input duration before being used by the filtergraph.
