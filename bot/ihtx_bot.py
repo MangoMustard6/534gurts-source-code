@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-05: [Python] Made prefix `th/ihtx` jobs restart-recoverable: pending command messages are persisted before processing and replayed automatically after the bot reconnects.
 - 2026-08-05: [Python] Connected `/ihtxgen` pipe status to real workflow callbacks: intermediate-format check, duration check, output-format check, base preparation, export code passes, final concatenation, and output-ready.
 - 2026-08-05: [Python] Expanded pipe code-workflow status to show duration, trim behavior, intermediate format, final output format, export count, and progress bar instead of pipe-effect names.
 - 2026-08-05: [Python] Expanded non-pipe `/ihtxgen` processing status into a code-workflow display with stages, FFmpeg code path, media/output details, elapsed time, and activity bar; pipe export progress remains unchanged.
@@ -8274,6 +8275,10 @@ async def on_ready():
             print("EconomyCog loaded.")
         except Exception as _econ_exc:
             print(f"Warning: EconomyCog failed to load — {_econ_exc}")
+    # Replay prefix th/ihtx jobs whose process was interrupted by a restart.
+    _economy_cog = bot.get_cog("Economy")
+    if _economy_cog and hasattr(_economy_cog, "recover_pending_ihtx_jobs"):
+        asyncio.create_task(_economy_cog.recover_pending_ihtx_jobs())
     # Load garden game cog (once)
     if "Garden" not in bot.cogs:
         try:

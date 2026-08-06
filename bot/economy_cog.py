@@ -26,6 +26,47 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+
+# Prefix th/ihtx jobs are recorded before processing starts so a bot restart
+# can replay the original command message instead of losing the job.
+_PENDING_IHTX_FILE = Path("output/pending_ihtx_jobs.json")
+
+
+def _read_pending_ihtx_jobs() -> list[dict[str, int]]:
+    try:
+        with _PENDING_IHTX_FILE.open() as fh:
+            jobs = json.load(fh)
+        return jobs if isinstance(jobs, list) else []
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+
+
+def _write_pending_ihtx_jobs(jobs: list[dict[str, int]]) -> None:
+    _PENDING_IHTX_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _PENDING_IHTX_FILE.with_suffix(".tmp")
+    with tmp.open("w") as fh:
+        json.dump(jobs, fh)
+    os.replace(tmp, _PENDING_IHTX_FILE)
+
+
+def _remember_ihtx_job(message_id: int, channel_id: int, author_id: int) -> None:
+    jobs = _read_pending_ihtx_jobs()
+    if not any(job.get("message_id") == message_id for job in jobs):
+        jobs.append({
+            "message_id": message_id,
+            "channel_id": channel_id,
+            "author_id": author_id,
+        })
+        _write_pending_ihtx_jobs(jobs)
+
+
+def _forget_ihtx_job(message_id: int) -> None:
+    jobs = _read_pending_ihtx_jobs()
+    remaining = [job for job in jobs if job.get("message_id") != message_id]
+    if len(remaining) != len(jobs):
+        _write_pending_ihtx_jobs(remaining)
+
+
 # ---------------------------------------------------------------------------
 # Weather fun facts — shown in the processing embed while FFmpeg runs
 # ---------------------------------------------------------------------------
@@ -330,6 +371,30 @@ class EconomyCog(commands.Cog, name="Economy"):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self._ready_at = time.time()
+        self._ihtx_recovery_started = False
+
+    async def recover_pending_ihtx_jobs(self) -> None:
+        """Replay prefix th/ihtx messages left pending by a bot restart."""
+        if self._ihtx_recovery_started:
+            return
+        self._ihtx_recovery_started = True
+        jobs = _read_pending_ihtx_jobs()
+        if not jobs:
+            return
+        print(f"[ihtx-recovery] Found {len(jobs)} pending job(s); replaying.")
+        for job in jobs:
+            message_id = int(job.get("message_id", 0))
+            channel_id = int(job.get("channel_id", 0))
+            try:
+                channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
+                message = await channel.fetch_message(message_id)
+                ctx = await self.bot.get_context(message)
+                if ctx.command is None:
+                    raise RuntimeError("original command is no longer registered")
+                await self.bot.invoke(ctx)
+                print(f"[ihtx-recovery] Replayed message {message_id}.")
+            except Exception as exc:
+                print(f"[ihtx-recovery] Could not replay message {message_id}: {exc}")
 
     # -----------------------------------------------------------------------
     # /profile
@@ -943,49 +1008,54 @@ class EconomyCog(commands.Cog, name="Economy"):
     async def ihtx_prefix(self, ctx: commands.Context, *, args: str = "") -> None:
         """Prefix alias for /ihtxgen — handles both preset names and the full
         custom syntax: <exports> <duration> <no_trim> <fmt> <pipe_effects>"""
+        message_id = getattr(ctx.message, "id", 0)
+        channel_id = getattr(ctx.channel, "id", 0)
+        author_id = getattr(ctx.author, "id", 0)
+        recoverable = bool(message_id and channel_id and author_id)
+        if recoverable:
+            _remember_ihtx_job(message_id, channel_id, author_id)
         try:
-            from bot.ihtx_bot import _parse_ihtx_custom_args, PRESET_FILTERS
-        except ImportError as exc:
-            await ctx.reply(f"❌ Internal import error: `{exc}`")
-            return
+            try:
+                from bot.ihtx_bot import _parse_ihtx_custom_args, PRESET_FILTERS
+            except ImportError as exc:
+                await ctx.reply(f"❌ Internal import error: `{exc}`")
+                return
 
-        args = args.strip()
-        parsed = _parse_ihtx_custom_args(args) if args else None
+            args = args.strip()
+            parsed = _parse_ihtx_custom_args(args) if args else None
 
-        if parsed is not None:
-            reps, dur, notrim, fmt, output_fmt, pe = parsed
-            await ctx.invoke(
-                self.ihtxgen,
-                effect="chaos",
-                pipe_effects=pe,
-                repetitions=reps,
-                duration=dur,
-                no_trim=notrim.lower() in {"true", "yes"},
-                export_fmt=fmt or "mov",
-                output_fmt=output_fmt,
-            )
-        else:
-            first = (args.split()[0] if args else "").lower()
-            # Shorthand pipe-effects mode: if the arg doesn't start with a digit
-            # (which would indicate the full "<reps> <dur> <noTrim> <fmt> <effects>"
-            # syntax) and isn't a known preset name, treat the entire string as
-            # pipe effects with defaults (1 rep, full video duration, mp4).
-            # This lets users write:
-            #   roxi ihtx ffmpeg(-vf huesaturation=saturation=1:strength=100)
-            #   roxi ihtx negate,huehsv=0.5
-            #   roxi ihtx ffmpeg(-vf negate),speed=0.5
-            if args and not first[:1].isdigit() and first not in PRESET_FILTERS:
+            if parsed is not None:
+                reps, dur, notrim, fmt, output_fmt, pe = parsed
                 await ctx.invoke(
                     self.ihtxgen,
                     effect="chaos",
-                    pipe_effects=args,
-                    repetitions=1,
-                    duration="vidlen",
-                    no_trim=False,
-                    export_fmt="mov",
+                    pipe_effects=pe,
+                    repetitions=reps,
+                    duration=dur,
+                    no_trim=notrim.lower() in {"true", "yes"},
+                    export_fmt=fmt or "mov",
+                    output_fmt=output_fmt,
                 )
             else:
-                await ctx.invoke(self.ihtxgen, effect=first or "chaos")
+                first = (args.split()[0] if args else "").lower()
+                # Shorthand pipe-effects mode: if the arg doesn't start with a
+                # digit and isn't a known preset, treat the whole string as
+                # pipe effects with default export settings.
+                if args and not first[:1].isdigit() and first not in PRESET_FILTERS:
+                    await ctx.invoke(
+                        self.ihtxgen,
+                        effect="chaos",
+                        pipe_effects=args,
+                        repetitions=1,
+                        duration="vidlen",
+                        no_trim=False,
+                        export_fmt="mov",
+                    )
+                else:
+                    await ctx.invoke(self.ihtxgen, effect=first or "chaos")
+        finally:
+            if recoverable:
+                _forget_ihtx_job(message_id)
 
     # -----------------------------------------------------------------------
     # roxi math — evaluate a math expression (no eval/exec, recursive-descent)

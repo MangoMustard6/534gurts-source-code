@@ -25,3 +25,4 @@
 - [Tvsim generator mapping](tvsim-generator-mapping.md) — Python TVSIM now follows the supplied genTvSim eight-parameter filtergraph and maps one processed video plus source audio.
 - [Pipe export progress](pipe-export-progress.md) — pipe-mode UI reports export passes with a 20-block bar, not individual effect names.
 - [Pipe output format default](pipe-output-format-default.md) — omitting the final format keeps the intermediate export container and skips final conversion.
+- [IHTX restart recovery](ihtx-restart-recovery.md) — interrupted prefix jobs persist their Discord message and replay after reconnect.
