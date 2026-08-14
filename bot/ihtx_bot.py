@@ -14327,7 +14327,7 @@ _HELP_ENTRIES: list[dict] = [
     {
         "cat": "owner",
         "name": "th/listservers  /  th/listchannels <guild_id>",
-        "value": "List all guilds the bot is in, or all channels in a specific guild.",
+        "value": "List all guilds the bot is in (paginated embed with join invites), or all channels in a specific guild.",
     },
     {
         "cat": "owner",
@@ -15778,26 +15778,130 @@ async def set_role_command(ctx: commands.Context, user_id_str: str, role: str = 
             await ctx.reply(f"⚠️ `{user_id}` has no special bot roles to remove.")
 
 
+_LISTSERVERS_PAGE_SIZE = 5
+
+
+async def _get_guild_invite(guild: discord.Guild) -> str | None:
+    """Try to create an invite for a guild so the command runner can join it.
+
+    Uses the first text channel where the bot has Create Instant Invite
+    permission. Returns the invite URL, or None if one couldn't be made.
+    """
+    me = guild.me
+    if me is None:
+        return None
+    text_channels = sorted(
+        [c for c in guild.channels if isinstance(c, discord.TextChannel)],
+        key=lambda c: c.position,
+    )
+    for channel in text_channels:
+        if channel.permissions_for(me).create_instant_invite:
+            try:
+                invite = await channel.create_invite(
+                    max_age=3600, max_uses=1,
+                    reason="th/listservers — invite for bot owner",
+                )
+                return invite.url
+            except (discord.Forbidden, discord.HTTPException):
+                continue
+    return None
+
+
+class _ListServersNavButton(discord.ui.Button):
+    def __init__(self, direction: int, invoker_id: int, **kwargs):
+        super().__init__(**kwargs)
+        self._direction = direction
+        self._invoker_id = invoker_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self._invoker_id:
+            return await interaction.response.send_message(
+                "Only the person who ran this command can use these buttons.",
+                ephemeral=True,
+            )
+        view: _ListServersView = self.view  # type: ignore
+        view._page = max(0, min(view._page + self._direction, view._total - 1))
+        view._update_buttons()
+        await interaction.response.edit_message(embed=view._build_embed(), view=view)
+
+
+class _ListServersView(discord.ui.View):
+    def __init__(self, invoker_id: int, entries: list[dict]):
+        super().__init__(timeout=180)
+        self._invoker_id = invoker_id
+        self._entries = entries
+        self._page = 0
+        self._total = max(1, -(-len(entries) // _LISTSERVERS_PAGE_SIZE))
+
+        self._btn_prev = _ListServersNavButton(
+            -1, invoker_id, label="◀ Prev",
+            style=discord.ButtonStyle.secondary, disabled=True,
+        )
+        self._btn_next = _ListServersNavButton(
+            +1, invoker_id, label="Next ▶",
+            style=discord.ButtonStyle.secondary, disabled=(self._total <= 1),
+        )
+        self.add_item(self._btn_prev)
+        self.add_item(self._btn_next)
+
+    def _update_buttons(self) -> None:
+        self._btn_prev.disabled = (self._page <= 0)
+        self._btn_next.disabled = (self._page >= self._total - 1)
+
+    def _build_embed(self) -> discord.Embed:
+        start = self._page * _LISTSERVERS_PAGE_SIZE
+        page_entries = self._entries[start : start + _LISTSERVERS_PAGE_SIZE]
+        embed = discord.Embed(
+            title=f"🌐 Servers ({len(self._entries)} total)",
+            description="Servers the bot is in. Click an invite link to join that server.",
+            color=0x40E0D0,
+            timestamp=discord.utils.utcnow(),
+        )
+        for entry in page_entries:
+            invite = entry["invite"]
+            invite_line = (
+                f"[Join server]({invite})" if invite else "*No invite available*"
+            )
+            embed.add_field(
+                name=f"{entry['name']} — `{entry['id']}`",
+                value=(
+                    f"👥 {entry['members']} members · "
+                    f"💬 {entry['text_channels']} text channels\n"
+                    f"🔗 {invite_line}"
+                ),
+                inline=False,
+            )
+        embed.set_footer(text=f"Page {self._page + 1}/{self._total}")
+        return embed
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
 @bot.command(name="listservers", aliases=["servers", "guilds"])
 @commands.check(_is_owner)
 async def listservers(ctx: commands.Context):
-    """Owner-only: list all servers the bot is in with their IDs and channel counts."""
+    """Owner-only: list all servers the bot is in, with invites, in a paginated embed."""
     guilds = sorted(bot.guilds, key=lambda g: g.name.lower())
     if not guilds:
         await ctx.reply("Bot is not in any servers.")
         return
 
-    lines = []
+    entries = []
     for g in guilds:
         text_channels = [c for c in g.channels if isinstance(c, discord.TextChannel)]
-        lines.append(f"**{g.name}** (`{g.id}`) — {g.member_count} members, {len(text_channels)} text channels")
+        invite = await _get_guild_invite(g)
+        entries.append({
+            "name": g.name,
+            "id": g.id,
+            "members": g.member_count,
+            "text_channels": len(text_channels),
+            "invite": invite,
+        })
 
-    # Split into chunks of 10 servers per message to avoid hitting the 2000 char limit
-    chunk_size = 10
-    for i in range(0, len(lines), chunk_size):
-        chunk = lines[i:i + chunk_size]
-        header = f"**Servers ({len(guilds)} total):**\n" if i == 0 else ""
-        await ctx.reply(header + "\n".join(chunk))
+    view = _ListServersView(ctx.author.id, entries)
+    await ctx.reply(embed=view._build_embed(), view=view)
 
 
 @bot.command(name="listchannels", aliases=["channels"])
