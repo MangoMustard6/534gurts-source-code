@@ -720,14 +720,36 @@ export async function applyMirror(
 }
 
 export interface MirrorOptions {
-  angle: number;
-  percentX?: number;
-  percentY?: number;
+  angle: number;      // arg:0 - Rotation angle in degrees
+  percentX?: number;  // arg:1 - Mirror line X offset (0.0 to 1.0, default 0.5)
+  percentY?: number;  // arg:2 - Mirror line Y offset (0.0 to 1.0, default 0.5)
 }
 
 /**
- * Parametric mirror used by the pipe engine.  The four named side presets
- * above intentionally remain unchanged for backwards compatibility.
+ * Generates the complex FFmpeg filtergraph string for reflection/mirroring.
+ * Rewritten 1:1 from the reference TypeScript pipe effect. The four named
+ * side presets (left/right/top/bottom) are handled elsewhere and remain
+ * unchanged for backwards compatibility.
+ */
+export function buildMirrorFilter({ angle, percentX = 0.5, percentY = 0.5 }: MirrorOptions): string {
+  const radAngle = angle.toFixed(4);
+  const px = percentX.toString();
+  const py = percentY.toString();
+  const lowerAngle = radAngle.toLowerCase();
+
+  return [
+    `-vf "rotate=(${lowerAngle})*PI/180:iw*2:ih*2,`,
+    `geq='st(0,H/2+((${px})-0.5)*(W/2)*sin((${radAngle})*PI/180)+((${py})-0.5)*(H/2)*cos((${radAngle})*PI/180));`,
+    `if(gte(Y,ld(0)),p(X,2*(ld(0))-Y),p(X,Y))',`,
+    `rotate=(${lowerAngle})*-PI/180:$w:$h"`,
+  ].join('');
+}
+
+/**
+ * Pipe-compatible parametric mirror filter. Same math as buildMirrorFilter
+ * but emitted as a bare -vf chain (no shell quoting) with concrete
+ * dimensions substituted for $w/$h, plus a crop+format tail so the output
+ * frame size and pixel format stay valid inside a coalesced filtergraph.
  */
 export function buildParametricMirrorFilter(
   { angle, percentX = 0.5, percentY = 0.5 }: MirrorOptions,
@@ -737,51 +759,124 @@ export function buildParametricMirrorFilter(
   const a = Number.isFinite(angle) ? angle : 90;
   const px = Number.isFinite(percentX) ? percentX : 0.5;
   const py = Number.isFinite(percentY) ? percentY : 0.5;
-  const radians = a.toFixed(4);
-  const fold =
-    `H/2+((${px})-0.5)*(W/2)*sin((${radians})*PI/180)` +
-    `+((${py})-0.5)*(H/2)*cos((${radians})*PI/180)`;
+  const radAngle = a.toFixed(4);
+  const lowerAngle = radAngle.toLowerCase();
 
   return [
-    `rotate=(${radians})*PI/180:iw*2:ih*2`,
-    `geq='st(0,${fold});if(gte(Y,ld(0)),p(X,2*ld(0)-Y),p(X,Y))'`,
-    `rotate=(${radians})*-PI/180:${width}:${height}`,
+    `rotate=(${lowerAngle})*PI/180:iw*2:ih*2`,
+    `geq='st(0,H/2+((${px})-0.5)*(W/2)*sin((${radAngle})*PI/180)+((${py})-0.5)*(H/2)*cos((${radAngle})*PI/180));if(gte(Y,ld(0)),p(X,2*(ld(0))-Y),p(X,Y))'`,
+    `rotate=(${lowerAngle})*-PI/180:${width}:${height}`,
     `crop=${width}:${height}`,
     'format=yuv420p',
   ].join(',');
 }
 
-export interface PinchPunchOptions {
-  strength: number;
-  xScale?: number;
-  yScale?: number;
-  xCenter?: number;
-  yCenter?: number;
+/**
+ * Probes the video file and processes the mirror filter using FFmpeg.
+ * Standalone one-shot runner mirroring the reference pipe effect.
+ */
+export async function processVideoMirror(
+  inputFile: string,
+  outputFile: string,
+  options: MirrorOptions,
+): Promise<void> {
+  // 1. Probe video metadata
+  const probe = async (args: string[]): Promise<string> => {
+    const result = await spawnAsync('ffprobe', args, { timeout: 10_000 });
+    return result.stdout.trim();
+  };
+  const [w, h, fc, d] = await Promise.all([
+    probe(['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width', '-of', 'default=nw=1:nk=1', inputFile]),
+    probe(['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=height', '-of', 'default=nw=1:nk=1', inputFile]),
+    probe(['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=nb_frames', '-of', 'default=nokey=1:noprint_wrappers=1', inputFile]),
+    probe(['-i', inputFile, '-show_entries', 'format=duration', '-v', 'quiet', '-of', 'csv=p=0']),
+  ]);
+  console.log(`Video Stats -> Width: ${w}, Height: ${h}, Frames: ${fc}, Duration: ${d}s`);
+
+  // 2. Build FFmpeg command string, replacing $w/$h with probed metadata
+  const filterCode = buildMirrorFilter(options).replace('$w', w).replace('$h', h);
+
+  // 3. Execute FFmpeg process (tokenized so quoted geq math stays intact)
+  console.log('Running FFmpeg command...');
+  const result = await spawnAsync('ffmpeg', [
+    '-y', '-i', inputFile,
+    ...shellLikeSplit(filterCode),
+    outputFile,
+  ], { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
+  if (result.code !== 0) throw new Error(result.stderr.slice(-1500) || 'FFmpeg mirror failed');
+  console.log(`Successfully exported mirrored video to: ${outputFile}`);
 }
 
-/** Build the pipe-compatible pinch&punch warp without spawning a process. */
-export function buildPinchPunchFFmpegFilter({
-  strength,
-  xScale = 0.5,
-  yScale = 0.5,
-  xCenter = 0.5,
-  yCenter = 0.5,
-}: PinchPunchOptions): string {
-  const safe = (value: number, fallback: number) =>
-    Number.isFinite(value) && value !== 0 ? value : fallback;
-  const s = Number.isFinite(strength) ? strength : 1;
-  const xs = safe(xScale, 0.5);
-  const ys = safe(yScale, 0.5);
-  const xc = Number.isFinite(xCenter) ? xCenter : 0.5;
-  const yc = Number.isFinite(yCenter) ? yCenter : 0.5;
-  const dx = `(X-W*${xc})/(W*${xs})`;
-  const dy = `(Y-H*${yc})/(H*${ys})`;
-  const radius = `min(hypot(${dx},${dy})/1,1)`;
-  const warp = `1-((${s}/4)*PI)*pow(1-pow(${radius},2),2)`;
-  const expression =
-    `p(W*${xc}+((X-W*${xc})/(min(W,H)*0.5))*(${warp})*(min(W,H)*0.5),` +
-    `H*${yc}+((Y-H*${yc})/(min(W,H)*0.5))*(${warp})*(min(W,H)*0.5))`;
-  return `format=yuv444p16le,geq='${expression}',scale=iw:ih,format=yuv420p`;
+export interface PinchPunchOptions {
+  strength: number;   // Effect intensity (arg: 0)
+  xScale?: number;    // X scale factor, defaults to 0.5 (arg: 1)
+  yScale?: number;    // Y scale factor, defaults to 0.5 (arg: 2)
+  xCenter?: number;   // Center X ratio (0.0 to 1.0), defaults to 0.5 (arg: 3)
+  yCenter?: number;   // Center Y ratio (0.0 to 1.0), defaults to 0.5 (arg: 4)
+}
+
+/**
+ * Generates an FFmpeg video filter string for a Pinch/Punch warp effect.
+ * Rewritten 1:1 from the reference TypeScript pipe effect.
+ */
+export function buildPinchPunchFFmpegFilter(options: PinchPunchOptions): string {
+  const {
+    strength,
+    xScale = 0.5,
+    yScale = 0.5,
+    xCenter = 0.5,
+    yCenter = 0.5,
+  } = options;
+
+  // Mathematical warp expression adapted from FFmpeg geq filter logic
+  const geqExpression =
+    `p(` +
+    `W*${xCenter}+((X-W*${xCenter})/(min(W,H)*0.5))*(1-((${strength}/4)*PI)*pow(1-pow(min(hypot((X-W*${xCenter})/(W*${xScale}),(Y-H*${yCenter})/(H*${yScale}))/1,1),2),2))*(min(W,H)*0.5),` +
+    `H*${yCenter}+((Y-H*${yCenter})/(min(W,H)*0.5))*(1-((${strength}/4)*PI)*pow(1-pow(min(hypot((X-W*${xCenter})/(W*${xScale}),(Y-H*${yCenter})/(H*${yScale}))/1,1),2),2))*(min(W,H)*0.5)` +
+    `)`;
+
+  return `-vf format=yuv444p16le,"geq='${geqExpression}'",scale=iw:ih,format=yuv420p`;
+}
+
+/**
+ * Pipe-compatible pinch&punch warp: identical geq math to
+ * buildPinchPunchFFmpegFilter but returned as a bare filter chain (no -vf
+ * prefix or shell quotes) so it can be coalesced with other pipe filters.
+ */
+export function buildPinchPunchPipeFilter(options: PinchPunchOptions): string {
+  return buildPinchPunchFFmpegFilter(options)
+    .replace(/^-vf\s+/, '')
+    .replace(/"geq='([\s\S]*)'"/, "geq='$1'");
+}
+
+/**
+ * Executes FFmpeg to apply the Pinch/Punch video filter to an input file.
+ * Standalone one-shot runner mirroring the reference pipe effect.
+ */
+export async function applyPinchPunch(
+  inputFile: string,
+  outputFile: string,
+  options?: PinchPunchOptions,
+): Promise<void> {
+  // Usage/Help check: if options are missing, log usage syntax
+  if (!options) {
+    console.log('Usage syntax: pinch&punch=<strength> [xScale] [yScale] [xCenter] [yCenter]');
+    return;
+  }
+
+  const filterString = buildPinchPunchFFmpegFilter(options);
+
+  try {
+    const result = await spawnAsync('ffmpeg', [
+      '-y', '-i', inputFile,
+      ...shellLikeSplit(filterString),
+      outputFile,
+    ], { timeout: PROCESS_TIMEOUTS.FFMPEG_MS });
+    if (result.code !== 0) throw new Error(result.stderr.slice(-1500) || 'FFmpeg pinch&punch failed');
+  } catch (error) {
+    console.error('Failed to process video with FFmpeg:', error);
+    throw error;
+  }
 }
 
 // ── Left Split ───────────────────────────────────────────────────────────
@@ -1326,7 +1421,7 @@ function buildPipeVideoFilter(
     }, width, height);
   }
   if (n === 'pinch&punch' || n === 'p&p' || n === 'pinchpunch') {
-    return buildPinchPunchFFmpegFilter({
+    return buildPinchPunchPipeFilter({
       strength: pipeNumber(params, 0, 1),
       xScale: pipeNumber(params, 1, 0.5),
       yScale: pipeNumber(params, 2, 0.5),
