@@ -703,27 +703,12 @@ export async function applyMirror(
     };
     filterChain = presetVf[resolved] ?? presetVf['left']!;
   } else {
-    // Parametric fold mode: mirror=angle[,cx,cy]
-    const A = first ? parseFloat(first) : 90.0;
-    const cx = params.length > 1 ? parseFloat(params[1]) : 0.5;
-    const cy = params.length > 2 ? parseFloat(params[2]) : 0.5;
-    const aRad = `${A}/180*PI`;
-    const cxOff = cx - 0.5;
-    const cyOff = cy - 0.5;
-    const cxTerm = cxOff >= 0
-      ? `+${cxOff.toFixed(6)}*(W/2)*sin(${aRad})`
-      : `${cxOff.toFixed(6)}*(W/2)*sin(${aRad})`;
-    const cyTerm = cyOff >= 0
-      ? `+${cyOff.toFixed(6)}*(H/2)*cos(${aRad})`
-      : `${cyOff.toFixed(6)}*(H/2)*cos(${aRad})`;
-    const foldY = `H/2${cxTerm}${cyTerm}`;
-    filterChain =
-      `rotate=${A}/180*PI:iw*2:ih*2,` +
-      `geq='if(gte(Y,${foldY}),p(X,2*(${foldY})-Y),p(X,Y))',` +
-      `format=yuv420p,` +
-      `rotate=${A}/-180*PI,` +
-      `crop=iw/2:ih/2,` +
-      `format=yuv420p`;
+    const { width, height } = await getVideoDimensions(ctx.inputFile);
+    filterChain = buildParametricMirrorFilter({
+      angle: Number.isFinite(Number(first)) ? Number(first) : 90,
+      percentX: Number.isFinite(Number(params[1])) ? Number(params[1]) : 0.5,
+      percentY: Number.isFinite(Number(params[2])) ? Number(params[2]) : 0.5,
+    }, width, height);
   }
 
   await spawnAsync('ffmpeg', [
@@ -732,6 +717,71 @@ export async function applyMirror(
     '-c:a', 'copy',
     ctx.outputFile,
   ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
+}
+
+export interface MirrorOptions {
+  angle: number;
+  percentX?: number;
+  percentY?: number;
+}
+
+/**
+ * Parametric mirror used by the pipe engine.  The four named side presets
+ * above intentionally remain unchanged for backwards compatibility.
+ */
+export function buildParametricMirrorFilter(
+  { angle, percentX = 0.5, percentY = 0.5 }: MirrorOptions,
+  width = 1280,
+  height = 720,
+): string {
+  const a = Number.isFinite(angle) ? angle : 90;
+  const px = Number.isFinite(percentX) ? percentX : 0.5;
+  const py = Number.isFinite(percentY) ? percentY : 0.5;
+  const radians = a.toFixed(4);
+  const fold =
+    `H/2+((${px})-0.5)*(W/2)*sin((${radians})*PI/180)` +
+    `+((${py})-0.5)*(H/2)*cos((${radians})*PI/180)`;
+
+  return [
+    `rotate=(${radians})*PI/180:iw*2:ih*2`,
+    `geq='st(0,${fold});if(gte(Y,ld(0)),p(X,2*ld(0)-Y),p(X,Y))'`,
+    `rotate=(${radians})*-PI/180:${width}:${height}`,
+    `crop=${width}:${height}`,
+    'format=yuv420p',
+  ].join(',');
+}
+
+export interface PinchPunchOptions {
+  strength: number;
+  xScale?: number;
+  yScale?: number;
+  xCenter?: number;
+  yCenter?: number;
+}
+
+/** Build the pipe-compatible pinch&punch warp without spawning a process. */
+export function buildPinchPunchFFmpegFilter({
+  strength,
+  xScale = 0.5,
+  yScale = 0.5,
+  xCenter = 0.5,
+  yCenter = 0.5,
+}: PinchPunchOptions): string {
+  const safe = (value: number, fallback: number) =>
+    Number.isFinite(value) && value !== 0 ? value : fallback;
+  const s = Number.isFinite(strength) ? strength : 1;
+  const xs = safe(xScale, 0.5);
+  const ys = safe(yScale, 0.5);
+  const xc = Number.isFinite(xCenter) ? xCenter : 0.5;
+  const yc = Number.isFinite(yCenter) ? yCenter : 0.5;
+  const dx = `(X-W*${xc})/(W*${xs})`;
+  const dy = `(Y-H*${yc})/(H*${ys})`;
+  const radius = `min(hypot(${dx},${dy})/1,1)`;
+  const warp = `1-((${s}/4)*PI)*pow(1-pow(${radius},2),2)`;
+  const expression =
+    `p(W*${xc}+((X-W*${xc})/(min(W,H)*0.5))*(${warp})*(min(W,H)*0.5),` +
+    `H*${yc}+((Y-H*${yc})/(min(W,H)*0.5))*(${warp})*(min(W,H)*0.5))`;
+  return `format=yuv444p16le,geq='${expression}',scale=iw:ih,format=yuv420p`;
 }
 
 // ── Left Split ───────────────────────────────────────────────────────────
@@ -1057,4 +1107,530 @@ export async function applyWave(
     '-c:a', 'copy',
     ctx.outputFile,
   ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
+}
+
+// ── TypeScript pipe engine ─────────────────────────────────────────────
+
+/**
+ * Public pipe names.  Keep this list in the effect module so validation and
+ * execution cannot drift apart (the old TS bot had two separate lists).
+ */
+export const PIPE_EFFECT_NAMES = new Set([
+  'hflip', 'vflip', 'invert', 'negate', 'grayscale', 'sepia', 'rotate',
+  'ccshue', 'brightness', 'contrast', 'saturation', 'swapuv', 'mirror',
+  'zoom', 'pinch&punch', 'p&p', 'pinchpunch', 'gm91deform', 'invertrgb',
+  'invlum', 'volume', 'vibrato', 'areverse', 'vreverse', 'channelblend',
+  'huehsv', 'multipitch', 'mp', 'multi', 'pitchtransition', 'pitchtrans',
+  'multipitch2', 'mp2', 'multipitch3', 'mp3', 'lut', 'syncaudio', 'speed',
+  'ffmpeg', 'frei0r', 'wave', 'wave2', 'tvsim', 'tv', 'swirl',
+  'sierpinskiransomware', 'srw', 'preview1280', 'p1280', 'scale1280',
+  'ytpmvscan', 'ytpmv', 'ytpmv_scan', 'oppositep1280', 'op1280',
+  'earthquake', 'nbfx', 'ssmp', 'soundstretchmultipitch', 'multipitchsox',
+  'mpsox', 'folkvalley', 'fv', 'labadjust', 'labadj', 'vocoder',
+  'ilvocodex', 'orangevocoder', '4ormulator', 'audacity', 'magix',
+  'alimiter', 'freakzinga', 'fzgm156', 'freakzingagm156', 'fgm156',
+  'jitter', 'randomjitter', 'rj', 'trim', 'leftsplit', 'rightsplit',
+  'ripple', 'scroll', 'pan', 'tile', 'watermark', 'ring', 'miui', 'reddit',
+  'caption', 'orb', 'deorb', 'vebfisheye2', 'vebdefisheye2',
+  'vebfisheye3', 'vebdefisheye3', 'chromashift', '🥸🥸', '﷽', '𒐫',
+  'gm4', 'realgm4', 'acontrast', 'adestroy', 'audioequalizer', 'avflip',
+  'nepeta', 'nparisonffmpeg', 'nineparisonffmpeg', 'wmm3dripple', 'wmm',
+  'timecode', 'radar', 'freakzingatesteffect', 'fzte', 'freaktest',
+  'stretch', 'gradientmap', 'gmap', 'spherize', 'sphere', 'bulge',
+  'imagemagick', 'im', '(=)', '(<>)', 'geq', 'scgv',
+  'sidechaingate_vocoder', 'caption',
+]);
+
+const PIPE_ALIASES: Record<string, string> = {
+  p2p: 'pinch&punch',
+  pnp: 'pinch&punch',
+  gm: 'gradientmap',
+  gmap: 'gradientmap',
+  rj: 'randomjitter',
+  mp: 'multipitch',
+  multi: 'multipitch',
+  tv: 'tvsim',
+  fv: 'folkvalley',
+  sphere: 'spherize',
+  bulge: 'spherize',
+  sidechaingate_vocoder: 'scgv',
+};
+
+export interface PipeEffect {
+  name: string;
+  params: string[];
+}
+
+function splitTopLevel(value: string, delimiters = ','): string[] {
+  const result: string[] = [];
+  let current = '';
+  let parens = 0;
+  let brackets = 0;
+  let quote = '';
+  for (const ch of value) {
+    if (quote) {
+      current += ch;
+      if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === "'" || ch === '"') { quote = ch; current += ch; continue; }
+    if (ch === '(') parens += 1;
+    if (ch === ')') parens = Math.max(0, parens - 1);
+    if (ch === '[') brackets += 1;
+    if (ch === ']') brackets = Math.max(0, brackets - 1);
+    if (delimiters.includes(ch) && parens === 0 && brackets === 0) {
+      if (current.trim()) result.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) result.push(current.trim());
+  return result;
+}
+
+function splitPipeParams(value: string): string[] {
+  return value.trim().split(/[;|\s]+/).map((part) => part.trim()).filter(Boolean);
+}
+
+/**
+ * Parse comma-separated pipe syntax while preserving commas inside
+ * ffmpeg(...), geq expressions, and pitchtransition voice pairs.
+ */
+export function parsePipeEffects(raw: string): PipeEffect[] {
+  const source = raw.trim();
+  if (!source) return [];
+  const parts = splitTopLevel(source, ',>');
+  const effects: PipeEffect[] = [];
+  for (const original of parts) {
+    // Permit `wave=... volume=2` without making "volume" a wave parameter.
+    const assignments = original
+      .split(/\s+(?=[A-Za-z0-9_&()﷽𒐫🥸]+\s*=)/g)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    for (const part of assignments) {
+      const rawWrapper = part.match(/^(ffmpeg|imagemagick|im)\s*\(([\s\S]*)\)$/i);
+      if (rawWrapper) {
+        effects.push({ name: rawWrapper[1]!.toLowerCase() === 'im' ? 'imagemagick' : rawWrapper[1]!.toLowerCase(), params: [rawWrapper[2]!.trim()] });
+        continue;
+      }
+      const split = part.match(/^(leftsplit|rightsplit)\s*\(([\s\S]*)\)$/i);
+      if (split) {
+        effects.push({ name: split[1]!.toLowerCase(), params: [split[2]!.trim()] });
+        continue;
+      }
+      const equals = part.indexOf('=');
+      let name: string;
+      let value: string;
+      if (equals >= 0) {
+        name = part.slice(0, equals).trim().toLowerCase();
+        value = part.slice(equals + 1).trim();
+      } else {
+        const words = part.split(/\s+/);
+        name = (words.shift() ?? '').toLowerCase();
+        value = words.join(' ');
+      }
+      name = PIPE_ALIASES[name] ?? name;
+      if (!name) continue;
+      const params = name === 'pitchtransition' || name === 'pitchtrans'
+        ? (value ? [value] : [])
+        : name === 'scroll' && value.includes(':') && !value.includes('=')
+          ? value.split(':').filter(Boolean)
+          : value.includes('::')
+            ? value.split('::').map((v) => v.trim()).filter(Boolean)
+            : splitPipeParams(value);
+      effects.push({ name, params });
+    }
+  }
+  return effects;
+}
+
+function pipeNumber(params: string[], index: number, fallback: number): number {
+  const value = Number(params[index]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function pipeBool(value: string | undefined): boolean {
+  return ['1', 'true', 't', 'y', 'yes', '+', 'on', 'sep', 'noclip'].includes(
+    (value ?? '').toLowerCase().trim(),
+  );
+}
+
+function atempoChain(speed: number): string {
+  const filters: string[] = [];
+  let remaining = Math.max(0.01, Math.min(100, speed));
+  while (remaining < 0.5) { filters.push('atempo=0.5'); remaining /= 0.5; }
+  while (remaining > 2) { filters.push('atempo=2'); remaining /= 2; }
+  filters.push(`atempo=${remaining.toFixed(6)}`);
+  return filters.join(',');
+}
+
+function buildMultipitchAudio(params: string[]): string {
+  const values = params
+    .flatMap((param) => param.split(/[|,\s]+/))
+    .map(Number)
+    .filter(Number.isFinite)
+    .slice(0, 16);
+  const pitches = values.length ? values : [0];
+  if (pitches.length === 1) {
+    return `rubberband=tempo=1:pitch=${Math.pow(2, pitches[0]! / 12).toFixed(6)}`;
+  }
+  const labels = pitches.map((_, index) => `[p${index}]`).join('');
+  const branches = pitches.map((pitch, index) =>
+    `[p${index}]rubberband=tempo=1:pitch=${Math.pow(2, pitch / 12).toFixed(6)}[r${index}]`,
+  ).join(';');
+  const mixed = pitches.map((_, index) => `[r${index}]`).join('');
+  return `asplit=${pitches.length}${labels};${branches};${mixed}amix=inputs=${pitches.length}:normalize=0`;
+}
+
+function buildPipeVideoFilter(
+  name: string,
+  params: string[],
+  width: number,
+  height: number,
+): string | undefined {
+  const n = name.toLowerCase();
+  if (n === 'hflip') return 'hflip';
+  if (n === 'vflip') return 'vflip';
+  if (n === 'invert' || n === 'negate') return 'negate';
+  if (n === 'grayscale') return 'hue=s=0';
+  if (n === 'sepia') return 'colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131';
+  if (n === 'rotate') return `rotate=${params[0] ?? '0'}`;
+  if (n === 'brightness') return `eq=brightness=${params[0] ?? '0'}:contrast=${params[1] ?? '1'}:saturation=${params[2] ?? '1'}:gamma=${params[3] ?? '1'}`;
+  if (n === 'contrast') return `eq=contrast=${params[0] ?? '1'}:brightness=${params[1] ?? '0'}:saturation=${params[2] ?? '1'}:gamma=${params[3] ?? '1'}`;
+  if (n === 'saturation' || n === 'huehsv') return `hue=s=${params[0] ?? '1'}:h=${params[1] ?? '0'}`;
+  if (n === 'swapuv') return 'swapuv';
+  if (n === 'invertrgb') {
+    const r = params[0] === '1' ? '0/1 1/0' : '0/0 1/1';
+    const g = params[1] === '1' ? '0/1 1/0' : '0/0 1/1';
+    const b = params[2] === '1' ? '0/1 1/0' : '0/0 1/1';
+    return `curves=r='${r}':g='${g}':b='${b}'`;
+  }
+  if (n === 'mirror') {
+    const first = (params[0] ?? '').toLowerCase();
+    const aliases: Record<string, string> = { l: 'left', r: 'right', t: 'top', b: 'bottom' };
+    const side = aliases[first] ?? first;
+    if (['left', 'right', 'top', 'bottom'].includes(side)) {
+      // These are the legacy presets; do not alter their behavior.
+      return ({
+        left: "split[_ma][_mb];[_ma]crop=iw/2:ih:0:0[_mL];[_mb]crop=iw/2:ih:0:0,hflip[_mR];[_mL][_mR]hstack",
+        right: "split[_ma][_mb];[_ma]crop=iw/2:ih:iw/2:0,hflip[_mL];[_mb]crop=iw/2:ih:iw/2:0[_mR];[_mL][_mR]hstack",
+        top: "split[_ma][_mb];[_ma]crop=iw:ih/2:0:0[_mT];[_mb]crop=iw:ih/2:0:0,vflip[_mB];[_mT][_mB]vstack",
+        bottom: "split[_ma][_mb];[_ma]crop=iw:ih/2:0:ih/2,vflip[_mT];[_mb]crop=iw:ih/2:0:ih/2[_mB];[_mT][_mB]vstack",
+      } as Record<string, string>)[side];
+    }
+    return buildParametricMirrorFilter({
+      angle: pipeNumber(params, 0, 90),
+      percentX: pipeNumber(params, 1, 0.5),
+      percentY: pipeNumber(params, 2, 0.5),
+    }, width, height);
+  }
+  if (n === 'pinch&punch' || n === 'p&p' || n === 'pinchpunch') {
+    return buildPinchPunchFFmpegFilter({
+      strength: pipeNumber(params, 0, 1),
+      xScale: pipeNumber(params, 1, 0.5),
+      yScale: pipeNumber(params, 2, 0.5),
+      xCenter: pipeNumber(params, 3, 0.5),
+      yCenter: pipeNumber(params, 4, 0.5),
+    });
+  }
+  if (n === 'zoom') {
+    const s = Math.max(0.01, pipeNumber(params, 0, 1.5));
+    return `format=yuv444p,scale=iw*${s}:ih*${s},crop=iw/${s}:ih/${s}:(iw-iw/${s})/2:(ih-ih/${s})/2,format=yuv420p`;
+  }
+  if (n === 'scale1280' || n === 'preview1280' || n === 'p1280') return `scale=${params[0] ?? '1280'}:${params[1] ?? '-2'}`;
+  if (n === 'pan') {
+    const x = params[0] ?? '0';
+    const y = params[1] ?? '0';
+    return `format=yuv444p,geq='p(clip(X+(${x}),0,W-1),clip(Y+(${y}),0,H-1)):cb(clip(X+(${x}),0,W-1),clip(Y+(${y}),0,H-1)):cr(clip(X+(${x}),0,W-1),clip(Y+(${y}),0,H-1))',format=yuv420p`;
+  }
+  if (n === 'tile') {
+    const x = params[0] ?? '2';
+    const y = params[1] ?? '2';
+    return `format=yuv444p,geq='p(mod(X*(${x}),W),mod(Y*(${y}),H)):cb(mod(X*(${x}),W),mod(Y*(${y}),H)):cr(mod(X*(${x}),W),mod(Y*(${y}),H))',format=yuv420p`;
+  }
+  if (n === 'ripple') {
+    const speed = params[0] ?? '1';
+    const freq = params[1] ?? '30';
+    const amp = params[2] ?? '10';
+    const phase = params[3] ?? '0';
+    const r = 'hypot(X-W*0.5,Y-H*0.5)';
+    const d = `(${r}+(${amp})*sin(2*PI*(${speed})*T-(${phase})-(${r})/(${freq}))`;
+    const a = 'atan2(Y-H*0.5,X-W*0.5)';
+    return `format=yuv444p,geq='p(W*0.5+(${d})*cos(${a}),H*0.5+(${d})*sin(${a}))',format=yuv420p`;
+  }
+  if (n === 'scroll') {
+    if (params.some((p) => /^(hpos|vpos|ypos)=/i.test(p))) return `scroll=${params.join(',')}`;
+    if (params.length >= 4) {
+      const [x1, y1, x2, y2, duration] = params;
+      const t = Number(duration) > 0 ? `T/${duration}` : 'T';
+      const x = `(${x1})+((${x2})-(${x1}))*${t}`;
+      const y = `(${y1})+((${y2})-(${y1}))*${t}`;
+      return `format=yuv444p,geq='p(clip(X+${x},0,W-1),clip(Y+${y},0,H-1)):cb(clip(X+${x},0,W-1),clip(Y+${y},0,H-1)):cr(clip(X+${x},0,W-1),clip(Y+${y},0,H-1))',format=yuv420p`;
+    }
+    return `scroll=hpos=${params[0] ?? '0'}:vpos=${params[1] ?? '0'}`;
+  }
+  if (n === 'wave2') {
+    const xw = params[0] ?? '3';
+    const yw = params[1] ?? '3';
+    const xa = params[2] ?? '20';
+    const ya = params[3] ?? '20';
+    const xp = params[4] ?? '0';
+    const yp = params[5] ?? '0';
+    const speed = params[6] ?? '0';
+    const dx = `(${xa})*10*sin(2*PI*Y*(${xw})/2/H+2*PI*(${speed})*T+(${xp})*PI/180)`;
+    const dy = `(${ya})*10*sin(2*PI*X*(${yw})/2/W+2*PI*(${speed})*T+(${yp})*PI/180)`;
+    return `format=yuv444p,geq='p(clip(X+${dx},0,W-1),clip(Y+${dy},0,H-1)):cb(clip(X+${dx},0,W-1),clip(Y+${dy},0,H-1)):cr(clip(X+${dx},0,W-1),clip(Y+${dy},0,H-1))',format=yuv420p`;
+  }
+  if (n === 'randomjitter' || n === 'rj' || n === 'jitter') {
+    const strength = params[0] ?? '10';
+    return `rotate=0:iw*1.1:ih*1.1,format=yuv444p,geq='p(X+(${strength}/(25/3)/2.6666666666666665)*(2*mod(1000*sin(N*68),1)-1),Y+(${strength}/2.6666666666666665)*(2*mod(1000*sin(N+1000)*671,1)-1))',crop=${width}:${height},format=yuv420p`;
+  }
+  if (n === 'stretch') {
+    const x = params[0] ?? '1.5';
+    const y = params[1] ?? x;
+    return `format=yuv444p,geq='p((W/2)+(X-W/2)/(${x}),(H/2)+(Y-H/2)/(${y}))',scale=${width}:${height},format=yuv420p`;
+  }
+  if (n === 'spherize' || n === 'sphere' || n === 'bulge') {
+    const amount = params[0] ?? '0.8';
+    const radius = params[1] ?? '0.5';
+    const cx = params[2] ?? '0.5';
+    const cy = params[3] ?? '0.5';
+    const d = `hypot(X-W*${cx},Y-H*${cy})`;
+    const scale = `max(1-(${amount})*(1-(${d}/(min(W,H)*${radius}))),0)`;
+    return `format=yuv444p,geq='if(lte(${d},min(W,H)*${radius}),p(W*${cx}+(X-W*${cx})*${scale},H*${cy}+(Y-H*${cy})*${scale}),p(X,Y))',format=yuv420p`;
+  }
+  if (n === 'gm91deform') return `format=yuv444p,geq='p(X,Y)',format=yuv420p`;
+  if (n === 'caption') {
+    const text = params.join(' ').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:');
+    return `drawtext=text='${text}':fontsize=h/15:fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=20`;
+  }
+  if (n === 'frei0r') return params[0] ? `frei0r=${params.join(':')}` : undefined;
+  if (n === 'rotate') return `rotate=${params[0] ?? '0'}`;
+  if (n === 'invlum') return 'negate';
+  if (n === 'realgm4' || n === 'gm4') return "curves=all='0/0 0.5/1 1/0'";
+  if (n === 'vebfisheye2') return Array.from({ length: Math.max(1, Math.min(10, pipeNumber(params, 0, 1))) }, () => 'v360=e:hammer').join(',');
+  if (n === 'vebdefisheye2') return Array.from({ length: Math.max(1, Math.min(10, pipeNumber(params, 0, 1))) }, () => 'v360=hammer:e').join(',');
+  if (n === 'vebfisheye3') return Array.from({ length: Math.max(1, Math.min(10, pipeNumber(params, 0, 1))) }, () => 'v360=fisheye:22:7').join(',');
+  if (n === 'vebdefisheye3') return Array.from({ length: Math.max(1, Math.min(10, pipeNumber(params, 0, 1))) }, () => 'v360=22:fisheye:7').join(',');
+  if (n === 'chromashift') return 'chromashift=cbh=5:crh=-5';
+  if (n === '🥸🥸') return 'hue=h=3.14159265';
+  if (n === '﷽') return 'v360=e:ball,v360=fisheye:22:7';
+  if (n === '𒐫') return 'v360=ball:hammer';
+  if (n === 'orb') return 'scroll=hpos=0.05,v360=e:hammer,v360=fisheye:22:7';
+  if (n === 'deorb') return 'scroll=hpos=-0.05,v360=hammer:e,v360=22:fisheye:7';
+  if (n === 'timecode') return "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf:timecode='00\\:00\\:00\\:00':rate=30:fontcolor=white:fontsize=h/24:box=1:boxcolor=black:x=(w-text_w)/1.1:y=(h-text_h)/1.12";
+  if (n === '(=)') return 'v360=ball:e,hue=h=450*t/10,v360=e:9';
+  if (n === '(<>)') return 'v360=e:9,hue=s=2*t/10,v360=9:e';
+  if (n === 'tvsim' || n === 'tv') return `noise=alls=${params[0] ?? '8'}:allf=t+u,curves=all='0/0 0.5/0.7 1/1'`;
+  if (n === 'sierpinskiransomware' || n === 'srw') return 'tile=2x2';
+  if (n === 'radar') return 'waveform,format=yuv420p';
+  if (n === 'nparisonffmpeg' || n === 'nineparisonffmpeg') return 'tile=2x2';
+  return undefined;
+}
+
+function buildPipeAudioFilter(name: string, params: string[]): string | undefined {
+  const n = name.toLowerCase();
+  if (n === 'volume') return `volume=${params[0] ?? '1'}`;
+  if (n === 'vibrato') return `vibrato=f=${params[0] ?? '5'}:d=${params[1] ?? '0.5'}`;
+  if (n === 'areverse') return 'areverse,asetpts=PTS-STARTPTS';
+  if (n === 'alimiter') return `alimiter=level_in=${params[0] ?? '1'}:limit=${params[1] ?? '1'}:attack=${params[2] ?? '5'}:release=${params[3] ?? '50'}:latency=${Math.max(0, Math.min(1, pipeNumber(params, 4, 1)))}`;
+  if (n === 'acontrast') return `acontrast=${params[0] ?? '33'}`;
+  if (n === 'adestroy') return 'acontrast=100,acontrast=100,acontrast=100,acontrast=100,acontrast=100';
+  if (n === 'audioequalizer') {
+    return ['40', '150', '375', '1000', '3000']
+      .map((freq, index) => `equalizer=f=${freq}:width_type=q:width=1:g=${params[index] ?? '0'}`).join(',');
+  }
+  if (n === '4ormulator') return `rubberband=tempo=1:formant=${params[0] ?? '712923000'}:pitch=1`;
+  if (n === 'multipitch' || n === 'mp' || n === 'multi' || n === 'multipitch2' || n === 'mp2') return buildMultipitchAudio(params);
+  if (n === 'syncaudio') return 'aresample=async=1:first_pts=0';
+  if (n === 'avflip') return 'aresample=44100,rubberband=tempo=0.05:window=long,afftfilt=real=real(1216000/b):imag=imag(1216000/b),rubberband=tempo=20:window=long,volume=8';
+  if (n === 'speed') return atempoChain(pipeNumber(params, 0, 1));
+  return undefined;
+}
+
+async function runPipeFfmpeg(
+  inputFile: string,
+  outputFile: string,
+  videoFilter: string | undefined,
+  audioFilter: string | undefined,
+  timeout: number,
+): Promise<void> {
+  const args = ['-loglevel', 'error', '-hide_banner', '-y', '-i', inputFile,
+    '-map', '0:v?', '-map', '0:a?'];
+  if (videoFilter) args.push('-vf', videoFilter, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-pix_fmt', 'yuv420p');
+  else args.push('-c:v', 'copy');
+  if (audioFilter) args.push('-af', audioFilter, '-c:a', 'aac', '-b:a', '160k');
+  else args.push('-c:a', 'copy');
+  args.push('-movflags', '+faststart', outputFile);
+  const result = await spawnAsync('ffmpeg', args, { timeout });
+  if (result.code !== 0) throw new Error(result.stderr.slice(-1500) || 'FFmpeg pipe step failed');
+}
+
+async function runPipeRaw(
+  inputFile: string,
+  outputFile: string,
+  raw: string,
+  timeout: number,
+): Promise<void> {
+  const args = shellLikeSplit(raw);
+  if (!args.length) throw new Error('ffmpeg pipe effect requires arguments');
+  const result = await spawnAsync('ffmpeg', [
+    '-loglevel', 'error', '-hide_banner', '-y', '-i', inputFile,
+    ...args, outputFile,
+  ], { timeout });
+  if (result.code !== 0) throw new Error(result.stderr.slice(-1500) || 'Raw FFmpeg pipe step failed');
+}
+
+async function runPipeOverlay(
+  ctx: ProcessorContext,
+  outputFile: string,
+  url: string,
+): Promise<void> {
+  const dir = makeTempDir('pipe-overlay');
+  const image = path.join(dir, 'overlay.png');
+  try {
+    await downloadUrl(url, image);
+    const result = await spawnAsync('ffmpeg', [
+      '-loglevel', 'error', '-hide_banner', '-y',
+      '-i', ctx.inputFile, '-loop', '1', '-i', image,
+      '-filter_complex', '[1:v]format=rgba[wm];[0:v][wm]overlay=0:0:shortest=1[v]',
+      '-map', '[v]', '-map', '0:a?', '-c:v', 'libx264', '-preset', 'ultrafast',
+      '-crf', '23', '-pix_fmt', 'yuv420p', '-c:a', 'copy', outputFile,
+    ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
+    if (result.code !== 0) throw new Error(result.stderr.slice(-1200) || 'Overlay failed');
+  } finally {
+    cleanupDir(dir);
+  }
+}
+
+/**
+ * Execute a pipe chain. Compatible video/audio filters are coalesced into a
+ * single FFmpeg invocation, which is substantially faster than the old
+ * one-process-per-effect behavior. Complex effects still get isolated steps.
+ */
+export async function applyPipeEffects(
+  ctx: ProcessorContext,
+  source: string | PipeEffect[],
+): Promise<void> {
+  const effects = typeof source === 'string' ? parsePipeEffects(source) : source;
+  if (!effects.length) {
+    const result = await spawnAsync('ffmpeg', ['-loglevel', 'error', '-hide_banner', '-y', '-i', ctx.inputFile, '-c', 'copy', ctx.outputFile], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
+    if (result.code !== 0) throw new Error(result.stderr.slice(-1200) || 'No-op FFmpeg copy failed');
+    return;
+  }
+  const fs = await import('node:fs');
+  const tmpDir = makeTempDir('pipe');
+  let current = ctx.inputFile;
+  try {
+    let index = 0;
+    while (index < effects.length) {
+      const effect = effects[index]!;
+      const output = index === effects.length - 1 ? ctx.outputFile : path.join(tmpDir, `pipe_${index}.mkv`);
+      const name = effect.name.toLowerCase();
+
+      if (name === 'ffmpeg') {
+        await runPipeRaw(current, output, effect.params[0] ?? '', ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS);
+        current = output; index += 1; continue;
+      }
+      if (name === 'imagemagick' || name === 'im') {
+        throw new Error('ImageMagick pipe effects require the ImageMagick runtime and are not available in the TypeScript runner');
+      }
+      if (name === 'leftsplit' || name === 'rightsplit') {
+        const inner = effect.params[0] ?? '';
+        const applyInner = (inputPath: string, outputPath: string) =>
+          applyPipeEffects({ inputFile: inputPath, outputFile: outputPath, timeout: ctx.timeout }, inner);
+        if (name === 'leftsplit') await applyLeftSplit({ inputFile: current, outputFile: output, timeout: ctx.timeout }, applyInner);
+        else await applyRightSplit({ inputFile: current, outputFile: output, timeout: ctx.timeout }, applyInner);
+        current = output; index += 1; continue;
+      }
+      if (name === 'gradientmap' || name === 'gmap') {
+        await applyGradientmap({ inputFile: current, outputFile: output, timeout: ctx.timeout }, effect.params.join(' '));
+        current = output; index += 1; continue;
+      }
+      if (name === 'scgv' || name === 'sidechaingate_vocoder') {
+        await applySidechainGateVocoder({ inputFile: current, outputFile: output, timeout: ctx.timeout }, effect.params);
+        current = output; index += 1; continue;
+      }
+      if (name === 'pitchtransition' || name === 'pitchtrans') {
+        await applyPitchTransition({ inputFile: current, outputFile: output, timeout: ctx.timeout }, effect.params);
+        current = output; index += 1; continue;
+      }
+      if (name === 'nepeta') {
+        await applyNepeta({ inputFile: current, outputFile: output, timeout: ctx.timeout }, effect.params[0]);
+        current = output; index += 1; continue;
+      }
+      if (['watermark', 'ring', 'miui', 'reddit'].includes(name)) {
+        const urls: Record<string, string> = {
+          ring: 'https://files.catbox.moe/r8l5ay.png',
+          miui: 'https://files.catbox.moe/z0gkil.png',
+          reddit: 'https://files.catbox.moe/3ce714.png',
+        };
+        const url = effect.params[0] || urls[name];
+        if (!url) throw new Error('watermark requires an image URL');
+        await runPipeOverlay({ inputFile: current, outputFile: output, timeout: ctx.timeout }, output, url);
+        current = output; index += 1; continue;
+      }
+      if (name === 'trim') {
+        const start = Number(effect.params[0] ?? 0);
+        const end = Number(effect.params[1]);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
+          throw new Error('trim requires start and end timestamps');
+        }
+        const result = await spawnAsync('ffmpeg', [
+          '-loglevel', 'error', '-hide_banner', '-y', '-ss', String(start), '-i', current,
+          '-t', String(end - start), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+          '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '160k', output,
+        ], { timeout: ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS });
+        if (result.code !== 0) throw new Error(result.stderr.slice(-1200) || 'trim failed');
+        current = output; index += 1; continue;
+      }
+
+      // Coalesce adjacent ordinary effects into one filtergraph. This is the
+      // hot path for chains such as negate,mirror=45,zoom=2,volume=1.2.
+      const videoFilters: string[] = [];
+      const audioFilters: string[] = [];
+      let cursor = index;
+      const dims = await getVideoDimensions(current);
+      while (cursor < effects.length) {
+        const next = effects[cursor]!;
+        const nextName = next.name.toLowerCase();
+        if (['ffmpeg', 'imagemagick', 'im', 'leftsplit', 'rightsplit', 'gradientmap', 'gmap', 'scgv', 'sidechaingate_vocoder', 'pitchtransition', 'pitchtrans', 'nepeta', 'watermark', 'ring', 'miui', 'reddit', 'trim'].includes(nextName)) break;
+        if (nextName === 'wave' && next.params[0] && next.params[0] in WAVE_PRESETS) {
+          videoFilters.push(WAVE_PRESETS[next.params[0] as WavePresetKey]!);
+        } else if (nextName === 'wave') {
+          const first = next.params[0] ?? '';
+          const values = first.toLowerCase().startsWith('custom:') ? [first.slice(7), ...next.params.slice(1)] : next.params;
+          const hSpeed = values[0] ?? '0';
+          const hFreq = values[1] ?? '0';
+          const hAmp = values[2] ?? '0';
+          const hPhase = values[3] ?? '0';
+          const vSpeed = values[4] ?? '0';
+          const vFreq = values[5] ?? '0';
+          const vAmp = values[6] ?? '0';
+          const vPhase = values[7] ?? '0';
+          const x = `X-((sin((T*5*${vSpeed}+(${vPhase}*15))+(Y/H)*(PI*${vFreq})))*(-15*${vAmp}*(W/640)))`;
+          const y = `Y-((sin((T*5*${hSpeed}+(${hPhase}*15))+(X/W)*(PI*${hFreq})))*(-15*${hAmp}*(W/640)))`;
+          videoFilters.push(`format=yuv444p,geq='p(${x},${y})',format=yuv420p`);
+        } else if (nextName === 'speed') {
+          videoFilters.push(`setpts=${(1 / Math.max(0.01, pipeNumber(next.params, 0, 1))).toFixed(6)}*PTS`);
+          audioFilters.push(buildPipeAudioFilter(nextName, next.params)!);
+        } else {
+          const vf = buildPipeVideoFilter(nextName, next.params, dims.width, dims.height);
+          const af = buildPipeAudioFilter(nextName, next.params);
+          if (!vf && !af) break;
+          if (vf) videoFilters.push(vf);
+          if (af) audioFilters.push(af);
+        }
+        cursor += 1;
+      }
+      if (cursor === index) throw new Error(`Unsupported TypeScript pipe effect: ${effect.name}`);
+      await runPipeFfmpeg(current, output, videoFilters.length ? videoFilters.join(',') : undefined, audioFilters.length ? audioFilters.join(',') : undefined, ctx.timeout || PROCESS_TIMEOUTS.FFMPEG_MS);
+      current = output;
+      index = cursor;
+    }
+    if (current !== ctx.outputFile && fs.existsSync(current)) fs.copyFileSync(current, ctx.outputFile);
+  } finally {
+    cleanupDir(tmpDir);
+  }
 }

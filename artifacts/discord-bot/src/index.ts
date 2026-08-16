@@ -44,6 +44,7 @@ import { handleVideolength } from './commands/videolength.js';
 import { handleScgv } from './commands/scgv-command.js';
 import { handleEffectConfig } from './commands/effectconfig.js';
 import { handlePitchTransition } from './commands/pitchtransition.js';
+import { handleIhtx } from './commands/ihtx.js';
 
 if (!BOT_TOKEN) {
   console.error('ERROR: DISCORD_TOKEN environment variable is not set.');
@@ -346,6 +347,12 @@ client.on('messageCreate', async (message: Message) => {
       case 'effectconfig':
       case 'ec':
         await handleEffectConfig(message, rest);
+        break;
+
+      case 'ihtx':
+      case 'effect':
+      case 'destroy':
+        await handleIhtx(message, rest);
         break;
 
       case 'blockuser':
