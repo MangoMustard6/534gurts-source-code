@@ -50,6 +50,10 @@ from .tagscript_engine import TagScriptEngine
 from .bash_engine import BashEngine
 from .ffmpeg_engine import FFmpegScriptEngine
 from .frei0r_engine import Frei0rScriptEngine
+from .foreach_engine import ForEachEngine
+from .set_engine import SetEngine
+from .tag_engine import TagRunEngine
+from .js_engine import JsEngine
 
 register(AttachEngine())
 register(IScriptEngine())
@@ -63,6 +67,10 @@ register(TagScriptEngine())
 register(BashEngine())
 register(FFmpegScriptEngine())
 register(Frei0rScriptEngine())
+register(ForEachEngine())
+register(SetEngine())
+register(TagRunEngine())
+register(JsEngine())
 
 __all__ = [
     "EngineResult",
@@ -81,4 +89,8 @@ __all__ = [
     "BashEngine",
     "FFmpegScriptEngine",
     "Frei0rScriptEngine",
+    "ForEachEngine",
+    "SetEngine",
+    "TagRunEngine",
+    "JsEngine",
 ]

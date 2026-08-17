@@ -20,7 +20,7 @@ export async function handleRPS(message: Message, args: string[], ownerId: strin
   const input = args[0]?.toLowerCase().trim();
 
   if (!input || !CHOICES.includes(input as Choice)) {
-    await message.reply('❌ Choose `rock`, `paper`, or `scissors`.\nExample: `t!rps rock`');
+    await message.reply('❌ Choose `rock`, `paper`, or `scissors`.\nExample: `th/rps rock`');
     return;
   }
 
@@ -34,7 +34,7 @@ export async function handleRPS(message: Message, args: string[], ownerId: strin
     ? '😔 **You lose!**'
     : '🤝 **It\'s a tie!**';
 
-  const color = outcome === 'win' ? 0x57f287 : outcome === 'lose' ? 0xed4245 : 0xfee75c;
+  const color = 0x40E0D0;
 
   const embed = gameEmbed(message, ownerId, {
     title: '✂️ Rock Paper Scissors',

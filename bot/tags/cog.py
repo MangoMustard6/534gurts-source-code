@@ -8,6 +8,7 @@ Direct invocation: `t!tag <name> [args...]`
 import io
 import logging
 import math
+import random
 import re
 import textwrap
 from datetime import datetime, timezone
@@ -175,8 +176,36 @@ class TagCog(commands.Cog, name="Tags"):
 
         ok = await storage.create(ctx.guild.id, name, content, ctx.author.id)
         if not ok:
+            # Allow upsert if the user owns the tag
+            existing = await storage.get(ctx.guild.id, name)
+            if existing and (existing["owner_id"] == ctx.author.id or self._owner(ctx)):
+                result = await storage.edit(ctx.guild.id, name, content, ctx.author.id, self._owner(ctx))
+                if result == "ok":
+                    return await ctx.reply(embed=discord.Embed(description=f"✅ Tag `{name}` updated.", color=discord.Color.green()))
             return await ctx.reply(embed=discord.Embed(description=f"❌ Tag `{name}` already exists.", color=discord.Color.red()))
         await ctx.reply(embed=discord.Embed(description=f"✅ Tag `{name}` created.", color=discord.Color.green()))
+
+    # ── Force-remove (owner only) ──────────────────────────────────────────
+
+    @tag.command(name="forceremove", aliases=["forcedelete", "forcedel", "fr"])
+    async def tag_forceremove(self, ctx: commands.Context, name: str):
+        """Force-delete any tag (bot owner only)."""
+        if not self._owner(ctx):
+            return await ctx.reply(embed=discord.Embed(description="❌ Bot owner only.", color=discord.Color.red()))
+        if ctx.guild is None:
+            return await ctx.reply("Tags can only be used in servers.")
+
+        tag = await storage.get(ctx.guild.id, name.lower())
+        if tag:
+            _audit("forceremove", ctx.author, tag)
+
+        result = await storage.delete(ctx.guild.id, name.lower(), ctx.author.id, True)
+        msgs = {
+            "ok":        (f"✅ Tag `{name}` force-deleted.", discord.Color.green()),
+            "not_found": (f"❌ Tag `{name}` not found.", discord.Color.red()),
+        }
+        txt, color = msgs.get(result, (f"❌ {result}", discord.Color.red()))
+        await ctx.reply(embed=discord.Embed(description=txt, color=color))
 
     # ── Edit ───────────────────────────────────────────────────────────────
 
@@ -254,10 +283,12 @@ class TagCog(commands.Cog, name="Tags"):
         tag_type, tag_engines = _detect_type(tag["content"])
         content_len = len(tag["content"])
 
-        embed = discord.Embed(title=f"Tag: {tag['name']}", color=0x5865F2)
+        embed = discord.Embed(title=f"Tag: {tag['name']} (Global)", color=0x5865F2)
         embed.add_field(name="Owner", value=owner_str, inline=True)
         embed.add_field(name="Uses", value=str(tag.get("uses", 0)), inline=True)
         embed.add_field(name="Type", value=tag_type, inline=True)
+        if tag.get("guild_origin"):
+            embed.add_field(name="Origin Guild", value=f"`{tag['guild_origin']}`", inline=True)
         if tag_engines:
             eng_label = "Engine" if len(tag_engines) == 1 else "Engines"
             embed.add_field(name=eng_label, value="\n".join(tag_engines), inline=True)
@@ -299,12 +330,66 @@ class TagCog(commands.Cog, name="Tags"):
         chunk = tags[(page - 1) * TAGS_PER_PAGE : page * TAGS_PER_PAGE]
 
         embed = discord.Embed(
-            title=f"Tags — {ctx.guild.name}",
+            title="Global Tags",
             description=", ".join(f"`{t['name']}`" for t in chunk),
             color=0x5865F2,
         )
-        embed.set_footer(text=f"Page {page}/{total} · {len(tags)} total tags")
+        embed.set_footer(text=f"Page {page}/{total} · {len(tags)} total tags (all guilds)")
         await ctx.reply(embed=embed)
+
+    # ── Random ─────────────────────────────────────────────────────────────
+
+    @tag.command(name="random", aliases=["rand"])
+    async def tag_random(self, ctx: commands.Context):
+        """Run a randomly picked tag and show its name."""
+        if ctx.guild is None:
+            return await ctx.reply("Tags can only be used in servers.")
+
+        tags = await storage.list_tags(ctx.guild.id)
+        if not tags:
+            return await ctx.reply("No global tags yet. Create one with `t!tag create <name> <content>`.")
+
+        chosen = random.choice(tags)
+        name = chosen["name"]
+        tag_ctx = build_context(ctx, "")
+        text, engine_blocks = parse(chosen["content"], tag_ctx)
+
+        files: list[discord.File] = []
+        embeds: list[discord.Embed] = []
+        extra_texts: list[str] = []
+        errors: list[str] = []
+
+        for block in engine_blocks:
+            engine = engines.get(block["engine"])
+            if engine is None:
+                continue
+            result = await engine.execute(block["content"], ctx, tag_ctx)
+            if result.error:
+                errors.append(result.error)
+            else:
+                files.extend(result.files)
+                if result.text:
+                    extra_texts.append(result.text)
+                if result.embed is not None:
+                    embeds.append(result.embed)
+
+        parts = [f"🎲 Running tag `{name}`", text] + extra_texts
+        final = "\n".join(p for p in parts if p).strip()
+        if errors:
+            final = (final + "\n" + "\n".join(f"⚠️ {e}" for e in errors)).strip()
+        if len(final) > 2000:
+            final = final[:1997] + "…"
+
+        send_kwargs: dict = {}
+        if final:
+            send_kwargs["content"] = final
+        if embeds:
+            send_kwargs["embeds"] = embeds[:10]
+        if files:
+            send_kwargs["files"] = files
+
+        await ctx.reply(**send_kwargs)
+        await storage.increment_uses(ctx.guild.id, name)
 
     # ── Search ─────────────────────────────────────────────────────────────
 
@@ -362,21 +447,21 @@ class TagCog(commands.Cog, name="Tags"):
     # ── Alias / Unalias ────────────────────────────────────────────────────
 
     @tag.command(name="alias")
-    async def tag_alias(self, ctx: commands.Context, name: str, alias: str):
-        """Add an alias to a tag you own."""
+    async def tag_alias(self, ctx: commands.Context, new_alias: str, existing_name: str):
+        """Add an alias for an existing tag: t!tag alias <new> <existing>"""
         if ctx.guild is None:
             return await ctx.reply("Tags can only be used in servers.")
 
-        alias = alias.lower().strip()
-        if not _valid_name(alias):
+        new_alias = new_alias.lower().strip()
+        if not _valid_name(new_alias):
             return await ctx.reply(embed=discord.Embed(description="❌ Alias may only contain letters, numbers, hyphens, and underscores.", color=discord.Color.red()))
 
-        result = await storage.add_alias(ctx.guild.id, name.lower(), alias, ctx.author.id, self._owner(ctx))
+        result = await storage.add_alias(ctx.guild.id, existing_name.lower(), new_alias, ctx.author.id, self._owner(ctx))
         msgs = {
-            "ok":        (f"✅ Alias `{alias}` → `{name}` added.", discord.Color.green()),
-            "not_found": (f"❌ Tag `{name}` not found.", discord.Color.red()),
+            "ok":        (f"✅ Alias `{new_alias}` → `{existing_name}` added.", discord.Color.green()),
+            "not_found": (f"❌ Tag `{existing_name}` not found.", discord.Color.red()),
             "not_owner": ("❌ You don't own this tag.", discord.Color.red()),
-            "conflict":  (f"❌ `{alias}` is already a tag or alias.", discord.Color.red()),
+            "conflict":  (f"❌ `{new_alias}` is already a tag or alias.", discord.Color.red()),
         }
         txt, color = msgs.get(result, (f"❌ {result}", discord.Color.red()))
         await ctx.reply(embed=discord.Embed(description=txt, color=color))
@@ -453,7 +538,7 @@ class TagCog(commands.Cog, name="Tags"):
             return await ctx.reply("Tags can only be used in servers.")
 
         s = await storage.stats(ctx.guild.id)
-        embed = discord.Embed(title=f"Tag Stats — {ctx.guild.name}", color=0x5865F2)
+        embed = discord.Embed(title="Global Tag Stats", color=0x5865F2)
         embed.add_field(name="Tags", value=str(s["total_tags"]), inline=True)
         embed.add_field(name="Aliases", value=str(s["total_aliases"]), inline=True)
         embed.add_field(name="Total uses", value=str(s["total_uses"]), inline=True)
@@ -525,6 +610,15 @@ class TagCog(commands.Cog, name="Tags"):
         else:
             await ctx.reply(embed=discord.Embed(description=f"❌ {result}", color=discord.Color.red()))
 
+    # ── t! shorthand ───────────────────────────────────────────────────────
+
+    @commands.command(name="t")
+    async def tag_shortcut(self, ctx: commands.Context, name: str = None, *, args: str = ""):
+        """Shorthand for t!tag <name> [args]. e.g. t!t hello world"""
+        if name is None:
+            return await ctx.reply("Usage: `t!t <tagname> [args]`  (shorthand for `t!tag <name> [args]`)")
+        await ctx.invoke(self.tag, name=name, args=args)
+
     # ── Help ───────────────────────────────────────────────────────────────
 
     @tag.command(name="help")
@@ -533,16 +627,16 @@ class TagCog(commands.Cog, name="Tags"):
         embed = discord.Embed(
             title="Tag System Reference",
             description=(
-                "Create and invoke reusable, scriptable tags.\n"
-                "All commands start with `t!tag` (alias: `t!tags`)."
+                "Create and invoke reusable, scriptable tags — **globally shared across all servers**.\n"
+                "Prefix: `t!tag` (alias: `t!tags`) · Shorthand: `t!t <name> [args]`"
             ),
             color=0x5865F2,
         )
         embed.add_field(
             name="Commands",
             value=textwrap.dedent("""\
-                `t!tag <name> [args]` — invoke a tag
-                `t!tag create <name> <content>` — create
+                `t!tag <name> [args]` / `t!t <name> [args]` — invoke a tag
+                `t!tag create <name> <content>` — create (or edit your own)
                 `t!tag edit <name> <content>` — edit (owner)
                 `t!tag delete <name>` — delete (owner)
                 `t!tag rename <old> <new>` — rename
@@ -551,10 +645,12 @@ class TagCog(commands.Cog, name="Tags"):
                 `t!tag list [page]` — list all tags
                 `t!tag search <query>` — search by name/content
                 `t!tag stats` — server statistics
-                `t!tag alias <name> <alias>` — add alias
+                `t!tag random` — run a random tag
+                `t!tag alias <new> <existing>` — add alias
                 `t!tag unalias <alias>` — remove alias
                 `t!tag transfer <name> @user` — transfer ownership
-                `t!tag perms <name> [options]` — manage permissions\
+                `t!tag perms <name> [options]` — manage permissions
+                `t!tag forceremove <name>` — delete any tag *(owner only)*\
             """),
             inline=False,
         )
@@ -563,20 +659,57 @@ class TagCog(commands.Cog, name="Tags"):
             value=textwrap.dedent("""\
                 `{user}` · `{username}` · `{userid}` · `{mention}` · `{nickname}`
                 `{avatar}` · `{server}` · `{serverid}` · `{channel}` · `{channelid}`
-                `{args}` · `{args.1}` `{args.2}` … · `{argslen}`\
+                `{args}` · `{arg:0}` `{arg:1}` … (0-indexed) · `{arg:*}` (all) · `{argslen}`
+                `{arg:0|fallback}` — with fallback if missing · `{arg:1+}` — all from index 1
+                `{args.1}` `{args.2}` … (1-indexed legacy)
+                `{iv}` / `{iv1}` · `{iv2}` · `{iv3}` … — 1st, 2nd, 3rd attachment URL\
             """),
             inline=False,
         )
         embed.add_field(
             name="Inline functions",
             value=textwrap.dedent("""\
-                `{math:1+2}` · `{math:(5*10)^2}` — arithmetic
-                `{if:a|=|b|then:yes}` — conditional (ops: = != > < >= <=)
-                `{random:1:100}` — random integer in range
+                `{math:1+2}` · `{math:{get:#}+1}` — arithmetic (resolves inner blocks)
+                `{if:a|=|b|then:yes|else:no}` — conditional (ops: = != > < >= <=)
+                `{random:1:100}` / `{range:1|100}` — random int (use `.` for float)
                 `{choose:red|blue|green}` — random choice
-                `{upper:text}` · `{lower:text}` · `{title:text}` · `{reverse:text}`
-                `{len:text}` · `{repeat:3|text}` · `{slice:0|5|text}`\
+                `{get:var}` — read a stored variable
+                `{or:value|fallback}` — return value if non-empty, else fallback
+                `{replace:find|with|text}` — replace all occurrences in text
+                `{upper:x}` · `{lower:x}` · `{title:x}` · `{reverse:x}` · `{len:x}`
+                `{repeat:3|text}` / `{repeat:3:text}` · `{slice:0|5|text}`
+                `{substring:text|start}` · `{substring:text|start|end}`
+                `{indexof:needle|haystack}` — returns index (-1 if not found)\
             """),
+            inline=False,
+        )
+        embed.add_field(
+            name="{set:var|value}",
+            value=(
+                "Store a value in a named variable (persists for the tag's lifetime).\n"
+                "`{set:#|0}` → sets `#` to `0`. Value may contain nested blocks.\n"
+                "Read back with `{get:var}`. Works inside `{foreach:}` loops."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="{foreach:N|template}  /  {foreach:template|i1|i2|i3}",
+            value=textwrap.dedent("""\
+                **Count loop:** repeat template N times (max 50), re-evaluating each iteration.
+                `{set:#|0}{foreach:3|{set:#|{math:{get:#}+1}}[a{get:#}]}` → `[a1][a2][a3]`
+                **Item loop:** apply template to each `|`-separated item; `@` = current item.
+                `{foreach:pitch=@|0|3|7}` → `pitch=0` / `pitch=3` / `pitch=7`
+                Custom separator: prefix template with `sep~` e.g. `{foreach:;~pitch=@|0|3|7}`\
+            """),
+            inline=False,
+        )
+        embed.add_field(
+            name="{tag:name}  /  {tagname}",
+            value=(
+                "Inline-run another tag and insert its text output.\n"
+                "`{tag:invert}` or just `{invert}` (unknown variables auto-become tag lookups).\n"
+                "Nesting limit: 3 levels."
+            ),
             inline=False,
         )
         embed.add_field(
@@ -594,14 +727,19 @@ class TagCog(commands.Cog, name="Tags"):
                 mediascript:
                 speed=2
                 ```
-                **Aliases:** `tagscript`/`tscript` · `imagescript`/`iscript` · `mediascript`/`mscript` · `python`/`py` · `bash`/`sh`
-                **Execution order:** TagScript → ImageScript → MediaScript → Python → Bash\
+                **Aliases:** `tagscript`/`tscript` · `iscript`/`imagescript` · `mediascript`/`mscript` · `py`/`python` · `bash`/`sh` · `js`/`javascript`
+                **Execution order:** Set → ForEach → Tag → TagScript → ImageScript → MediaScript → Python → Bash → JS\
             """),
             inline=False,
         )
         embed.add_field(
             name="{tagscript:…}  /  {tscript:…}",
             value="Re-evaluate content as TagScript (variables, math, conditionals). Inline version of the `tagscript:` prefix block.",
+            inline=False,
+        )
+        embed.add_field(
+            name="{js:…}  *(owner only)*",
+            value="Run Node.js (ESM) code and return stdout. 5 s timeout, 4 000 char output limit.",
             inline=False,
         )
         embed.add_field(
@@ -622,7 +760,7 @@ class TagCog(commands.Cog, name="Tags"):
                 `{text:attachment}` — attached .txt / .md / .csv / .log / .json / .yaml file
                 `{text:reply}` — attachment from replied-to message
                 `{text:https://example.com/file.txt}` — download from URL
-                Max 1 MB · 5 000 lines · 50 000 chars. Encodings: UTF-8/16/32, Latin-1, ASCII.\
+                Max 1 MB · 5 000 lines · 50 000 chars.\
             """),
             inline=False,
         )
@@ -650,8 +788,7 @@ class TagCog(commands.Cog, name="Tags"):
             name="{ihtx:reps dur noTrim fmt effects}",
             value=(
                 "Run the IHTX effect chain on the attached file.\n"
-                "Example: `{ihtx:1 10 false mp4 huehsv,negate,speed=1.5}`\n"
-                "Example: `{ihtx:2 15 false mp4 ffmpeg(-vf hue=h=50)}`"
+                "Example: `{ihtx:1 10 false mp4 huehsv,negate,speed=1.5}`"
             ),
             inline=False,
         )
@@ -680,7 +817,7 @@ class TagCog(commands.Cog, name="Tags"):
         embed.add_field(
             name="Permissions",
             value=textwrap.dedent("""\
-                **Create** — everyone
+                **Create** — everyone (re-create your own tag = edit)
                 **Edit / Delete / Rename** — tag creator · bot owner
                 **Bot owner** overrides all ownership checks and is audit-logged.\
             """),

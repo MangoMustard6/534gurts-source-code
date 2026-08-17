@@ -48,6 +48,12 @@ SCRIPT_ALIASES: dict[str, str] = {
     "attach":      "attach",
     "embedjson":   "embedjson",
     "ihtx":        "ihtx",
+    # new engines
+    "foreach":     "foreach",
+    "set":         "set",
+    "tag":         "tag",
+    "js":          "js",
+    "javascript":  "js",
 }
 
 # Human-readable display names for engine types
@@ -64,12 +70,17 @@ ENGINE_DISPLAY_NAMES: dict[str, str] = {
     "attach":      "Attach",
     "embedjson":   "EmbedJSON",
     "ihtx":        "IHTX",
+    "foreach":     "ForEach",
+    "set":         "Set",
+    "tag":         "Tag",
+    "js":          "JavaScript",
 }
 
 # Execution order — lower index = runs first
 _ENGINE_ORDER: list[str] = [
+    "set", "foreach", "tag",
     "tagscript", "iscript", "mediascript", "py", "bash",
-    "ffmpeg", "frei0r",
+    "ffmpeg", "frei0r", "js",
     "text", "attach", "embedjson", "eval", "ihtx",
 ]
 _ENGINE_PRIORITY: dict[str, int] = {name: i for i, name in enumerate(_ENGINE_ORDER)}
@@ -92,7 +103,7 @@ _SCRIPT_PREFIX_LINE = re.compile(
 
 # Engines whose content may contain deeply nested braces (e.g. JSON objects).
 # These are extracted by a depth-counting pre-pass before the regex runs.
-_DEEP_ENGINES = ("embedjson", "eval")
+_DEEP_ENGINES = ("embedjson", "eval", "foreach", "set")
 
 # All engine names — blocks with these names are dispatched to engines.
 KNOWN_ENGINES = frozenset(SCRIPT_ALIASES.values())
@@ -301,7 +312,10 @@ def _resolve_var(key: str, ctx: dict) -> str:
 def resolve_variables(text: str, ctx: dict) -> str:
     def replacer(m: re.Match) -> str:
         result = _resolve_var(m.group(1), ctx)
-        return result if result else m.group(0)
+        if result:
+            return result
+        # Unknown {var} → shorthand for {tag:var} (e.g. {invert} runs tag "invert")
+        return "{tag:" + m.group(1).lower() + "}"
     return _VAR_RE.sub(replacer, text)
 
 
@@ -315,7 +329,14 @@ def _eval_if(content: str) -> str:
     then_rest = "|".join(parts[3:])
     if not then_rest.startswith("then:"):
         return ""
-    result_val = then_rest[5:]
+    after_then = then_rest[5:]
+    # Split on |else: to find optional else branch
+    then_val = after_then
+    else_val = ""
+    if "|else:" in after_then:
+        idx = after_then.index("|else:")
+        then_val = after_then[:idx]
+        else_val = after_then[idx + 6:]
     try:
         a_num, b_num = float(a), float(b)
         numeric = True
@@ -334,10 +355,12 @@ def _eval_if(content: str) -> str:
         matched = a_num >= b_num
     elif op == "<=" and numeric:
         matched = a_num <= b_num
-    return result_val if matched else ""
+    return then_val if matched else else_val
 
 
-def _handle_block(name: str, content: str, engine_blocks: list) -> str:
+def _handle_block(name: str, content: str, engine_blocks: list, ctx: dict = None) -> str:
+    if ctx is None:
+        ctx = {}
     name_lo = name.lower()
     canonical = SCRIPT_ALIASES.get(name_lo)
 
@@ -346,15 +369,47 @@ def _handle_block(name: str, content: str, engine_blocks: list) -> str:
         engine_blocks.append({"engine": canonical, "content": content.strip()})
         return ""
 
+    # ── {arg:n[|fallback]} / {arg:n+} / {arg:*[|sep]} — argument access ──
+    if name_lo == "arg":
+        words = ctx.get("args", "").split()
+        # Split on first pipe for optional fallback/separator
+        pipe_idx = content.find("|")
+        key = content[:pipe_idx].strip() if pipe_idx != -1 else content.strip()
+        fallback = content[pipe_idx + 1:] if pipe_idx != -1 else None
+
+        if key == "*":
+            # {arg:*} or {arg:*|sep} — all args joined
+            if fallback is not None:
+                return ctx.get("args", "").replace(" ", fallback) if words else ""
+            return ctx.get("args", "")
+        if key.endswith("+"):
+            # {arg:N+} — all args from index N onward
+            try:
+                idx = int(key[:-1])
+                sliced = words[idx:]
+                return " ".join(sliced) if sliced else (fallback or "")
+            except (ValueError, IndexError):
+                return fallback or ""
+        try:
+            val = words[int(key)] if 0 <= int(key) < len(words) else ""
+            return val if val else (fallback or "")
+        except (ValueError, IndexError):
+            return fallback or ""
+
+    # ── {get:var} — retrieve named variable ──
+    if name_lo == "get":
+        return str(ctx.get(content.strip(), ""))
+
     # ── Conditionals ──
     if name_lo == "if":
         return _eval_if(content)
 
-    # ── Math ──
+    # ── Math (resolves inner blocks first, e.g. {math:{get:#}+1}) ──
     if name_lo == "math":
-        return _safe_math(content)
+        inner, _ = resolve_blocks(content, ctx)
+        return _safe_math(inner)
 
-    # ── Random ──
+    # ── Random / range ──
     if name_lo in ("random", "choose"):
         if ":" in content and "|" not in content:
             halves = content.split(":", 1)
@@ -365,6 +420,23 @@ def _handle_block(name: str, content: str, engine_blocks: list) -> str:
                 pass
         choices = [c.strip() for c in content.split("|") if c.strip()]
         return random.choice(choices) if choices else ""
+
+    if name_lo == "range":
+        parts = content.split("|", 1)
+        if len(parts) == 2:
+            try:
+                lo_s, hi_s = parts[0].strip(), parts[1].strip()
+                is_float = "." in lo_s or "." in hi_s
+                lo, hi = float(lo_s), float(hi_s)
+                if lo > hi:
+                    lo, hi = hi, lo
+                if is_float:
+                    val = random.uniform(lo, hi)
+                    return f"{val:.4f}".rstrip("0").rstrip(".")
+                return str(random.randint(int(lo), int(hi)))
+            except ValueError:
+                pass
+        return ""
 
     # ── Text functions ──
     if name_lo == "upper":
@@ -377,14 +449,22 @@ def _handle_block(name: str, content: str, engine_blocks: list) -> str:
         return content[::-1]
     if name_lo == "len":
         return str(len(content.strip()))
+
     if name_lo == "repeat":
-        parts = content.split("|", 1)
+        # Support both {repeat:N|text} and {repeat:N:text}
+        if "|" in content:
+            parts = content.split("|", 1)
+        elif ":" in content:
+            parts = content.split(":", 1)
+        else:
+            return ""
         try:
-            n = max(0, min(int(parts[0].strip()), 20))
-            val = parts[1].strip() if len(parts) > 1 else ""
+            n = max(0, min(int(parts[0].strip()), 50))
+            val = parts[1] if len(parts) > 1 else ""
             return val * n
         except ValueError:
             return ""
+
     if name_lo == "slice":
         parts = content.split("|", 2)
         if len(parts) == 3:
@@ -395,6 +475,44 @@ def _handle_block(name: str, content: str, engine_blocks: list) -> str:
                 pass
         return ""
 
+    # ── {substring:text|start[|end]} ──
+    if name_lo == "substring":
+        parts = content.split("|", 2)
+        if len(parts) >= 2:
+            try:
+                text_val = parts[0]
+                start = int(parts[1])
+                if len(parts) == 3:
+                    return text_val[start:int(parts[2])]
+                return text_val[start:]
+            except (ValueError, IndexError):
+                pass
+        return ""
+
+    # ── {indexof:needle|haystack} ──
+    if name_lo == "indexof":
+        parts = content.split("|", 1)
+        if len(parts) == 2:
+            return str(parts[1].find(parts[0]))
+        return "-1"
+
+    # ── {or:value|fallback} — return value if non-empty, else fallback ──
+    if name_lo == "or":
+        pipe_idx = content.find("|")
+        if pipe_idx == -1:
+            return content
+        val = content[:pipe_idx]
+        fallback = content[pipe_idx + 1:]
+        return val if val.strip() else fallback
+
+    # ── {replace:find|with|text} — string replacement ──
+    if name_lo == "replace":
+        parts = content.split("|", 2)
+        if len(parts) < 3:
+            return content
+        find, rep, src = parts[0], parts[1], parts[2]
+        return src.replace(find, rep) if find else src
+
     # Unknown — leave intact
     return "{" + name + ":" + content + "}"
 
@@ -403,7 +521,7 @@ def resolve_blocks(text: str, ctx: dict) -> tuple[str, list[dict]]:
     engine_blocks: list[dict] = []
 
     def replacer(m: re.Match) -> str:
-        return _handle_block(m.group(1), m.group(2), engine_blocks)
+        return _handle_block(m.group(1), m.group(2), engine_blocks, ctx)
 
     processed = _BLOCK_RE.sub(replacer, text)
     return processed.strip(), engine_blocks
@@ -457,6 +575,60 @@ def parse(content: str, ctx: dict) -> tuple[str, list[dict]]:
     return text, all_blocks
 
 
+_VIDEO_EXTS = frozenset({".mp4", ".mov", ".mkv", ".webm", ".avi", ".gif"})
+_VIDEO_MIME_PREFIXES = ("video/", "image/gif")
+
+
+def _first_attachment_url(msg) -> str:
+    """Return the URL of the first attachment on a message, or ''.
+
+    Uses ``proxy_url`` (Discord's authenticated CDN proxy) when available,
+    falling back to ``url``. Discord CDN now requires auth for fresh uploads.
+    """
+    if msg and msg.attachments:
+        att = msg.attachments[0]
+        return att.proxy_url or att.url
+    return ""
+
+
+def _first_video_url(msg) -> str:
+    """Return the URL of the first video/gif attachment on a message, or ''.
+
+    Uses ``proxy_url`` (Discord's authenticated CDN proxy) when available.
+    """
+    if not msg or not msg.attachments:
+        return ""
+    for att in msg.attachments:
+        ct = att.content_type or ""
+        if ct.startswith(_VIDEO_MIME_PREFIXES):
+            return att.proxy_url or att.url
+        import os
+        ext = os.path.splitext(att.filename)[1].lower()
+        if ext in _VIDEO_EXTS:
+            return att.proxy_url or att.url
+    # Nothing video-like — return first attachment anyway so the tag can try
+    att = msg.attachments[0]
+    return att.proxy_url or att.url
+
+
+def _resolved_ref(discord_ctx) -> object | None:
+    """Return the resolved referenced (replied-to) message, if any."""
+    ref = getattr(discord_ctx.message, "reference", None)
+    if ref is None:
+        return None
+    resolved = getattr(ref, "resolved", None)
+    if isinstance(resolved, Exception) or resolved is None:
+        return None
+    return resolved
+
+
+def _all_attachment_urls(msg) -> list[str]:
+    """Return proxy_url (or url) for every attachment on a message."""
+    if not msg or not msg.attachments:
+        return []
+    return [att.proxy_url or att.url for att in msg.attachments]
+
+
 def build_context(discord_ctx, args: str) -> dict:
     """Build the variable context dict from a discord.py Context object."""
     user = discord_ctx.author
@@ -467,7 +639,22 @@ def build_context(discord_ctx, args: str) -> dict:
     if hasattr(user, "nick"):
         nick = user.nick
     nickname = nick or user.display_name
-    return {
+
+    # Resolve media attachment variables: prefer current message, fall back to reply
+    cur_msg = discord_ctx.message
+    ref_msg = _resolved_ref(discord_ctx)
+
+    # {ia} — first attachment URL (any type)
+    ia = _first_attachment_url(cur_msg) or _first_attachment_url(ref_msg)
+    # {iv} — first video/gif attachment URL, then any attachment
+    iv = _first_video_url(cur_msg) or _first_video_url(ref_msg)
+    if not iv:
+        iv = ia  # last resort: use whatever attachment is there
+
+    # {iv2}, {iv3}, … — all attachment URLs from current message then reply
+    all_urls = _all_attachment_urls(cur_msg) or _all_attachment_urls(ref_msg)
+
+    ctx: dict = {
         "user":      user.display_name,
         "username":  user.name,
         "userid":    str(user.id),
@@ -482,4 +669,15 @@ def build_context(discord_ctx, args: str) -> dict:
         "channelid": str(channel.id),
         "args":      args,
         "argslen":   str(len(args.split()) if args else 0),
+        "iv":        iv,
+        "iv1":       iv,
+        "ia":        ia,
+        "ia1":       ia,
     }
+
+    # Populate {iv2}, {iv3}, … / {ia2}, {ia3}, … for each extra attachment
+    for i, url in enumerate(all_urls, start=1):
+        ctx[f"iv{i}"] = url
+        ctx[f"ia{i}"] = url
+
+    return ctx

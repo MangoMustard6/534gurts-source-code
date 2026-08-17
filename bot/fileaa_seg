@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""fileaa_seg — segmented fileaa video pipeline.
+
+Splits a video into fixed-length segments, runs the fileaa binary on each
+segment's audio, then reassembles and concatenates the result.
+
+Usage:
+  fileaa_seg <input_video> <output_video> <pitches> [flags...] [--seg N]
+
+Positional args:
+  input_video   Path to input video (or audio) file.
+  output_video  Path for the final output file.
+  pitches       Comma-separated semitone values (e.g. "-7,7" or "5").
+
+fileaa flags (passed through to the binary on every segment):
+  --bungee                    Bungee Basic pitch engine
+  --backend <name>            rubberband | signalsmith | bungee | soundtouch | basic
+  --soundtouch                SoundTouch engine
+  --basic                     Built-in WSOLA fallback
+  --preserve-formants         Preserve formants
+  --no-normalize              Disable peak normalisation
+  --rubberband-args "<flags>" Rubber Band CLI flags (e.g. "-2 --pitch-hc")
+
+Script-only flag:
+  --seg N   Segment duration in seconds (default: 0.4)
+
+Per-segment pipeline:
+  ffmpeg ... -preset ultrafast -qp 1 -c:v libx264 -c:a pcm_s16le  a{i}.mp4
+  ffmpeg -i a{i}.mp4  h{i}.wav
+  fileaa  h{i}.wav  out{i}.wav  <pitches>  [fileaa_flags]
+  ffmpeg -i a{i}.mp4 -i out{i}.wav  -map 0:v -map 1:a
+         -c:a pcm_s16le -t {seg}  -preset ultrafast -qp 1  {i}.mp4
+
+All segments are concatenated into the final output.
+
+Examples:
+  fileaa_seg input.mp4 output.mp4 -7,7 --bungee --no-normalize
+  fileaa_seg input.mp4 output.mp4 5 --backend signalsmith --seg 0.2
+  fileaa_seg input.mp4 output.mp4 -12,0,12 --rubberband-args "-2 --pitch-hc"
+"""
+
+import math
+import os
+import subprocess
+import sys
+import tempfile
+
+# ── Locate the fileaa binary next to this script ────────────────────────────
+_SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+_FILEAA_BIN = os.path.join(_SCRIPT_DIR, "fileaa")
+
+# fileaa flags that this script recognises and passes through
+_FILEAA_FLAGS = {
+    "--bungee", "--soundtouch", "--basic", "--preserve-formants", "--no-normalize",
+}
+_FILEAA_FLAG_WITH_VALUE = {"--backend", "--rubberband-args"}
+
+
+def _die(msg: str) -> None:
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _run(cmd: list[str], timeout: int = 120) -> tuple[bool, str]:
+    try:
+        res = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        if res.returncode != 0:
+            stderr = res.stderr.decode(errors="replace")[-600:]
+            return False, stderr
+        return True, ""
+    except subprocess.TimeoutExpired:
+        return False, "timed out"
+    except FileNotFoundError as exc:
+        return False, str(exc)
+
+
+def _ffprobe_val(*args: str) -> str:
+    res = subprocess.run(
+        ["ffprobe", "-v", "quiet", *args],
+        capture_output=True, text=True,
+    )
+    return res.stdout.strip()
+
+
+def _probe_duration(path: str) -> float:
+    raw = _ffprobe_val(
+        "-show_entries", "format=duration",
+        "-of", "default=nw=1:nk=1",
+        path,
+    )
+    try:
+        return float(raw)
+    except (ValueError, TypeError):
+        _die(f"could not probe duration of '{path}' (got: {raw!r})")
+
+
+def _has_video(path: str) -> bool:
+    return bool(_ffprobe_val(
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_type",
+        "-of", "default=nw=1:nk=1",
+        path,
+    ).strip())
+
+
+def main() -> None:
+    args = sys.argv[1:]
+
+    if len(args) < 3 or args[0] in ("-h", "--help"):
+        print(__doc__)
+        sys.exit(0)
+
+    input_video  = args[0]
+    output_video = args[1]
+    pitches      = args[2]
+    rest         = args[3:]
+
+    if not os.path.isfile(input_video):
+        _die(f"input file not found: '{input_video}'")
+    if not os.path.isfile(_FILEAA_BIN) or not os.access(_FILEAA_BIN, os.X_OK):
+        _die(f"fileaa binary not found or not executable: '{_FILEAA_BIN}'")
+
+    # ── Parse remaining flags ────────────────────────────────────────────────
+    seg_duration: float = 0.4
+    fileaa_extra: list[str] = []
+
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        if tok == "--seg":
+            i += 1
+            if i >= len(rest):
+                _die("--seg requires a value")
+            try:
+                seg_duration = max(0.05, min(float(rest[i]), 60.0))
+            except ValueError:
+                _die(f"--seg value must be a number, got {rest[i]!r}")
+        elif tok in _FILEAA_FLAGS:
+            fileaa_extra.append(tok)
+        elif tok in _FILEAA_FLAG_WITH_VALUE:
+            fileaa_extra.append(tok)
+            i += 1
+            if i >= len(rest):
+                _die(f"{tok} requires a value")
+            fileaa_extra.append(rest[i])
+        else:
+            _die(f"unknown flag: {tok!r}")
+        i += 1
+
+    # ── Probe input ──────────────────────────────────────────────────────────
+    total_duration = _probe_duration(input_video)
+    has_vid        = _has_video(input_video)
+    n_segs         = max(1, math.ceil(total_duration / seg_duration))
+
+    print(
+        f"fileaa_seg: {n_segs} segment(s) × {seg_duration}s  |  "
+        f"pitches={pitches}  |  flags={fileaa_extra or ['(none)']}",
+        file=sys.stderr,
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        seg_paths: list[str] = []
+
+        for idx in range(n_segs):
+            t_start = idx * seg_duration
+            label   = f"[seg {idx + 1}/{n_segs}]"
+
+            # ── Step 1: extract segment ──────────────────────────────────────
+            a_path = os.path.join(tmpdir, f"a{idx}.mp4")
+            cmd1: list[str] = [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-ss", str(t_start), "-t", str(seg_duration),
+                "-i", input_video,
+            ]
+            if has_vid:
+                cmd1 += [
+                    "-c:v", "libx264", "-preset", "ultrafast",
+                    "-qp", "1", "-pix_fmt", "yuv420p",
+                ]
+            cmd1 += ["-c:a", "pcm_s16le", a_path]
+            ok, err = _run(cmd1, timeout=60)
+            if not ok:
+                _die(f"{label} segment extract failed:\n{err}")
+            print(f"{label} extracted", file=sys.stderr)
+
+            # ── Step 2: extract audio to WAV ─────────────────────────────────
+            h_path = os.path.join(tmpdir, f"h{idx}.wav")
+            ok, err = _run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-i", a_path, h_path],
+                timeout=60,
+            )
+            if not ok:
+                _die(f"{label} audio extract failed:\n{err}")
+
+            # ── Step 3: fileaa ────────────────────────────────────────────────
+            out_wav = os.path.join(tmpdir, f"out{idx}.wav")
+            fa_cmd  = [_FILEAA_BIN, h_path, out_wav, pitches] + fileaa_extra
+            res = subprocess.run(fa_cmd, capture_output=True, timeout=120)
+            if res.returncode != 0:
+                stderr_note = res.stderr.decode(errors="replace")[-400:] if res.stderr else ""
+                _die(f"{label} fileaa failed:\n{stderr_note}")
+            print(f"{label} fileaa done", file=sys.stderr)
+
+            # ── Step 4: remux processed audio onto segment ────────────────────
+            seg_out = os.path.join(tmpdir, f"{idx}.mp4")
+            if has_vid:
+                cmd4 = [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-i", a_path, "-i", out_wav,
+                    "-map", "0:v", "-map", "1:a",
+                    "-c:v", "libx264", "-preset", "ultrafast",
+                    "-qp", "1", "-pix_fmt", "yuv420p",
+                    "-c:a", "pcm_s16le",
+                    "-t", str(seg_duration),
+                    seg_out,
+                ]
+            else:
+                cmd4 = [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-i", out_wav,
+                    "-c:a", "pcm_s16le",
+                    "-t", str(seg_duration),
+                    seg_out,
+                ]
+            ok, err = _run(cmd4, timeout=60)
+            if not ok:
+                _die(f"{label} remux failed:\n{err}")
+
+            seg_paths.append(seg_out)
+
+        # ── Concatenate all segments ──────────────────────────────────────────
+        print("fileaa_seg: concatenating segments…", file=sys.stderr)
+        concat_list = os.path.join(tmpdir, "concat.txt")
+        with open(concat_list, "w") as f:
+            for sp in seg_paths:
+                f.write(f"file '{sp}'\n")
+
+        concat_cmd: list[str] = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "concat", "-safe", "0", "-i", concat_list,
+        ]
+        if has_vid:
+            concat_cmd += [
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "pcm_s16le",
+            ]
+        else:
+            concat_cmd += ["-c:a", "pcm_s16le"]
+        concat_cmd.append(output_video)
+
+        ok, err = _run(concat_cmd, timeout=300)
+        if not ok:
+            _die(f"concat failed:\n{err}")
+
+    print(f"fileaa_seg: done → {output_video}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

@@ -16,14 +16,14 @@ function weightedPick(): string {
 
 function payoutLabel(s1: string, s2: string, s3: string): { label: string; color: number } {
   if (s1 === s2 && s2 === s3) {
-    if (s1 === '7️⃣') return { label: '🎰 **JACKPOT! TRIPLE SEVENS!** 🎰', color: 0xffd700 };
-    if (s1 === '💎') return { label: '💎 **TRIPLE DIAMONDS!**', color: 0x00d4ff };
-    return { label: `🎉 **THREE OF A KIND!** ${s1}${s1}${s1}`, color: 0x57f287 };
+    if (s1 === '7️⃣') return { label: '🎰 **JACKPOT! TRIPLE SEVENS!** 🎰', color: 0x40E0D0 };
+    if (s1 === '💎') return { label: '💎 **TRIPLE DIAMONDS!**', color: 0x40E0D0 };
+    return { label: `🎉 **THREE OF A KIND!** ${s1}${s1}${s1}`, color: 0x40E0D0 };
   }
   if (s1 === s2 || s2 === s3 || s1 === s3) {
-    return { label: '✨ **Pair!**', color: 0xfee75c };
+    return { label: '✨ **Pair!**', color: 0x40E0D0 };
   }
-  return { label: '😔 No match. Try again!', color: 0xed4245 };
+  return { label: '😔 No match. Try again!', color: 0x40E0D0 };
 }
 
 export async function handleSlots(message: Message, ownerId: string): Promise<void> {

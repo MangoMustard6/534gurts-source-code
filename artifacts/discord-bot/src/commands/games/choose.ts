@@ -7,7 +7,7 @@ export async function handleChoose(message: Message, args: string[], ownerId: st
 
   if (options.length < 2) {
     await message.reply(
-      '❌ Provide at least 2 options separated by `|`.\nExample: `t!choose pizza | tacos | sushi`',
+      '❌ Provide at least 2 options separated by `|`.\nExample: `th/choose pizza | tacos | sushi`',
     );
     return;
   }
@@ -22,7 +22,7 @@ export async function handleChoose(message: Message, args: string[], ownerId: st
   const embed = gameEmbed(message, ownerId, {
     title: '🎯 I Choose…',
     description: `## ${winner}`,
-    color: 0x57f287,
+    color: 0x40E0D0,
     fields: [
       {
         name: `All ${options.length} options`,

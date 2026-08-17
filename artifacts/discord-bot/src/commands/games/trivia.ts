@@ -49,7 +49,7 @@ function fetchTrivia(): Promise<TriviaResult> {
   });
 }
 
-const DIFF_COLORS = { easy: 0x57f287, medium: 0xfee75c, hard: 0xed4245 } as const;
+const DIFF_COLORS = { easy: 0x40E0D0, medium: 0x40E0D0, hard: 0x40E0D0 } as const;
 const DIFF_EMOJI = { easy: '🟢', medium: '🟡', hard: '🔴' } as const;
 const LABELS = ['A', 'B', 'C', 'D'];
 
@@ -109,7 +109,7 @@ export async function handleTrivia(message: Message, ownerId: string): Promise<v
 
     const resultEmbed = gameEmbed(message, ownerId, {
       title: `🧠 Trivia — ${isCorrect ? '✅ Correct!' : '❌ Wrong!'}`,
-      color: isCorrect ? 0x57f287 : 0xed4245,
+      color: 0x40E0D0,
       fields: [
         { name: 'Question', value: question },
         { name: 'Your answer', value: `**${LABELS[chosen]}.** ${allAnswers[chosen]}`, inline: true },
@@ -125,7 +125,7 @@ export async function handleTrivia(message: Message, ownerId: string): Promise<v
     if (collected.size === 0) {
       const timeoutEmbed = gameEmbed(message, ownerId, {
         title: '🧠 Trivia — ⏰ Time\'s up!',
-        color: 0x888888,
+        color: 0x40E0D0,
         fields: [
           { name: 'Question', value: question },
           { name: 'Correct answer', value: `**${LABELS[correctIndex]}.** ${correct}` },

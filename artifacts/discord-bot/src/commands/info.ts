@@ -38,7 +38,7 @@ export async function handleInfo(message: Message): Promise<void> {
   ]);
 
   const embed = new EmbedBuilder()
-    .setColor(0x5865f2)
+    .setColor(0x40E0D0)
     .setAuthor({
       name: isOwner ? `👑 ${message.author.displayName}` : message.author.displayName,
       iconURL: message.author.displayAvatarURL(),

@@ -1,1 +1,28 @@
-- [Update log policy](updatelog-policy.md) — always add/update _UPDATELOG in bot/ihtx_bot.py when changing the bot; newest entry goes at top of list.
+- [Update log policy](updatelog-policy.md) — always add/update _UPDATELOG in bot/ihtx_bot.py when changing either bot; newest entry goes at top of list.
+- [BOT_OWNER_ID required policy](bot-owner-id-required.md) — never use a hardcoded default owner ID; both bots must exit at startup if BOT_OWNER_ID is missing.
+- [Tag parser execution model](tag-parser-execution-model.md) — ordering of set/foreach/get across parse pipeline; why foreach must be a deep engine and how inner-block resolution works for math.
+- [Gradientmap implementation](gradientmap-implementation.md) — cross-bot FFmpeg filtergraph shape, raw-param preprocessing, and why `-filter_complex` with `[v]` output is required.
+- [Discord Entry Point sync workaround](discord-entry-point-sync.md) — tree.sync() breaks with error 50240 when app has Entry Point (type=4); use t!syncslash instead (bulk_upsert + preserved EPs).
+- [Building missing frei0r plugins on Nix](frei0r-plugin-build.md) — the Nix frei0r package may omit newer plugins like mirr0r; build from source and install to ~/.frei0r-1/lib/ so FFmpeg discovers them.
+- [Help preview attachments](help-preview-attachments.md) — use local PNG/GIF Discord attachments for bothelp previews; Catbox returned zero-byte image bodies.
+- [IHTX no-trim flags](ihtx-no-trim-flags.md) — `true`/`yes`/`+` preserves full length; `false`/`no`/`-` loops and trims to duration.
+- [Pitch value limit](pitch-value-limit.md) — pitch-layer commands consistently cap user-supplied pitch values at 100.
+- [VEB mention trigger](veb-mention-trigger.md) — VEB's random effects are command-only; bot mentions on replied media must not auto-process.
+- [Night Shift game](nightshift-game.md) — `/nightshift` renders all frames procedurally in memory and runs as a per-channel interactive game cog.
+- [Night Shift difficulty](nightshift-difficulty.md) — Easy, Normal, and Hard tune battery drain and animatronic movement; Normal is the default.
+- [Discord message length](discord-message-length.md) — clip FFmpeg and exception diagnostics before Discord replies or edits to stay under 2,000 characters.
+- [SCGV TypeScript paths](scgv-typescript-paths.md) — keep SCGV available through both the reusable pipe-effect runner and the standalone prefix command.
+- [Pitchtransition separators](pitchtransition-separators.md) — accept semicolon-separated voice pairs and the space-normalized form produced by custom exports.
+- [Pitchtransition export timing](pitchtransition-export-timing.md) — compensate Rubber Band look-ahead and reset audio/video PTS through every IHTX export pass.
+- [Pitchtransition tail preservation](pitchtransition-tail.md) — pad before Rubber Band, then compensate latency and trim so the final endpoint is not cut.
+- [Wiki chat retrieval paths](wiki-chat-retrieval-paths.md) — attach Logo Editing Wiki context to every AI response path, including autoreply2 and command-named effect questions.
+- [Preview1280 R3 pitch toggle](preview1280-r3-toggle.md) — trailing `r3` selects native Rubber Band R3 while preserving montage pitch values, timing, and visuals.
+- [IHTX output format](ihtx-output-format.md) — optional format after intermediate format keeps renders in one container and converts only the final export.
+- [Hybrid media conversion](hybrid-media-conversion.md) — `/convert` and `th/convert` are the sole media conversion commands; the obsolete multi-output converter is removed.
+- [Discord voice-message payload](discord-voice-message-payload.md) — discord.py 2.7.1 lacks voice-message helpers; use raw flags 8192 plus Ogg/Opus attachment waveform metadata.
+- [Audio put replace](audio-put-replace.md) — nested prefix parsing and typed slash registration share attachment, URL, and reply source resolution.
+- [Multiple prefix dispatch](multiple-prefix-dispatch.md) — if command_prefix accepts multiple prefixes, on_message gates must allow every prefix before process_commands.
+- [Tvsim generator mapping](tvsim-generator-mapping.md) — Python TVSIM now follows the supplied genTvSim eight-parameter filtergraph and maps one processed video plus source audio.
+- [Pipe export progress](pipe-export-progress.md) — pipe-mode UI reports export passes with a 20-block bar, not individual effect names.
+- [Pipe output format default](pipe-output-format-default.md) — omitting the final format keeps the intermediate export container and skips final conversion.
+- [IHTX restart recovery](ihtx-restart-recovery.md) — interrupted prefix jobs persist their Discord message and replay after reconnect.

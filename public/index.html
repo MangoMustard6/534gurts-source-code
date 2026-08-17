@@ -3,334 +3,892 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>t!multipitchihtx — Pipeline Visualizer</title>
+<title>th/ihtx — Effect Builder</title>
 <style>
-  :root {
-    --bg: #0e0e12;
-    --panel: #16161d;
-    --border: #2a2a35;
-    --accent: #7c5cbf;
-    --accent2: #3a86ff;
-    --green: #2ecc71;
-    --red: #e74c3c;
-    --text: #e8e8f0;
-    --muted: #7a7a90;
-    --layer-h: 36px;
-    --gap: 12px;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; padding: 32px 20px 60px; }
+:root {
+  --bg: #0a0a0f;
+  --panel: #13131a;
+  --panel2: #1a1a24;
+  --border: #252532;
+  --border2: #2e2e3e;
+  --accent: #7c5cbf;
+  --accent-dim: rgba(124,92,191,.18);
+  --accent2: #3a86ff;
+  --accent2-dim: rgba(58,134,255,.15);
+  --green: #2ecc71;
+  --red: #e74c3c;
+  --orange: #f39c12;
+  --text: #e8e8f2;
+  --muted: #6a6a85;
+  --muted2: #9090b0;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 14px; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  min-height: 100vh; display: flex; flex-direction: column;
+  padding-bottom: 88px;
+}
 
-  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
-  h1 span { color: var(--accent); }
-  .subtitle { color: var(--muted); font-size: .9rem; margin-bottom: 28px; }
+/* ── HEADER ─────────────────────────────────────────────────────── */
+header {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(10,10,15,.95); backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px; display: flex; align-items: center; gap: 14px;
+}
+.logo { font-size: 1.15rem; font-weight: 800; letter-spacing: -.02em; }
+.logo .cmd  { color: var(--accent); }
+.logo .cmd2 { color: var(--accent2); }
+.logo .sep  { color: var(--muted); margin: 0 6px; }
+.hbadge {
+  background: var(--accent-dim); border: 1px solid var(--accent);
+  color: var(--accent); border-radius: 20px; padding: 2px 9px;
+  font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+}
+header .tagline { color: var(--muted2); font-size: .8rem; margin-left: auto; }
 
-  /* Controls */
-  .controls {
-    display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 32px;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px;
-  }
-  .ctrl-group { display: flex; flex-direction: column; gap: 4px; }
-  .ctrl-group label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
-  .ctrl-group input[type=range] { width: 140px; accent-color: var(--accent); }
-  .ctrl-group input[type=number] { width: 80px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 4px 8px; font-size: .9rem; }
-  .val-display { font-size: .85rem; color: var(--accent); font-weight: 600; }
+/* ── INFO STRIP ──────────────────────────────────────────────────── */
+.info-strip {
+  padding: 7px 24px; background: rgba(58,134,255,.05);
+  border-bottom: 1px solid rgba(58,134,255,.1);
+  font-size: .77rem; color: var(--muted2); display: flex; align-items: center; gap: 8px;
+}
+.info-strip code {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 5px; color: var(--accent2); font-family: monospace;
+}
 
-  /* Pipeline */
-  .pipeline { display: flex; flex-direction: column; gap: 20px; }
+/* ── SECTION ─────────────────────────────────────────────────────── */
+.section { padding: 18px 24px; border-bottom: 1px solid var(--border); }
+.sec-title {
+  font-size: .68rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 12px; display: flex; align-items: center; gap: 10px;
+}
+.sec-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 
-  .stage-row { display: flex; align-items: flex-start; gap: 16px; }
+/* ── DROP ZONE ───────────────────────────────────────────────────── */
+#dropzone {
+  border: 2px dashed var(--border2); border-radius: 12px;
+  padding: 28px 20px; text-align: center; cursor: pointer;
+  transition: all .18s; position: relative; background: var(--panel);
+}
+#dropzone:hover, #dropzone.drag-over {
+  border-color: var(--accent); background: var(--accent-dim);
+}
+#dropzone.has-file { border-style: solid; border-color: var(--accent2); background: var(--accent2-dim); }
+.dz-icon { font-size: 2rem; margin-bottom: 8px; }
+.dz-label { font-size: .95rem; font-weight: 600; margin-bottom: 4px; }
+.dz-sub   { font-size: .78rem; color: var(--muted2); }
+#fileInput { display: none; }
+#dropzone input[type=file] { display: none; }
 
-  /* segment card */
-  .segment-card {
-    flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
-    transition: box-shadow .3s;
-  }
-  .segment-card:hover { box-shadow: 0 0 0 1px var(--accent); }
-  .seg-header {
-    background: rgba(124,92,191,.18); border-bottom: 1px solid var(--border);
-    padding: 10px 16px; font-weight: 600; font-size: .85rem; display: flex; align-items: center; gap: 8px;
-  }
-  .seg-num { background: var(--accent); color: #fff; border-radius: 6px; padding: 2px 8px; font-size: .75rem; }
+/* ── EXPORT CONTROLS ─────────────────────────────────────────────── */
+.export-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px;
+}
+.export-group {
+  display: flex; flex-direction: column; gap: 5px; background: var(--panel);
+  border: 1px solid var(--border2); border-radius: 8px; padding: 10px 12px;
+}
+.export-group label {
+  font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted); display: flex; align-items: center; gap: 5px;
+}
+.export-group input[type="number"], .export-group select {
+  background: var(--bg); border: 1px solid var(--border2); border-radius: 5px;
+  color: var(--text); padding: 6px 9px; font-size: .85rem; font-family: inherit;
+  outline: none;
+}
+.export-group input[type="number"]:focus, .export-group select:focus { border-color: var(--accent2); }
+.export-group input[type="checkbox"] {
+  width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;
+}
+.export-hint {
+  font-size: .68rem; color: var(--muted2); margin-top: 2px;
+}
+.export-group.chk { flex-direction: row; align-items: center; justify-content: space-between; }
 
-  .seg-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+@media (max-width: 680px) {
+  .export-grid { grid-template-columns: repeat(2, 1fr); }
+}
 
-  /* pitch layers */
-  .layers-wrap { display: flex; flex-direction: column; gap: 5px; }
-  .layer-row {
-    height: var(--layer-h); background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-    display: flex; align-items: center; padding: 0 10px; font-size: .78rem; gap: 8px; position: relative; overflow: hidden;
-  }
-  .layer-fill {
-    position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px;
-    background: linear-gradient(90deg, rgba(58,134,255,.25), rgba(124,92,191,.15));
-    animation: fillIn .5s ease forwards;
-    transform-origin: left;
-  }
-  @keyframes fillIn { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-  .layer-tag { position: relative; z-index: 1; background: rgba(58,134,255,.2); border: 1px solid rgba(58,134,255,.4); border-radius: 4px; padding: 1px 6px; font-size: .72rem; color: var(--accent2); white-space: nowrap; }
-  .layer-label { position: relative; z-index: 1; color: var(--muted); font-size: .75rem; }
-  .layer-tool { position: relative; z-index: 1; margin-left: auto; color: var(--muted); font-size: .7rem; }
+/* ── FILE PREVIEW ────────────────────────────────────────────────── */
+#filePreview {
+  display: none; align-items: center; gap: 16px;
+  background: var(--panel); border: 1px solid var(--accent2);
+  border-radius: 10px; padding: 12px 16px; margin-top: 12px;
+}
+#filePreview.show { display: flex; }
+.fp-thumb {
+  width: 72px; height: 52px; border-radius: 6px; object-fit: cover;
+  background: var(--panel2); flex-shrink: 0; border: 1px solid var(--border2);
+}
+.fp-thumb video { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; }
+.fp-info { flex: 1; min-width: 0; }
+.fp-name { font-weight: 600; font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fp-meta { font-size: .74rem; color: var(--muted2); margin-top: 2px; }
+.fp-remove {
+  background: none; border: 1px solid var(--border2); border-radius: 6px;
+  color: var(--muted); cursor: pointer; padding: 5px 10px; font-size: .78rem;
+  transition: all .12s; flex-shrink: 0;
+}
+.fp-remove:hover { border-color: var(--red); color: var(--red); background: rgba(231,76,60,.08); }
 
-  /* arrow */
-  .arrow { display: flex; justify-content: center; color: var(--muted); font-size: 1.2rem; }
+/* ── PROCESS BUTTON ──────────────────────────────────────────────── */
+#processWrap {
+  margin-top: 12px; display: none; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+#processWrap.show { display: flex; }
+#processBtn {
+  background: var(--accent); border: none; border-radius: 9px; color: #fff;
+  padding: 10px 22px; font-size: .9rem; font-weight: 700; cursor: pointer;
+  transition: all .15s; display: flex; align-items: center; gap: 8px;
+}
+#processBtn:hover:not(:disabled) { background: #6a4daa; transform: translateY(-1px); }
+#processBtn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+.process-note { font-size: .78rem; color: var(--muted2); }
+.unsupported-warn {
+  font-size: .75rem; color: var(--orange); background: rgba(243,156,18,.1);
+  border: 1px solid rgba(243,156,18,.3); border-radius: 6px; padding: 4px 10px;
+}
 
-  /* mix box */
-  .mix-box {
-    background: rgba(46,204,113,.08); border: 1px solid rgba(46,204,113,.25); border-radius: 8px;
-    padding: 10px 14px; font-size: .82rem; display: flex; align-items: center; gap: 10px;
-  }
-  .mix-badge { background: var(--green); color: #000; font-weight: 700; border-radius: 5px; padding: 2px 8px; font-size: .72rem; }
+/* ── SPINNER ─────────────────────────────────────────────────────── */
+.spinner {
+  width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.25);
+  border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite;
+  display: none;
+}
+#processBtn.loading .spinner { display: block; }
+#processBtn.loading .btn-text { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-  /* export box */
-  .export-box {
-    background: rgba(231,76,60,.08); border: 1px solid rgba(231,76,60,.3); border-radius: 8px;
-    padding: 8px 14px; font-size: .82rem; display: flex; align-items: center; gap: 8px; color: var(--red);
-  }
-  .export-badge { background: var(--red); color: #fff; font-weight: 700; border-radius: 5px; padding: 2px 8px; font-size: .72rem; }
+/* ── RESULT ──────────────────────────────────────────────────────── */
+#resultBox {
+  display: none; margin-top: 12px;
+  background: var(--panel); border: 1px solid var(--green);
+  border-radius: 10px; padding: 14px 16px;
+}
+#resultBox.show { display: block; }
+.result-header {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.result-badge {
+  background: rgba(46,204,113,.15); border: 1px solid var(--green);
+  color: var(--green); border-radius: 6px; padding: 2px 9px; font-size: .72rem; font-weight: 700;
+}
+.result-header span { color: var(--muted2); font-size: .8rem; }
+#resultMedia { width: 100%; max-height: 360px; border-radius: 8px; display: block; object-fit: contain; background: #000; }
+.result-actions { margin-top: 10px; display: flex; gap: 8px; }
+.dl-btn {
+  background: var(--green); border: none; border-radius: 7px;
+  color: #000; font-weight: 700; padding: 8px 18px; font-size: .84rem;
+  cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+  transition: all .12s;
+}
+.dl-btn:hover { background: #27ae60; }
+.result-unsupported {
+  margin-top: 8px; font-size: .74rem; color: var(--orange);
+  background: rgba(243,156,18,.08); border: 1px solid rgba(243,156,18,.2);
+  border-radius: 6px; padding: 6px 10px;
+}
 
-  /* concat section */
-  .concat-section {
-    background: var(--panel); border: 2px solid var(--accent); border-radius: 12px; padding: 18px 20px;
-  }
-  .concat-header { font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 10px; font-size: .95rem; }
-  .concat-badge { background: var(--accent); color: #fff; border-radius: 6px; padding: 2px 10px; font-size: .8rem; }
-  .segments-strip { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
-  .seg-chip {
-    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-    padding: 8px 14px; font-size: .8rem; display: flex; flex-direction: column; gap: 3px; min-width: 90px;
-  }
-  .seg-chip-label { color: var(--muted); font-size: .7rem; }
-  .seg-chip-val { color: var(--accent2); font-weight: 600; }
-  .concat-arrow { text-align: center; color: var(--muted); font-size: 1.5rem; margin: 4px 0; }
+/* ── ERROR BOX ───────────────────────────────────────────────────── */
+#errorBox {
+  display: none; margin-top: 10px;
+  background: rgba(231,76,60,.1); border: 1px solid rgba(231,76,60,.4);
+  border-radius: 8px; padding: 10px 14px; font-size: .82rem; color: #f08080;
+}
+#errorBox.show { display: block; }
 
-  /* final output */
-  .final-box {
-    background: linear-gradient(135deg, rgba(124,92,191,.2), rgba(58,134,255,.1));
-    border: 2px solid var(--accent); border-radius: 10px;
-    padding: 14px 18px; display: flex; align-items: center; gap: 14px;
-  }
-  .final-icon { font-size: 2rem; }
-  .final-info { display: flex; flex-direction: column; gap: 3px; }
-  .final-name { font-weight: 700; font-size: 1rem; }
-  .final-meta { color: var(--muted); font-size: .8rem; }
+/* ── PRESETS ─────────────────────────────────────────────────────── */
+.preset-grid { display: flex; flex-wrap: wrap; gap: 7px; }
+.preset-card {
+  background: var(--panel); border: 1px solid var(--border2);
+  border-radius: 9px; padding: 9px 13px; cursor: pointer;
+  transition: all .14s; display: flex; flex-direction: column; gap: 3px;
+  min-width: 110px; position: relative; overflow: hidden; user-select: none;
+}
+.preset-card::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--c, var(--accent));
+}
+.preset-card:hover  { border-color: var(--c,var(--accent)); background: var(--panel2); transform: translateY(-1px); }
+.preset-card.active { border-color: var(--c,var(--accent)); background: var(--panel2); box-shadow: 0 0 0 1px var(--c,var(--accent)); }
+.preset-name { font-weight: 700; font-size: .85rem; }
+.preset-desc { font-size: .7rem; color: var(--muted2); line-height: 1.3; }
+.preset-tag  { font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--c,var(--accent)); margin-bottom: 1px; }
 
-  /* between-segment connector */
-  .seg-connector { display: flex; justify-content: center; align-items: center; color: var(--muted); font-size: .8rem; gap: 6px; }
-  .seg-connector::before, .seg-connector::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+/* ── BUILDER ─────────────────────────────────────────────────────── */
+.builder-wrap { display: grid; grid-template-columns: 290px 1fr; min-height: 300px; }
+.palette-panel {
+  border-right: 1px solid var(--border); padding: 16px 14px;
+  overflow-y: auto; max-height: calc(100vh - 320px);
+}
+.pipeline-panel { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
 
-  /* responsive */
-  @media (max-width: 600px) { .controls { flex-direction: column; } }
+/* palette */
+.palette-group { margin-bottom: 12px; }
+.pg-title {
+  font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--muted); margin-bottom: 6px; display: flex; align-items: center; gap: 7px; cursor: pointer;
+}
+.pg-title .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--cc); flex-shrink: 0; }
+.pg-title .arr { margin-left: auto; font-size: .7rem; color: var(--muted); transition: transform .18s; }
+.pg-title.collapsed .arr { transform: rotate(-90deg); }
+.palette-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.palette-chips.hidden { display: none; }
+.eff-chip {
+  background: var(--panel2); border: 1px solid var(--border2);
+  border-radius: 5px; padding: 3px 8px; font-size: .74rem;
+  cursor: pointer; transition: all .11s; user-select: none;
+  display: flex; align-items: center; gap: 4px; color: var(--text);
+}
+.eff-chip:hover { border-color: var(--cc); color: var(--cc); background: rgba(255,255,255,.03); }
+
+/* pipeline */
+.pl-label {
+  font-size: .67rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--muted); display: flex; align-items: center; gap: 9px;
+}
+.pl-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.pl-empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: var(--muted); gap: 6px; padding: 32px 0; font-size: .88rem;
+}
+.pl-empty small { font-size: .74rem; opacity: .6; }
+.pipe-list { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+
+.pipe-item {
+  background: var(--panel); border: 1px solid var(--border2); border-radius: 7px;
+  padding: 7px 10px; display: flex; align-items: center; gap: 8px; transition: border-color .14s;
+}
+.pipe-item:hover { border-color: var(--border); }
+.pipe-item.dragging  { opacity: .35; border-style: dashed; }
+.pipe-item.drag-over { border-color: var(--accent); background: var(--accent-dim); }
+.drag-handle { cursor: grab; color: var(--muted); font-size: .72rem; flex-shrink: 0; }
+.drag-handle:active { cursor: grabbing; }
+.pipe-num  { width: 18px; text-align: center; font-size: .68rem; color: var(--muted); font-weight: 700; flex-shrink: 0; }
+.pipe-name { font-weight: 700; font-size: .82rem; color: var(--accent2); min-width: 86px; flex-shrink: 0; }
+.pipe-sep  { color: var(--muted); font-size: .78rem; flex-shrink: 0; }
+.pipe-params {
+  flex: 1; background: transparent; border: none; outline: none;
+  border-bottom: 1px solid var(--border2); color: var(--text);
+  font-size: .8rem; padding: 1px 4px; min-width: 50px;
+  font-family: 'Consolas','Fira Code',monospace; transition: border-color .14s;
+}
+.pipe-params:focus { border-color: var(--accent2); }
+.pipe-params::placeholder { color: var(--muted); }
+.pipe-hint { font-size: .68rem; color: var(--muted); flex-shrink: 0; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pipe-acts { display: flex; gap: 2px; flex-shrink: 0; margin-left: auto; }
+.pbtn {
+  background: none; border: 1px solid transparent; border-radius: 4px;
+  color: var(--muted); cursor: pointer; width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center; font-size: .76rem;
+  transition: all .11s;
+}
+.pbtn:hover { border-color: var(--border2); color: var(--text); background: var(--panel2); }
+.pbtn.del:hover { border-color: var(--red); color: var(--red); background: rgba(231,76,60,.1); }
+
+/* ── COMMAND BAR ─────────────────────────────────────────────────── */
+.cmd-bar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+  background: rgba(10,10,15,.96); backdrop-filter: blur(14px);
+  border-top: 1px solid var(--border2); padding: 10px 24px;
+  display: flex; align-items: center; gap: 12px;
+}
+.cmd-lbl { font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); flex-shrink: 0; }
+.cmd-out {
+  flex: 1; background: var(--panel); border: 1px solid var(--border2);
+  border-radius: 7px; padding: 8px 13px;
+  font-family: 'Consolas','Fira Code',monospace; font-size: .83rem;
+  overflow-x: auto; white-space: nowrap; display: flex; align-items: center;
+}
+.cmd-prefix { color: var(--muted); }
+.cmd-effect { color: var(--accent2); font-weight: 600; }
+.cmd-empty  { color: var(--muted); font-style: italic; font-size: .78rem; }
+.copy-btn {
+  background: var(--accent); border: none; border-radius: 7px; color: #fff;
+  padding: 7px 15px; font-size: .8rem; font-weight: 700; cursor: pointer;
+  transition: all .14s; flex-shrink: 0;
+}
+.copy-btn:hover { background: #6a4daa; }
+.copy-btn.copied { background: var(--green); }
+.slash-btn {
+  background: none; border: 1px solid var(--border2); border-radius: 7px;
+  color: var(--muted2); padding: 6px 11px; font-size: .76rem; cursor: pointer;
+  transition: all .14s; flex-shrink: 0; white-space: nowrap;
+}
+.slash-btn:hover  { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.slash-btn.copied { border-color: var(--green); color: var(--green); }
+.clear-btn {
+  background: none; border: 1px solid var(--border2); border-radius: 7px;
+  color: var(--muted); padding: 6px 11px; font-size: .76rem; cursor: pointer; flex-shrink: 0;
+  transition: all .11s;
+}
+.clear-btn:hover { border-color: var(--red); color: var(--red); background: rgba(231,76,60,.07); }
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+@media (max-width: 680px) {
+  .builder-wrap { grid-template-columns: 1fr; }
+  .palette-panel { border-right: none; border-bottom: 1px solid var(--border); max-height: 200px; }
+  header .tagline { display: none; }
+  .cmd-bar { flex-wrap: wrap; gap: 8px; }
+}
 </style>
 </head>
 <body>
 
-<h1><span>t!multipitchihtx</span> — Pipeline Visualizer</h1>
-<p class="subtitle">Visualizes how pitch layers are rendered, mixed, and concatenated per segment.</p>
+<header>
+  <div class="logo">
+    <span class="cmd">th/</span><span style="color:var(--muted2)">ihtx</span>
+    <span class="sep">·</span>
+    <span class="cmd2">Effect Builder</span>
+  </div>
+  <span class="hbadge">IHTX Bot</span>
+  <span class="tagline">Build a pipe effects string · attach media · process with FFmpeg</span>
+</header>
 
-<div class="controls">
-  <div class="ctrl-group">
-    <label>Pitch Layers (repetitions)</label>
-    <input type="range" id="reps" min="1" max="12" value="4">
-    <span class="val-display" id="reps-val">4</span>
-  </div>
-  <div class="ctrl-group">
-    <label>Spread (semitones)</label>
-    <input type="range" id="spread" min="1" max="20" value="4" step="1">
-    <span class="val-display" id="spread-val">0.4 st</span>
-  </div>
-  <div class="ctrl-group">
-    <label>Concat segments</label>
-    <input type="range" id="concat" min="1" max="6" value="2">
-    <span class="val-display" id="concat-val">2</span>
-  </div>
-  <div class="ctrl-group">
-    <label>Engine</label>
-    <select id="engine" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:.9rem;">
-      <option value="r3">r3 (fine, default)</option>
-      <option value="r2">r2 (fast)</option>
-      <option value="r4">r4 (= r3)</option>
-    </select>
-  </div>
-  <div class="ctrl-group">
-    <label>Duration per layer (s)</label>
-    <input type="number" id="duration" placeholder="none" min="1" max="3600" style="width:90px">
-  </div>
+<div class="info-strip">
+  <span>💡</span>
+  <span>Pick a preset or add effects, attach a file to process it here, or copy the command to run in Discord via <code>th/ihtx</code> or <code>/ihtxgen effect:…</code></span>
 </div>
 
-<div class="pipeline" id="pipeline"></div>
+<main>
+
+  <!-- ── ATTACHMENT ──────────────────────────────────────────────── -->
+  <div class="section">
+    <div class="sec-title">Attach Media</div>
+
+    <div id="dropzone" onclick="document.getElementById('fileInput').click()">
+      <input type="file" id="fileInput" accept="video/*,image/*,.mp4,.mov,.webm,.mkv,.gif,.jpg,.jpeg,.png,.webp">
+      <div class="dz-icon">📎</div>
+      <div class="dz-label">Drop a video or image here</div>
+      <div class="dz-sub">or click to browse · MP4, MOV, WEBM, MKV, GIF, JPG, PNG, WEBP · up to 150 MB</div>
+    </div>
+
+    <div id="filePreview">
+      <div id="fpThumbWrap"></div>
+      <div class="fp-info">
+        <div class="fp-name" id="fpName"></div>
+        <div class="fp-meta" id="fpMeta"></div>
+      </div>
+      <button class="fp-remove" onclick="clearFile()">✕ Remove</button>
+    </div>
+
+    <div class="export-grid">
+      <div class="export-group">
+        <label>Repetitions</label>
+        <input type="number" id="repsInput" min="1" max="50" step="1" value="1">
+        <span class="export-hint">Loop output N times</span>
+      </div>
+      <div class="export-group">
+        <label>Duration</label>
+        <input type="number" id="durInput" min="0.1" step="0.1" placeholder="auto">
+        <span class="export-hint">Target seconds</span>
+      </div>
+      <div class="export-group chk">
+        <label>noTrim</label>
+        <input type="checkbox" id="noTrimInput">
+      </div>
+      <div class="export-group">
+        <label>Export Format</label>
+        <select id="fmtInput">
+          <option value="mp4" selected>mp4</option>
+          <option value="webm">webm</option>
+          <option value="mov">mov</option>
+          <option value="mkv">mkv</option>
+          <option value="gif">gif</option>
+          <option value="mp3">mp3</option>
+          <option value="wav">wav</option>
+          <option value="flac">flac</option>
+          <option value="ogg">ogg</option>
+          <option value="jpg">jpg</option>
+          <option value="png">png</option>
+          <option value="webp">webp</option>
+        </select>
+        <span class="export-hint">Output container</span>
+      </div>
+    </div>
+
+    <div id="processWrap">
+      <button id="processBtn" onclick="processFile()">
+        <div class="spinner"></div>
+        <span class="btn-text">⚡ Process with FFmpeg</span>
+      </button>
+      <span class="process-note" id="processNote"></span>
+      <span class="unsupported-warn" id="warnBox" style="display:none"></span>
+    </div>
+
+    <div id="resultBox">
+      <div class="result-header">
+        <span class="result-badge">✅ Done</span>
+        <span id="resultMeta"></span>
+      </div>
+      <video id="resultVideo" class="result-media" controls style="display:none;width:100%;max-height:360px;border-radius:8px;background:#000"></video>
+      <img   id="resultImage" class="result-media" style="display:none;width:100%;max-height:360px;border-radius:8px;object-fit:contain;background:#000">
+      <div class="result-actions">
+        <a id="dlLink" class="dl-btn" download>⬇ Download</a>
+      </div>
+      <div id="resultUnsupported" class="result-unsupported" style="display:none"></div>
+    </div>
+
+    <div id="errorBox"></div>
+  </div>
+
+  <!-- ── PRESETS ──────────────────────────────────────────────────── -->
+  <div class="section">
+    <div class="sec-title">Presets</div>
+    <div class="preset-grid" id="presetGrid"></div>
+  </div>
+
+  <!-- ── BUILDER ──────────────────────────────────────────────────── -->
+  <div class="builder-wrap">
+    <div class="palette-panel">
+      <div class="sec-title" style="margin-bottom:10px">Add Effects</div>
+      <div id="palette"></div>
+    </div>
+    <div class="pipeline-panel">
+      <div class="pl-label">Pipeline</div>
+      <div id="plEmpty" class="pl-empty">
+        <span>🎬</span>
+        <span>No effects yet</span>
+        <small>Click a preset or add effects from the left panel</small>
+      </div>
+      <div class="pipe-list" id="pipeList"></div>
+    </div>
+  </div>
+
+</main>
+
+<!-- ── COMMAND BAR ──────────────────────────────────────────────── -->
+<div class="cmd-bar">
+  <span class="cmd-lbl">Command</span>
+  <div class="cmd-out" id="cmdOut">
+    <span class="cmd-empty">— add effects to generate a command —</span>
+  </div>
+  <button class="slash-btn" id="slashBtn" onclick="copySlash()">Copy /ihtxgen</button>
+  <button class="copy-btn"  id="copyBtn"  onclick="copyCmd()">Copy th/ihtx</button>
+  <button class="clear-btn" onclick="clearPipeline()">Clear</button>
+</div>
 
 <script>
-const repsEl = document.getElementById('reps');
-const spreadEl = document.getElementById('spread');
-const concatEl = document.getElementById('concat');
-const engineEl = document.getElementById('engine');
-const durationEl = document.getElementById('duration');
-const repsVal = document.getElementById('reps-val');
-const spreadVal = document.getElementById('spread-val');
-const concatVal = document.getElementById('concat-val');
+// ─── DATA ─────────────────────────────────────────────────────────────────────
 
-function linspace(from, to, n) {
-  if (n === 1) return [0];
-  return Array.from({ length: n }, (_, i) => from + (to - from) / (n - 1) * i);
+const PRESETS = [
+  { id:'chaos',           name:'chaos',       tag:'distort', c:'#e74c3c', desc:'Shake + noise, rainbow hue, high contrast' },
+  { id:'glitch',          name:'glitch',      tag:'color',   c:'#9b59b6', desc:'RGB channel shift, noise, monochrome' },
+  { id:'shake',           name:'shake',       tag:'motion',  c:'#e67e22', desc:'Camera shake + noise, warm contrast' },
+  { id:'rainbow',         name:'rainbow',     tag:'color',   c:'#3498db', desc:'RGB prism channel-split blend' },
+  { id:'static',          name:'static',      tag:'color',   c:'#7f8c8d', desc:'Film noise + vintage curves' },
+  { id:'melt',            name:'melt',        tag:'distort', c:'#1abc9c', desc:'Perspective warp with sin(t) oscillation' },
+  { id:'corrupt',         name:'corrupt',     tag:'distort', c:'#e74c3c', desc:'Grid lines, noise, desaturated high gamma' },
+  { id:'srw',             name:'srw',         tag:'complex', c:'#f39c12', desc:'4-way: negate / reverse / 0.5× / 2× + pitch' },
+  { id:'wave=large',      name:'largeWave',   tag:'distort', c:'#2980b9', desc:'Large sinusoidal wave warp' },
+  { id:'wave=medium',     name:'medWave',     tag:'distort', c:'#2980b9', desc:'Medium wave displacement' },
+  { id:'wave=small',      name:'smallWave',   tag:'distort', c:'#2980b9', desc:'Small wave displacement' },
+  { id:'wave=horizontalOnly', name:'horizWave', tag:'distort', c:'#2980b9', desc:'Horizontal-only wave' },
+  { id:'wave=verticalOnly',   name:'vertWave',  tag:'distort', c:'#2980b9', desc:'Vertical-only wave' },
+  { id:'tvsim',           name:'tvsim',       tag:'complex', c:'#8e44ad', desc:'TV simulator: displacement + scanlines' },
+  { id:'earthquake',      name:'earthquake',  tag:'distort', c:'#c0392b', desc:'vidstab earthquake shake' },
+  { id:'freakzinga',      name:'freakzinga',  tag:'complex', c:'#d35400', desc:'Freakzinga composite glitch' },
+];
+
+const CAT = {
+  color:     { label:'Color',        cc:'#1abc9c' },
+  transform: { label:'Transform',    cc:'#e67e22' },
+  distort:   { label:'Distort',      cc:'#9b59b6' },
+  audio:     { label:'Audio',        cc:'#3498db' },
+  time:      { label:'Time / Speed', cc:'#e74c3c' },
+  complex:   { label:'Complex / Raw',cc:'#f39c12' },
+};
+
+const EFFECTS = {
+  color: [
+    { n:'invert',      d:'Invert all colors',          p:'',          ph:'' },
+    { n:'grayscale',   d:'Remove color',               p:'',          ph:'' },
+    { n:'sepia',       d:'Sepia tone',                 p:'',          ph:'' },
+    { n:'brightness',  d:'Adjust brightness',          p:'0.2',       ph:'-1.0 to 1.0' },
+    { n:'contrast',    d:'Adjust contrast',            p:'1.5',       ph:'0.0 – 3.0' },
+    { n:'saturation',  d:'Adjust saturation',          p:'2',         ph:'0.0 – 3.0' },
+    { n:'huehsv',      d:'Hue shift (0.0 – 1.0)',      p:'0.5',       ph:'0.0 – 1.0 hue rotation' },
+    { n:'swapuv',      d:'Swap U/V chroma channels',   p:'',          ph:'' },
+    { n:'invertrgb',   d:'Invert RGB channels only',   p:'',          ph:'' },
+    { n:'invlum',      d:'Invert luminosity',          p:'',          ph:'' },
+  ],
+  transform: [
+    { n:'hflip',    d:'Flip horizontally',  p:'',    ph:'' },
+    { n:'vflip',    d:'Flip vertically',    p:'',    ph:'' },
+    { n:'rotate',   d:'Rotate by degrees',  p:'90',  ph:'degrees' },
+    { n:'zoom',     d:'Zoom in/out',        p:'1.5', ph:'scale factor' },
+    { n:'spherize', d:'Barrel/spherize',    p:'',    ph:'' },
+    { n:'bulge',    d:'Bulge distortion',   p:'',    ph:'' },
+    { n:'ripple',   d:'Ripple distortion',  p:'',    ph:'' },
+    { n:'scroll',   d:'Scroll/pan video',   p:'0.02',ph:'speed' },
+    { n:'tile',     d:'Tile in a grid',     p:'2x2', ph:'NxM' },
+    { n:'stretch',  d:'Stretch to length',  p:'5',   ph:'seconds' },
+  ],
+  distort: [
+    { n:'wave',          d:'Sinusoidal warp',       p:'large', ph:'large/medium/small/horizontalOnly/verticalOnly' },
+    { n:'wave2',         d:'Wave variant 2',        p:'',      ph:'' },
+    { n:'jitter',        d:'Frame jitter/stutter',  p:'',      ph:'' },
+    { n:'randomjitter',  d:'Random frame jitter',   p:'',      ph:'' },
+    { n:'timecode',      d:'Overlay timecode',      p:'',      ph:'' },
+  ],
+  audio: [
+    { n:'volume',        d:'Adjust volume',         p:'2',     ph:'multiplier' },
+    { n:'vibrato',       d:'Vibrato modulation',    p:'5:0.5', ph:'freq:depth' },
+    { n:'areverse',      d:'Reverse audio',         p:'',      ph:'' },
+    { n:'acontrast',     d:'Audio contrast',        p:'33',    ph:'0 – 100' },
+    { n:'alimiter',      d:'Audio limiter',         p:'',      ph:'' },
+    { n:'multipitch',    d:'Multi-voice pitch',     p:'3:0.5', ph:'voices:spread' },
+    { n:'multipitch2',   d:'Multipitch v2',         p:'3',     ph:'voices' },
+  ],
+  time: [
+    { n:'speed',    d:'Change playback speed', p:'0.5', ph:'multiplier (0.25 – 4.0)' },
+    { n:'trim',     d:'Trim clip duration',    p:'0:5', ph:'start:end seconds' },
+    { n:'vreverse', d:'Reverse video + audio', p:'',   ph:'' },
+  ],
+  complex: [
+    { n:'tvsim',       d:'TV simulator (displacement + CRT)',          p:'0.5',       ph:'lineSync 0–1 [:detailZoom]' },
+    { n:'earthquake',  d:'Earthquake shake (2-pass vidstab)',          p:'',          ph:'' },
+    { n:'freakzinga',  d:'Palindrome + dual pitch + bass (fzgm156)',   p:'',          ph:'' },
+    { n:'srw',         d:'4-way split: negate/reverse/0.5×/2× pitch', p:'',          ph:'' },
+    { n:'multipitch',  d:'Multi-voice pitch shift (fileaa binary)',    p:'0|7|-7',    ph:'semitones | separated' },
+    { n:'multipitch2', d:'Multi-voice pitch (FFmpeg rubberband)',      p:'0|7|12',    ph:'semitones | separated' },
+    { n:'vocoder',     d:'FFT phase vocoder (needs carrier URL)',     p:'ilvocodex;https://…', ph:'[mode;][bands;]carrierURL' },
+    { n:'ccshue',      d:'Hue/sat/gamma via ImageMagick hald LUT',    p:'90',        ph:'hue[:sat[:gamma[:gain[:offset]]]]' },
+    { n:'imagemagick', d:'ImageMagick operation (frame-by-frame)',     p:'-negate',   ph:'magick args (| separated)' },
+    { n:'gradientmap', d:'Map luminance to color gradient',           p:'#000,#f0f,#fff', ph:'comma-sep hex colors' },
+    { n:'swirl',       d:'Vortex swirl distortion (geq)',             p:'180',       ph:'strength degrees' },
+    { n:'mirror',      d:'Mirror half of frame',                      p:'left',      ph:'left / right / top / bottom' },
+    { n:'gm4',         d:'GM4 selective color correction',            p:'',          ph:'' },
+    { n:'realgm4',     d:'RealGM4 inverted-S curve',                  p:'',          ph:'' },
+    { n:'frei0r',      d:'Apply frei0r plugin',                       p:'zerocrossing', ph:'plugin name[:params]' },
+    { n:'ffmpeg',      d:'Raw ffmpeg -vf filter injection',           p:'negate',    ph:'filter string' },
+    { n:'watermark',   d:'Watermark / caption text overlay',          p:'text',      ph:'caption text' },
+  ],
+};
+
+// ─── STATE ────────────────────────────────────────────────────────────────────
+
+let pipeline = [];
+let currentFile = null;
+let dragSrcIdx  = null;
+
+// ─── FILE HANDLING ────────────────────────────────────────────────────────────
+
+const dropzone   = document.getElementById('dropzone');
+const fileInput  = document.getElementById('fileInput');
+const filePreview= document.getElementById('filePreview');
+const processWrap= document.getElementById('processWrap');
+
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+dropzone.addEventListener('dragleave',()=> dropzone.classList.remove('drag-over'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault(); dropzone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) setFile(f);
+});
+fileInput.addEventListener('change', e => { if (e.target.files[0]) setFile(e.target.files[0]); });
+
+function setFile(f) {
+  currentFile = f;
+  const url = URL.createObjectURL(f);
+  const isVideo = f.type.startsWith('video/') || /\.(mp4|mov|webm|mkv|avi)$/i.test(f.name);
+  const isImage = f.type.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(f.name);
+
+  // Thumb
+  const wrap = document.getElementById('fpThumbWrap');
+  wrap.innerHTML = '';
+  if (isVideo) {
+    const v = document.createElement('video');
+    v.src = url; v.muted = true; v.className = 'fp-thumb'; v.preload = 'metadata';
+    v.style.cssText = 'width:72px;height:52px;object-fit:cover;border-radius:6px;border:1px solid var(--border2)';
+    wrap.appendChild(v);
+  } else if (isImage) {
+    const img = document.createElement('img');
+    img.src = url; img.className = 'fp-thumb';
+    img.style.cssText = 'width:72px;height:52px;object-fit:cover;border-radius:6px;border:1px solid var(--border2)';
+    wrap.appendChild(img);
+  } else {
+    wrap.innerHTML = '<div class="fp-thumb" style="display:flex;align-items:center;justify-content:center;font-size:1.5rem">📄</div>';
+  }
+
+  document.getElementById('fpName').textContent = f.name;
+  document.getElementById('fpMeta').textContent = `${(f.size/1024/1024).toFixed(2)} MB · ${f.type || 'unknown type'}`;
+
+  dropzone.classList.add('has-file');
+  filePreview.classList.add('show');
+  processWrap.classList.add('show');
+  hideResult(); hideError();
+  updateProcessNote();
 }
 
-function pitchColor(val, spread) {
-  const t = (val + spread / 2) / spread;
-  const h = Math.round(200 + t * 100);
-  return `hsl(${h}, 70%, 55%)`;
+function clearFile() {
+  currentFile = null;
+  fileInput.value = '';
+  dropzone.classList.remove('has-file');
+  filePreview.classList.remove('show');
+  processWrap.classList.remove('show');
+  hideResult(); hideError();
 }
 
-function build() {
-  const reps = +repsEl.value;
-  const spreadRaw = +spreadEl.value;
-  const spread = spreadRaw / 10;
-  const concatN = +concatEl.value;
-  const engine = engineEl.value;
-  const duration = durationEl.value ? +durationEl.value : null;
+// Toggle duration field based on noTrim
+const durInput = document.getElementById('durInput');
+const noTrimInput = document.getElementById('noTrimInput');
+noTrimInput.addEventListener('change', () => {
+  durInput.disabled = noTrimInput.checked;
+  if (noTrimInput.checked) durInput.value = '';
+});
 
-  repsVal.textContent = reps;
-  spreadVal.textContent = spread.toFixed(1) + ' st';
-  concatVal.textContent = concatN;
+function updateProcessNote() {
+  const note = document.getElementById('processNote');
+  const pipe = buildPipeStr();
+  if (!pipe) {
+    note.textContent = 'Add effects to the pipeline first';
+  } else {
+    note.textContent = `Will apply: ${pipe}`;
+  }
+  document.getElementById('processBtn').disabled = !pipe || !currentFile;
+}
 
-  const offsets = linspace(-spread / 2, spread / 2, reps);
-  const pipeline = document.getElementById('pipeline');
-  pipeline.innerHTML = '';
+// ─── PROCESS ──────────────────────────────────────────────────────────────────
 
-  // ── Input source ────────────────────────────────────────────────────────────
-  const srcRow = document.createElement('div');
-  srcRow.style.cssText = 'background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 18px;display:flex;align-items:center;gap:12px;font-size:.88rem;';
-  srcRow.innerHTML = `<span style="font-size:1.4rem">🎵</span><div><div style="font-weight:600">Original attachment</div><div style="color:var(--muted);font-size:.78rem">Extracted to 44100 Hz PCM WAV (shared input for all segments)</div></div>`;
-  pipeline.appendChild(srcRow);
+async function processFile() {
+  const pipe = buildPipeStr();
+  if (!pipe || !currentFile) return;
 
-  // ── Segments ─────────────────────────────────────────────────────────────
-  const segmentChips = [];
+  const btn = document.getElementById('processBtn');
+  btn.disabled = true; btn.classList.add('loading');
+  hideResult(); hideError();
 
-  for (let seg = 0; seg < concatN; seg++) {
-    // Connector between segments
-    if (seg > 0) {
-      const conn = document.createElement('div');
-      conn.className = 'seg-connector';
-      conn.innerHTML = `↓ segment ${seg + 1} rendered from same original ↓`;
-      pipeline.appendChild(conn);
+  try {
+    const fd = new FormData();
+    fd.append('file', currentFile, currentFile.name);
+    fd.append('pipe', pipe);
+    fd.append('reps', Math.max(1, parseInt(document.getElementById('repsInput').value) || 1));
+    fd.append('duration', document.getElementById('durInput').value || '');
+    fd.append('noTrim', document.getElementById('noTrimInput').checked ? '1' : '0');
+    fd.append('format', document.getElementById('fmtInput').value);
+
+    const resp = await fetch('/process', { method: 'POST', body: fd });
+    const json = await resp.json();
+
+    if (!json.ok) throw new Error(json.error || 'FFmpeg error');
+
+    // Show result
+    const mime = json.mime;
+    const b64  = json.data;
+    const blob = b64ToBlob(b64, mime);
+    const url  = URL.createObjectURL(blob);
+
+    document.getElementById('resultMeta').textContent = `${json.filename}`;
+    const dlLink = document.getElementById('dlLink');
+    dlLink.href = url;
+    dlLink.download = json.filename;
+
+    const vid = document.getElementById('resultVideo');
+    const img = document.getElementById('resultImage');
+    if (mime.startsWith('video/')) {
+      vid.src = url; vid.style.display = 'block'; img.style.display = 'none';
     } else {
-      const arr = document.createElement('div');
-      arr.className = 'arrow';
-      arr.innerHTML = seg === 0 ? (concatN > 1 ? '↓ render segment 1 of ' + concatN : '↓') : '';
-      if (arr.innerHTML) pipeline.appendChild(arr);
+      img.src = url; img.style.display = 'block'; vid.style.display = 'none';
     }
 
-    const card = document.createElement('div');
-    card.className = 'segment-card';
+    const unsupDiv = document.getElementById('resultUnsupported');
+    if (json.unsupported && json.unsupported.length) {
+      unsupDiv.style.display = 'block';
+      unsupDiv.textContent = `⚠️ Could not apply: ${json.unsupported.join(', ')}`;
+    } else {
+      unsupDiv.style.display = 'none';
+    }
 
-    const header = document.createElement('div');
-    header.className = 'seg-header';
-    header.innerHTML = `<span class="seg-num">Segment ${seg + 1}</span> ${reps} pitch layers → amix → export WAV`;
-    card.appendChild(header);
-
-    const body = document.createElement('div');
-    body.className = 'seg-body';
-
-    // Layers
-    const layersWrap = document.createElement('div');
-    layersWrap.className = 'layers-wrap';
-
-    offsets.forEach((offset, i) => {
-      const row = document.createElement('div');
-      row.className = 'layer-row';
-      const col = pitchColor(offset, spread);
-      const sign = offset >= 0 ? '+' : '';
-      const durLabel = duration ? `, ${duration}s` : '';
-      row.innerHTML = `
-        <div class="layer-fill" style="animation-delay:${i * 0.04}s"></div>
-        <span class="layer-tag" style="color:${col};border-color:${col}40;background:${col}18">${sign}${offset.toFixed(3)} st</span>
-        <span class="layer-label">Layer ${i + 1}${durLabel}</span>
-        <span class="layer-tool">rubberband ${engine === 'r2' ? '-2' : '-3'} --pitch ${sign}${offset.toFixed(3)}</span>
-      `;
-      layersWrap.appendChild(row);
-    });
-
-    body.appendChild(layersWrap);
-
-    // Arrow + amix
-    const arrowEl = document.createElement('div');
-    arrowEl.className = 'arrow';
-    arrowEl.textContent = '↓';
-    body.appendChild(arrowEl);
-
-    const mixBox = document.createElement('div');
-    mixBox.className = 'mix-box';
-    mixBox.innerHTML = `<span class="mix-badge">amix</span> Combine all ${reps} layers — <code style="font-size:.78rem">normalize=0, alimiter=0.99</code>`;
-    body.appendChild(mixBox);
-
-    // Arrow + export
-    const arrowEl2 = document.createElement('div');
-    arrowEl2.className = 'arrow';
-    arrowEl2.textContent = '↓';
-    body.appendChild(arrowEl2);
-
-    const exportBox = document.createElement('div');
-    exportBox.className = 'export-box';
-    exportBox.innerHTML = `<span class="export-badge">WAV</span> segment_${seg}.wav exported`;
-    body.appendChild(exportBox);
-
-    segmentChips.push(`segment_${seg}.wav`);
-    card.appendChild(body);
-    pipeline.appendChild(card);
+    document.getElementById('resultBox').classList.add('show');
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    btn.disabled = false; btn.classList.remove('loading');
   }
-
-  // ── Concat section ──────────────────────────────────────────────────────────
-  if (concatN > 1) {
-    const arrowEl = document.createElement('div');
-    arrowEl.className = 'arrow';
-    arrowEl.textContent = '↓';
-    pipeline.appendChild(arrowEl);
-
-    const concatSec = document.createElement('div');
-    concatSec.className = 'concat-section';
-    concatSec.innerHTML = `
-      <div class="concat-header">
-        <span class="concat-badge">ffmpeg concat</span>
-        Join ${concatN} segments end-to-end using concat demuxer (-f concat)
-      </div>
-      <div class="segments-strip">
-        ${segmentChips.map((f, i) => `
-          <div class="seg-chip">
-            <span class="seg-chip-label">Segment ${i + 1}</span>
-            <span class="seg-chip-val">${f}</span>
-          </div>
-          ${i < segmentChips.length - 1 ? '<div style="display:flex;align-items:center;color:var(--muted)">→</div>' : ''}
-        `).join('')}
-      </div>
-    `;
-    pipeline.appendChild(concatSec);
-  }
-
-  // ── Final output ────────────────────────────────────────────────────────────
-  const arrowFinal = document.createElement('div');
-  arrowFinal.className = 'arrow';
-  arrowFinal.textContent = '↓';
-  pipeline.appendChild(arrowFinal);
-
-  const finalBox = document.createElement('div');
-  finalBox.className = 'final-box';
-  const totalDesc = concatN > 1
-    ? `${concatN} × (${reps}-layer amix)` : `${reps}-layer amix`;
-  finalBox.innerHTML = `
-    <span class="final-icon">🎧</span>
-    <div class="final-info">
-      <span class="final-name">multipitchihtx.wav</span>
-      <span class="final-meta">${totalDesc} · engine: ${engine} · spread: ±${(spread/2).toFixed(2)} st${duration ? ' · ' + duration + 's/layer' : ''}</span>
-    </div>
-    <div style="margin-left:auto;background:rgba(46,204,113,.15);border:1px solid var(--green);border-radius:8px;padding:6px 14px;font-size:.8rem;color:var(--green)">
-      ✅ Upload to Discord
-    </div>
-  `;
-  pipeline.appendChild(finalBox);
 }
 
-[repsEl, spreadEl, concatEl, engineEl, durationEl].forEach(el => el.addEventListener('input', build));
-build();
+function b64ToBlob(b64, mime) {
+  const bin = atob(b64);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return new Blob([buf], { type: mime });
+}
+
+function hideResult() { document.getElementById('resultBox').classList.remove('show'); }
+function hideError()  { const e = document.getElementById('errorBox'); e.classList.remove('show'); e.textContent = ''; }
+function showError(msg) {
+  const e = document.getElementById('errorBox');
+  e.textContent = '❌ ' + msg; e.classList.add('show');
+}
+
+// ─── PRESETS ──────────────────────────────────────────────────────────────────
+
+function renderPresets() {
+  const grid = document.getElementById('presetGrid');
+  PRESETS.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'preset-card';
+    card.style.setProperty('--c', p.c);
+    card.innerHTML = `<div class="preset-tag">${p.tag}</div><div class="preset-name">${p.name}</div><div class="preset-desc">${p.desc}</div>`;
+    card.addEventListener('click', () => {
+      const eq = p.id.indexOf('=');
+      const name   = eq === -1 ? p.id : p.id.slice(0, eq);
+      const params = eq === -1 ? '' : p.id.slice(eq + 1);
+      addEffect(name, params, p.desc);
+    });
+    grid.appendChild(card);
+  });
+}
+
+// ─── PALETTE ──────────────────────────────────────────────────────────────────
+
+function renderPalette() {
+  const pal = document.getElementById('palette');
+  Object.entries(EFFECTS).forEach(([cat, items]) => {
+    const { label, cc } = CAT[cat];
+    const wrap  = document.createElement('div');
+    wrap.className = 'palette-group';
+
+    const title = document.createElement('div');
+    title.className = 'pg-title';
+    title.style.setProperty('--cc', cc);
+    title.innerHTML = `<span class="dot"></span>${label}<span class="arr">▾</span>`;
+    title.addEventListener('click', () => {
+      title.classList.toggle('collapsed');
+      chips.classList.toggle('hidden');
+    });
+
+    const chips = document.createElement('div');
+    chips.className = 'palette-chips';
+    chips.style.setProperty('--cc', cc);
+    items.forEach(eff => {
+      const chip = document.createElement('div');
+      chip.className = 'eff-chip';
+      chip.title = eff.d;
+      chip.innerHTML = `<span style="color:var(--muted)">+</span>${eff.n}`;
+      chip.addEventListener('click', () => addEffect(eff.n, eff.p, eff.ph || eff.d));
+      chips.appendChild(chip);
+    });
+
+    wrap.appendChild(title);
+    wrap.appendChild(chips);
+    pal.appendChild(wrap);
+  });
+}
+
+// ─── PIPELINE ─────────────────────────────────────────────────────────────────
+
+function addEffect(name, params, hint) {
+  pipeline.push({ name, params, hint: hint || '' });
+  renderPipeline(); updateCmd(); updateProcessNote();
+}
+function removeEffect(i) { pipeline.splice(i, 1); renderPipeline(); updateCmd(); updateProcessNote(); }
+function moveEffect(i, d) {
+  const t = i + d;
+  if (t < 0 || t >= pipeline.length) return;
+  [pipeline[i], pipeline[t]] = [pipeline[t], pipeline[i]];
+  renderPipeline(); updateCmd();
+}
+function clearPipeline() { pipeline = []; renderPipeline(); updateCmd(); updateProcessNote(); }
+
+function renderPipeline() {
+  const list  = document.getElementById('pipeList');
+  const empty = document.getElementById('plEmpty');
+  list.innerHTML = '';
+  empty.style.display = pipeline.length ? 'none' : 'flex';
+
+  pipeline.forEach((eff, i) => {
+    const row = document.createElement('div');
+    row.className = 'pipe-item'; row.draggable = true; row.dataset.idx = i;
+    const hasP = eff.params !== '';
+    row.innerHTML = `
+      <span class="drag-handle" title="Drag to reorder">⠿</span>
+      <span class="pipe-num">${i + 1}</span>
+      <span class="pipe-name">${esc(eff.name)}</span>
+      ${hasP
+        ? `<span class="pipe-sep">=</span><input class="pipe-params" value="${esc(eff.params)}" placeholder="${esc(eff.hint)}" data-idx="${i}">`
+        : `<span class="pipe-hint">${esc(eff.hint)}</span>`}
+      <div class="pipe-acts">
+        <button class="pbtn" onclick="moveEffect(${i},-1)" title="Up">↑</button>
+        <button class="pbtn" onclick="moveEffect(${i}, 1)" title="Down">↓</button>
+        <button class="pbtn del" onclick="removeEffect(${i})" title="Remove">✕</button>
+      </div>`;
+
+    const inp = row.querySelector('.pipe-params');
+    if (inp) inp.addEventListener('input', e => { pipeline[i].params = e.target.value; updateCmd(); updateProcessNote(); });
+
+    row.addEventListener('dragstart', () => { dragSrcIdx = i; setTimeout(() => row.classList.add('dragging'), 0); });
+    row.addEventListener('dragend',   () => { row.classList.remove('dragging'); clearDragOver(); dragSrcIdx = null; });
+    row.addEventListener('dragover',  e => { e.preventDefault(); clearDragOver(); row.classList.add('drag-over'); });
+    row.addEventListener('drop', e => {
+      e.preventDefault();
+      if (dragSrcIdx !== null && dragSrcIdx !== i) {
+        const [m] = pipeline.splice(dragSrcIdx, 1);
+        pipeline.splice(i, 0, m);
+        renderPipeline(); updateCmd(); updateProcessNote();
+      }
+    });
+    list.appendChild(row);
+  });
+}
+
+function clearDragOver() {
+  document.querySelectorAll('.pipe-item.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+// ─── COMMAND ──────────────────────────────────────────────────────────────────
+
+function buildPipeStr() {
+  return pipeline.map(e => e.params.trim() ? `${e.name}=${e.params.trim()}` : e.name).join(',');
+}
+
+function updateCmd() {
+  const pipe = buildPipeStr();
+  const out  = document.getElementById('cmdOut');
+  out.innerHTML = pipe
+    ? `<span class="cmd-prefix">th/ihtx&nbsp;</span><span class="cmd-effect">${esc(pipe)}</span>`
+    : '<span class="cmd-empty">— add effects to generate a command —</span>';
+}
+
+function copyCmd() {
+  const pipe = buildPipeStr();
+  if (!pipe) return;
+  navigator.clipboard.writeText(`th/ihtx ${pipe}`);
+  flash('copyBtn', 'Copy th/ihtx', '✓ Copied!', 'copied');
+}
+function copySlash() {
+  const pipe = buildPipeStr();
+  if (!pipe) return;
+  navigator.clipboard.writeText(pipe);
+  flash('slashBtn', 'Copy /ihtxgen', '✓ Effect copied!', 'copied');
+}
+function flash(id, original, msg, cls) {
+  const btn = document.getElementById(id);
+  btn.textContent = msg; btn.classList.add(cls);
+  setTimeout(() => { btn.textContent = original; btn.classList.remove(cls); }, 1800);
+}
+
+// ─── UTILS ────────────────────────────────────────────────────────────────────
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+
+renderPresets();
+renderPalette();
+renderPipeline();
+updateCmd();
 </script>
 </body>
 </html>

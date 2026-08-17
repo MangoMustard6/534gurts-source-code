@@ -1,0 +1,35 @@
+# Bot pipe-effects equivalent of the Freakzinga test effect
+# Run via:  th/ihtx <input> <exports> <duration> <no_trim> <fmt> <pipe_effects>
+#
+# The bot already has th/fzte (alias th/freaktest) which runs this exact pipeline.
+# But if you want to customise or inject raw FFmpeg filters alongside bot effects,
+# use the VIDEO: / AUDIO: syntax.
+
+# ── Option A: Just use the built-in command ──
+#   th/fzte
+#   th/freaktest
+#   th/freakzingatesteffect
+
+# ── Option B: Custom pipeline with raw VIDEO: filters ──
+# This runs bot effects for the colour chain, then injects the full filter_complex
+# for the displacement / mirror / drawtext portion:
+#
+#   th/ihtx 1 0.7 n mp4 invlum,huehsv=0.62,ccshue=110,channelblend=b|g|r,invlum,rotate=-45/180*PI,VIDEO: lut3d=/path/to/lut.cube,format=yuv420p,rotate=-45/180*PI,scale=854:854,format=bgr32[00];[1]format=yuv444p,geq='p(mod(X,W),mod(Y/4,H))',scale=854:854,eq=contrast=0.263334:eval=frame,format=bgr32,hue=b=-0.033[x];color=s=854x854:c=#808080,format=bgr32[y];[00][x][y]displace=edge=wrap,scale=1920:1080,setsar=1,format=yuv444p,geq='p(X,Y)',scale=1920:1080,format=yuv420p,rotate=45/180*PI,hflip,crop=1920*0.840:1080:1920*0.840:0,split[right][tmp];[tmp]hflip[left];[left][right]hstack,crop=1920:1080:1920*0.840:0,negate,drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='%{n}.000':text_align=R:fontcolor=white:fontsize=w/24:box=1:boxcolor=black:boxborderw=7*(text_h):x=(w/2)-(text_w/2):y=(h-text_h)/1.12,negate
+
+# ── Option C: Pure bot-native effects (what th/fzte actually does) ──
+# These are the exact pipe effects th/fzte expands to internally:
+#
+#   invlum
+#   huehsv=0.62
+#   ccshue=110
+#   channelblend=b|g|r
+#   invlum
+#   rotate=-45/180*PI
+#   tvsim=0.9|4
+#   wave=0|15|0.8|0.34666|0|0|0|0
+#   rotate=45/180*PI
+#   ffmpeg(-vf hflip,"crop=1920*0.840:1080:1920*0.840:0,split[right][tmp];[tmp]hflip[left];[left][right]hstack,crop=1920:1080:1920*0.840:0")
+#   mirror=right
+#   mirror=bottom
+#   ffmpeg(-vf drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='%{n}.000':text_align=R:fontcolor=white:fontsize=w/24:box=1:boxcolor=black:boxborderw=7*(text_h):x=(w/2)-(text_w/2):y=(h-text_h)/1.12,negate)
+#   mp3=-20|-17|-13|-8|-5|-1|4|7|11|16|19|23

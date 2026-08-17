@@ -1,5 +1,5 @@
 {
-  "1496091892067209307": {
+  "global": {
     "tags": {
       "hi": {
         "name": "hi",
@@ -9,7 +9,8 @@
         "uses": 1,
         "aliases": [],
         "allowed_roles": [],
-        "denied_users": []
+        "denied_users": [],
+        "guild_origin": "1496091892067209307"
       },
       "sync": {
         "name": "sync",
@@ -20,7 +21,8 @@
         "aliases": [],
         "allowed_roles": [],
         "denied_users": [],
-        "edited_at": "2026-06-20T01:35:33.634738+00:00"
+        "edited_at": "2026-06-20T01:35:33.634738+00:00",
+        "guild_origin": "1496091892067209307"
       },
       "p1280ff3": {
         "name": "p1280ff3",
@@ -30,23 +32,46 @@
         "uses": 1,
         "aliases": [],
         "allowed_roles": [],
-        "denied_users": []
+        "denied_users": [],
+        "guild_origin": "1496091892067209307"
       },
       "test": {
         "name": "test",
-        "content": "{iscript:\nload {iv:{args}} i\nhuehsv i 30\n}",
+        "content": "{iscript:load {iv} f\ndeepfry f}",
         "owner_id": 1355759019330895973,
         "created_at": "2026-06-20T01:58:18.303600+00:00",
+        "uses": 4,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": [],
+        "edited_at": "2026-06-25T09:53:19.391093+00:00",
+        "guild_origin": "1496091892067209307"
+      },
+      "braxtons_gm105oldp": {
+        "name": "braxtons_gm105oldp",
+        "content": "{ihtx:1 vidlen - mp4 swirl=400.55|0.5|0.5|0.5,tvsim=0.75,swirl=-400.55|0.5|0.5|0.5,invert,huehsv=0.5,multipitch=-17|-15|0|15|17}",
+        "owner_id": 1355759019330895973,
+        "created_at": "2026-06-21T10:59:04.695885+00:00",
         "uses": 1,
         "aliases": [],
         "allowed_roles": [],
-        "denied_users": []
-      }
-    },
-    "aliases": {}
-  },
-  "1512913008664252526": {
-    "tags": {
+        "denied_users": [],
+        "guild_origin": "1496091892067209307"
+      },
+      "klaskysource": {
+        "name": "klaskysource",
+        "content": "{attach:https://files.catbox.moe/e22c0y.mov}",
+        "owner_id": 1355759019330895973,
+        "created_at": "2026-07-08T10:08:57.419657+00:00",
+        "uses": 16,
+        "aliases": [
+          "ks"
+        ],
+        "allowed_roles": [],
+        "denied_users": [],
+        "edited_at": "2026-07-18T05:24:11.024709+00:00",
+        "guild_origin": "1496091892067209307"
+      },
       "wbwbwbwwb": {
         "name": "wbwbwbwwb",
         "content": "{ihtx:20 vidlen true mp4 multipitch=-10|-5|5|10}",
@@ -56,9 +81,87 @@
         "aliases": [],
         "allowed_roles": [],
         "denied_users": [],
-        "edited_at": "2026-06-20T08:48:35.918803+00:00"
+        "edited_at": "2026-06-20T08:48:35.918803+00:00",
+        "guild_origin": "1512913008664252526"
+      },
+      "gm74": {
+        "name": "gm74",
+        "content": "pinch&punch=0.5,huehsv=0.5,invert,multipitch=-10|9|14,volume=5.5",
+        "owner_id": 1286483257067700265,
+        "created_at": "2026-06-22T13:35:22.715380+00:00",
+        "uses": 1,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": [],
+        "guild_origin": "1517206716712878112"
+      },
+      "ks": {
+        "name": "ks",
+        "content": "{attach:https://cdn.discordapp.com/attachments/1412001763984150569/1525096152251498637/distort.resize.mp4?ex=6a5223f9&is=6a50d279&hm=af91cbc00c86162683986ecc151c32b8ccf6d7275ba5842672cf15d9c99e33cc&}",
+        "owner_id": 1336690979553415269,
+        "created_at": "2026-07-10T11:07:52.242920+00:00",
+        "uses": 1,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": [],
+        "guild_origin": "1411932508693598240"
+      },
+      "beebowhar": {
+        "name": "beebowhar",
+        "content": "{ihtx:1 vidlen - mp4 beebowhar}",
+        "owner_id": 1355759019330895973,
+        "created_at": "2026-07-15T10:44:49.312081+00:00",
+        "uses": 0,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": [],
+        "guild_origin": "1513817958391087276"
+      },
+      "e": {
+        "name": "e",
+        "content": "{ihtx:1 vidlen - mp4 e}",
+        "owner_id": 1513712642819231812,
+        "created_at": "2026-07-15T11:28:16.726622+00:00",
+        "uses": 1,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": [],
+        "guild_origin": "1514193593697435779"
+      },
+      "tagscript_test": {
+        "name": "tagscript_test",
+        "content": "tagscript:\nhello {user} welcome to {tagname}",
+        "owner_id": 1513712642819231812,
+        "created_at": "2026-07-21T12:55:30.816917+00:00",
+        "uses": 1,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": []
+      },
+      "beb": {
+        "name": "beb",
+        "content": "{attach:https://file.garden/akpXUy7cShbwSW4u/p1280_640x360_snip.1f0a7973.mp4}",
+        "owner_id": 1355759019330895973,
+        "created_at": "2026-07-22T11:32:35.324002+00:00",
+        "uses": 2,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": []
+      },
+      "ihtx_custom_ffmpeg": {
+        "name": "ihtx_custom_ffmpeg",
+        "content": "{sh:\nload {iv}\n\n# arguments:\n\npower={arg:0}\nduration={arg:1}\nNO_TRIM={arg:2}\n\nif [ \"{arg:3}\" = \"default\" ]; then\n   input_format=\"${FILE_1##*.}\"\nelse\n   input_format=\"{arg:3}\"\nfi\n \nif [ \"{arg:4}\" = \"default\" ]; then\n   output_format=\"${FILE_1##*.}\"\nelse\n   output_format=\"{arg:4}\"\nfi\n\n# set up variables\n\nsr=$(ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate -of default=nokey=1:noprint_wrappers=1 \"$FILE_1\")\nfr=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=nokey=1:noprint_wrappers=1 \"$FILE_1\")\nd=$(ffprobe -i \"$FILE_1\" -show_entries format=duration -v quiet -of csv=\"p=0\")\nw=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 \"$FILE_1\")\nh=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 \"$FILE_1\")\nfc=$(ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=nokey=1:noprint_wrappers=1 \"$FILE_1\")\n\nffmpeg -y -stream_loop -1 -i \"$FILE_1\" -c:v h264 -preset ultrafast -tune fastdecode -qp 1 -t $duration -threads 0 -movflags +faststart \"0.$output_format\"\n\nfor i in $(seq 1 $((power + 0))); do\n  prev=$((i-1))\n  if [ \"$NO_TRIM\" = \"true\" ] || [ \"$NO_TRIM\" = \"+\" ]; then\n    ffmpeg -y -i \"${prev}.$input_format\" {arg:5+} -movflags +faststart \"${i}.$input_format\"\n  elif [ \"$NO_TRIM\" = \"false\" ] || [ \"$NO_TRIM\" = \"-\" ]; then\n    ffmpeg -y -stream_loop -1 -i \"${prev}.$input_format\" {arg:5+} -t \"$duration\" -movflags +faststart \"${i}.$input_format\"\n  fi\ndone\n\nrm -f list.txt\nfor i in $(seq 1 $((power + 0))); do\n  echo \"file '${i}.$input_format'\" >> list.txt\ndone\nffmpeg -y -f concat -safe 0 -i list.txt -crf 35 -pix_fmt yuv420p ./output/ihtx.\"$output_format\"\n\n# cleanup\nrm -f list.txt\nfor i in $(seq 0 $((power + 0))); do\n  rm -f \"${i}.$input_format\"\ndone\n}",
+        "owner_id": 1355759019330895973,
+        "created_at": "2026-08-01T04:18:37.825873+00:00",
+        "uses": 7,
+        "aliases": [],
+        "allowed_roles": [],
+        "denied_users": [],
+        "edited_at": "2026-08-01T04:22:02.265844+00:00"
       }
     },
-    "aliases": {}
+    "aliases": {
+      "ks": "klaskysource"
+    }
   }
 }

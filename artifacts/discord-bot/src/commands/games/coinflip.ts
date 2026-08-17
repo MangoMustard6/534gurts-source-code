@@ -8,7 +8,7 @@ export async function handleCoinflip(message: Message, ownerId: string): Promise
   const embed = gameEmbed(message, ownerId, {
     title: `${emoji} Coin Flip`,
     description: `## ${result}!`,
-    color: result === 'Heads' ? 0xffd700 : 0xaaaaaa,
+    color: 0x40E0D0,
     footer: 'IHTX Games • Coinflip',
   });
 

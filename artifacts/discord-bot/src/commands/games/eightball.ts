@@ -28,15 +28,13 @@ export async function handleEightBall(message: Message, args: string[], ownerId:
   const question = args.join(' ').trim();
 
   if (!question) {
-    await message.reply('❌ Ask a question!\nExample: `t!8ball Will I win today?`');
+    await message.reply('❌ Ask a question!\nExample: `th/8ball Will I win today?`');
     return;
   }
 
   const response = RESPONSES[Math.floor(Math.random() * RESPONSES.length)];
   const color =
-    response.type === 'positive' ? 0x57f287 :
-    response.type === 'negative' ? 0xed4245 :
-    0xfee75c;
+    0x40E0D0;
 
   const embed = gameEmbed(message, ownerId, {
     title: '🎱 Magic 8-Ball',

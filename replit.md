@@ -4,9 +4,14 @@ A Discord bot that applies destructive visual and audio effects to videos and im
 
 ## Run & Operate
 
-- Run button starts the bot via `python3 main.py`
-- Required secret: `DISCORD_TOKEN` — your Discord bot token (set via Replit Secrets)
-- Optional secrets: `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `FAL_KEY`, `REPLICATE_API_TOKEN`
+- Start both bots via the **Run** button (or individually from the Workflows panel):
+  - `IHTX Discord Bot` — Python bot (`python3 main.py`)
+  - `IHTX Discord Bot (TypeScript)` — TypeScript bot (`pnpm --filter @workspace/discord-bot run dev`)
+- Required secrets (set via Replit Secrets):
+  - `DISCORD_TOKEN` — Python bot token
+  - `DISCORD_TOKEN_TS` — TypeScript bot token (separate Discord app so both can run simultaneously)
+  - `BOT_OWNER_ID` — your Discord user ID (both bots exit at startup if missing)
+- Optional secrets: `GROQ_API_KEY` (AI chat on Python bot), `GEMINI_API_KEY` (AI chat on TS bot), `CATBOX_USERHASH` (links Catbox uploads to your account)
 
 ## Stack
 
@@ -25,12 +30,13 @@ A Discord bot that applies destructive visual and audio effects to videos and im
 ## Architecture decisions
 
 - Bot token read from `DISCORD_TOKEN` env var at startup; exits cleanly if missing
+- Discord login HTTP 429 responses stop the Python launcher without retries; restart it manually after Discord clears the temporary block
 - All AI integrations (Gemini, Anthropic, fal, replicate) are optional — gracefully degrade if keys not set
 - System tools (ffmpeg, sox, imagemagick, rubberband) provided via Nix `stable-25_05` channel
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- `BOT_OWNER_ID` is always required — never use a hardcoded default Discord user ID. Both bots must exit at startup if this secret is missing.
 
 ## Gotchas
 

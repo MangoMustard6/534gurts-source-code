@@ -3,10 +3,14 @@ import {
   GatewayIntentBits,
   Partials,
   Message,
+  REST,
+  Routes,
+  Interaction,
+  ChatInputCommandInteraction,
+  SlashCommandBuilder,
 } from 'discord.js';
 import { BOT_TOKEN, BOT_OWNER_ID, PREFIX } from './config.js';
-import { handleDownload } from './commands/download.js';
-import { handleMultipitchIHTX } from './commands/multipitchihtx.js';
+import { runYtdl } from './commands/ytdl.js';
 import { handleHelp } from './commands/help.js';
 import { handleCoinflip } from './commands/games/coinflip.js';
 import { handleDice } from './commands/games/dice.js';
@@ -18,13 +22,97 @@ import { handleRoulette } from './commands/games/roulette.js';
 import { handleTrivia } from './commands/games/trivia.js';
 import { handleInfo } from './commands/info.js';
 import { handleCatbox } from './commands/catbox.js';
+import { handleUguu } from './commands/uguu.js';
 import { handleChat } from './commands/chat.js';
 import { handleClearchat } from './commands/clearchat.js';
+import { handleBytebeat, handleBytebeatInteraction } from './commands/bytebeat.js';
+import { handleFfmpegProcess } from './commands/ffmpegprocess.js';
+import { handleRealGMajor4 } from './commands/realgmajor4.js';
+import { handleMultipitch2 } from './commands/multipitch2.js';
+import { handleIhtxSap, handleIhtxSapInteraction, IHTXSAP_STYLE_CHOICES } from './commands/ihtxsap.js';
+import { handleMultipitchBungee, handleMultipitchBungeeInteraction } from './commands/multipitchbungee.js';
+import { handleStretchToLength } from './commands/stretchtolength.js';
+import { handleGradientmap } from './commands/gradientmap.js';
+import { handlePipetest } from './commands/pipetest.js';
+import { handleWave } from './commands/wave.js';
+import { handleRepeat } from './commands/repeat.js';
+import { handleTrim } from './commands/trim.js';
+import { handleBlockuserCommand, handleUnblockuserCommand, isBlocked as isUserBlocked } from './commands/blockuser.js';
+import { handleBlockchannelCommand, handleUnblockchannelCommand, isBlockedInChannel } from './commands/blockchannel.js';
+import { handleKlaskysource } from './commands/klaskysource.js';
+import { handleVideolength } from './commands/videolength.js';
+import { handleScgv } from './commands/scgv-command.js';
+import { handleEffectConfig } from './commands/effectconfig.js';
+import { handlePitchTransition } from './commands/pitchtransition.js';
+import { handleIhtx } from './commands/ihtx.js';
 
 if (!BOT_TOKEN) {
   console.error('ERROR: DISCORD_TOKEN environment variable is not set.');
   process.exit(1);
 }
+
+if (!BOT_OWNER_ID) {
+  console.error('ERROR: BOT_OWNER_ID environment variable is not set.');
+  process.exit(1);
+}
+
+// ── Slash command definitions ────────────────────────────────────────────────
+
+const SLASH_COMMANDS = [
+  new SlashCommandBuilder()
+    .setName('bytebeat')
+    .setDescription('Generate Bytebeat audio from a mathematical formula')
+    .addStringOption((opt) =>
+      opt
+        .setName('formula')
+        .setDescription('Formula using t (sample index 0–39 999), e.g. t*(t>>5|t>>8)')
+        .setRequired(true),
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('ihtxsap')
+    .setDescription('IHTX-Sap: pitch-layer audio processor — strips video, outputs pure MP3')
+    .addAttachmentOption((opt) =>
+      opt.setName('file').setDescription('Audio or video file to process (images rejected)').setRequired(true),
+    )
+    .addNumberOption((opt) =>
+      opt.setName('duration').setDescription('How many seconds of the input to use, e.g. 0.7 = first 0.7 s').setRequired(true),
+    )
+    .addStringOption((opt) =>
+      opt.setName('pitches').setDescription('Space-separated semitone shifts, e.g. "-7 5 6"').setRequired(true),
+    )
+    .addIntegerOption((opt) =>
+      opt.setName('repetitions').setDescription('Times the mix loops end-to-end (default: 5, max: 100)').setRequired(false),
+    )
+    .addStringOption((opt) =>
+      opt
+        .setName('style')
+        .setDescription('Processing engine (default: Rubberband R2)')
+        .setRequired(false)
+        .addChoices(...IHTXSAP_STYLE_CHOICES.map((c) => ({ name: c.name, value: c.value }))),
+    )
+    .addNumberOption((opt) =>
+      opt.setName('volume').setDescription('Output volume multiplier after mix, e.g. 8 (default: 1)').setRequired(false),
+    )
+    .addBooleanOption((opt) =>
+      opt.setName('reverse').setDescription('Reverse the audio clip before pitch processing (default: false)').setRequired(false),
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('multipitch_bungee')
+    .setDescription('Multipitch Bungee: bungee pitch-shifter with video passthrough, multi-pitch support')
+    .addAttachmentOption((opt) =>
+      opt.setName('file').setDescription('Audio or video file to process (images rejected)').setRequired(true),
+    )
+    .addStringOption((opt) =>
+      opt.setName('pitches').setDescription('Pipe/comma-separated semitones, e.g. -7|7 (default: 1.5)').setRequired(false),
+    )
+    .toJSON(),
+];
+
+// ── Discord client ───────────────────────────────────────────────────────────
 
 const client = new Client({
   intents: [
@@ -36,16 +124,71 @@ const client = new Client({
   partials: [Partials.Channel],
 });
 
-client.once('clientReady', (c) => {
+// ── Ready: log in + register slash commands ──────────────────────────────────
+
+client.once('clientReady', async (c) => {
   console.log(`[IHTX-TS] Logged in as ${c.user.tag}`);
   console.log(`[IHTX-TS] Prefix: ${PREFIX}`);
   console.log(`[IHTX-TS] Owner ID: ${BOT_OWNER_ID || '(not set)'}`);
-  console.log(`[IHTX-TS] Commands: download, multipitchihtx, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox`);
+  console.log(`[IHTX-TS] Commands: ytdl, youtubedownload, multipitch2, pitchtransition, pitchtrans, ihtxsap, multipitch_bungee, mpb, chat, ask, clearchat, coinflip, dice, rps, 8ball, slots, choose, roulette, trivia, help, info, catbox, uguu, bytebeat, ffmpegprocess, realgmajor4, stretch_to_length, gradientmap, gmap, gm, wave, scgv, sidechaingate_vocoder, repeat, rep, loop`);
+
+  // Register slash commands.
+  // Set BOT_GUILD_ID env var for instant guild-level registration (dev),
+  // or leave unset for global registration (up to 1 h propagation).
+  const guildId = process.env.BOT_GUILD_ID ?? '';
+
+  try {
+    const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
+    // Read-only fields Discord rejects if sent back on a bulk PUT.
+    const RO_KEYS = new Set(['application_id', 'version']);
+
+    if (guildId) {
+      await rest.put(Routes.applicationGuildCommands(c.user.id, guildId), {
+        body: SLASH_COMMANDS,
+      });
+      console.log(`[IHTX-TS] Slash commands registered to guild ${guildId}`);
+    } else {
+      // Fetch existing global commands so we can preserve any Entry Point
+      // commands (type 4). A plain bulk PUT that omits them triggers error
+      // 50240 on apps that have a Discord Activity / App Launcher entry point.
+      const existing = await rest.get(Routes.applicationCommands(c.user.id)) as Array<Record<string, unknown>>;
+      const entryPoints = existing
+        .filter((cmd) => cmd['type'] === 4)
+        .map((cmd) => Object.fromEntries(Object.entries(cmd).filter(([k]) => !RO_KEYS.has(k))));
+
+      await rest.put(Routes.applicationCommands(c.user.id), {
+        body: [...SLASH_COMMANDS, ...entryPoints],
+      });
+      console.log(`[IHTX-TS] Slash commands registered globally (preserved ${entryPoints.length} entry point(s))`);
+    }
+  } catch (err) {
+    console.error('[IHTX-TS] Failed to register slash commands:', err);
+  }
 });
+
+// ── Prefix command dispatcher ────────────────────────────────────────────────
 
 client.on('messageCreate', async (message: Message) => {
   if (message.author.bot) return;
   if (!message.content.startsWith(PREFIX)) return;
+
+  if (isUserBlocked(message.author.id)) {
+    const info = await import('./commands/blockuser.js').then((m) => m.getBlockInfo(message.author.id));
+    if (info) {
+      const until = Math.floor(info.until / 1000);
+      await message.reply(`🚫 You are blocked from using the bot globally until <t:${until}:F>.`).catch(() => null);
+    }
+    return;
+  }
+
+  if (message.guildId && isBlockedInChannel(message.author.id, message.channelId)) {
+    const info = await import('./commands/blockchannel.js').then((m) => m.getChannelBlockInfo(message.author.id, message.channelId));
+    if (info) {
+      const until = Math.floor(info.until / 1000);
+      await message.reply(`🚫 You are blocked from using bot commands in this channel until <t:${until}:F>.`).catch(() => null);
+    }
+    return;
+  }
 
   const body = message.content.slice(PREFIX.length).trimStart();
   const spaceIdx = body.search(/\s/);
@@ -55,12 +198,9 @@ client.on('messageCreate', async (message: Message) => {
 
   try {
     switch (command) {
-      case 'download':
-        await handleDownload(message, args);
-        break;
-
-      case 'multipitchihtx':
-        await handleMultipitchIHTX(message, args, BOT_OWNER_ID);
+      case 'ytdl':
+      case 'youtubedownload':
+        await runYtdl(message);
         break;
 
       case 'help':
@@ -128,6 +268,120 @@ client.on('messageCreate', async (message: Message) => {
         await handleCatbox(message, args);
         break;
 
+      case 'uguu':
+      case 'ugupload':
+        await handleUguu(message);
+        break;
+
+      case 'bytebeat':
+      case 'bb':
+        await handleBytebeat(message, rest);
+        break;
+
+      case 'ffmpegprocess':
+      case 'fmp':
+        await handleFfmpegProcess(message, rest);
+        break;
+
+      case 'realgmajor4':
+      case 'realgm4':
+      case 'rgm4':
+        await handleRealGMajor4(message);
+        break;
+
+      case 'multipitch2':
+      case 'mp2':
+        await handleMultipitch2(message, rest);
+        break;
+
+      case 'pitchtransition':
+      case 'pitchtrans':
+        await handlePitchTransition(message, rest);
+        break;
+
+      case 'ihtxsap':
+      case 'sap':
+        await handleIhtxSap(message);
+        break;
+
+      case 'multipitch_bungee':
+      case 'mpb':
+        await handleMultipitchBungee(message);
+        break;
+
+      case 'stretch_to_length':
+      case 'stl':
+        await handleStretchToLength(message, rest);
+        break;
+
+      case 'gradientmap':
+      case 'gmap':
+      case 'gm':
+        await handleGradientmap(message, rest);
+        break;
+
+      case 'pipetest':
+      case 'pt':
+        await handlePipetest(message, rest);
+        break;
+
+      case 'wave':
+        await handleWave(message, rest);
+        break;
+
+      case 'repeat':
+      case 'rep':
+      case 'loop':
+        await handleRepeat(message, rest);
+        break;
+
+      case 'trim':
+        await handleTrim(message, rest);
+        break;
+
+      case 'scgv':
+      case 'sidechaingate_vocoder':
+        await handleScgv(message, rest);
+        break;
+
+      case 'effectconfig':
+      case 'ec':
+        await handleEffectConfig(message, rest);
+        break;
+
+      case 'ihtx':
+      case 'effect':
+      case 'destroy':
+        await handleIhtx(message, rest);
+        break;
+
+      case 'blockuser':
+        await handleBlockuserCommand(message);
+        break;
+
+      case 'unblockuser':
+        await handleUnblockuserCommand(message);
+        break;
+
+      case 'blockchannel':
+        await handleBlockchannelCommand(message);
+        break;
+
+      case 'unblockchannel':
+        await handleUnblockchannelCommand(message);
+        break;
+
+      case 'klaskysource':
+      case 'klasky':
+        await handleKlaskysource(message);
+        break;
+
+      case 'videolength':
+      case 'vidlen':
+      case 'videolen':
+        await handleVideolength(message, args);
+        break;
+
       default:
         break;
     }
@@ -139,6 +393,39 @@ client.on('messageCreate', async (message: Message) => {
     }
   }
 });
+
+// ── Slash command dispatcher ─────────────────────────────────────────────────
+
+client.on('interactionCreate', async (interaction: Interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  const slash = interaction as ChatInputCommandInteraction;
+
+  try {
+    switch (slash.commandName) {
+      case 'bytebeat':
+        await handleBytebeatInteraction(slash);
+        break;
+      case 'ihtxsap':
+        await handleIhtxSapInteraction(slash);
+        break;
+      case 'multipitch_bungee':
+        await handleMultipitchBungeeInteraction(slash);
+        break;
+      default:
+        break;
+    }
+  } catch (err) {
+    console.error(`[IHTX-TS] Unhandled slash error in "/${slash.commandName}":`, err);
+    try {
+      const msg = '❌ An unexpected error occurred.';
+      if (slash.deferred || slash.replied) await slash.editReply(msg);
+      else await slash.reply({ content: msg, ephemeral: true });
+    } catch {
+    }
+  }
+});
+
+// ── Error handler ────────────────────────────────────────────────────────────
 
 client.on('error', (err) => {
   console.error('[IHTX-TS] Client error:', err);

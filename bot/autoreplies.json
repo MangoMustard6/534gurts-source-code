@@ -1,8 +1,4 @@
 {
-  "hello": {
-    "response": "Hello there, {mention}!",
-    "channel_id": null
-  },
   ".t": {
     "response": "HEY!!!! USE <#1496114769458106509> FOR A REASON, ||{mention}||",
     "channel_id": 1496094014179381319

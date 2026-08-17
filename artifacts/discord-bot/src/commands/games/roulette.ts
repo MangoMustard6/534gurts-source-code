@@ -18,7 +18,7 @@ export async function handleRoulette(message: Message, args: string[], ownerId: 
 
   if (!bet) {
     await message.reply(
-      '❌ Place a bet!\n**Options:** `red`, `black`, `green`, or a number `0`–`36`\nExample: `t!roulette red`',
+      '❌ Place a beth/\n**Options:** `red`, `black`, `green`, or a number `0`–`36`\nExample: `th/roulette red`',
     );
     return;
   }
@@ -51,7 +51,7 @@ export async function handleRoulette(message: Message, args: string[], ownerId: 
   const embed = gameEmbed(message, ownerId, {
     title: '🎡 Roulette',
     description: resultLine,
-    color: won ? 0x57f287 : 0xed4245,
+    color: 0x40E0D0,
     fields: [
       { name: 'Your bet', value: betLabel, inline: true },
       { name: 'Landed on', value: landed, inline: true },

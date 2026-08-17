@@ -23,7 +23,7 @@ export function gameEmbed(
       iconURL: message.author.displayAvatarURL(),
     })
     .setTitle(options.title)
-    .setColor(options.color ?? 0x5865f2)
+    .setColor(options.color ?? 0x40E0D0)
     .setTimestamp();
 
   if (options.description) embed.setDescription(options.description);
