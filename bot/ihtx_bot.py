@@ -3269,6 +3269,23 @@ def _split_pipe_segments(pipe_str: str) -> list[str]:
         elif ch == "]":
             array_depth = max(0, array_depth - 1)
             current.append(ch)
+        elif ch == ";" and paren_depth == 0 and array_depth == 0:
+            # Semicolons separate effects in the documented IHTX syntax, but
+            # they are also positional parameter separators (e.g. mirror and
+            # wave). Only split when the next token is a known effect name.
+            remainder = pipe_str[i + 1:]
+            next_effect = re.match(
+                r"\s*([a-z0-9_&()﷽𒐫🥸]+)(?:\s*=|\s|$)",
+                remainder,
+                re.IGNORECASE,
+            )
+            if next_effect and next_effect.group(1).lower() in PIPE_EFFECT_NAMES:
+                seg = "".join(current).strip()
+                if seg:
+                    segments.append(seg)
+                current = []
+            else:
+                current.append(ch)
         elif ch in (",", ">") and paren_depth == 0 and array_depth == 0:
             # pitchtransition voice definitions intentionally contain a comma:
             # pitchtransition=-5,9;5,-9
@@ -3292,6 +3309,114 @@ def _split_pipe_segments(pipe_str: str) -> list[str]:
     if seg:
         segments.append(seg)
     return segments
+
+
+def _split_quoted_fields(value: str, delimiter: str = "|") -> list[str]:
+    """Split a conditional expression while preserving quoted branch code."""
+    fields: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for ch in value:
+        if escaped:
+            current.append(ch)
+            escaped = False
+            continue
+        if ch == "\\" and quote is not None:
+            current.append(ch)
+            escaped = True
+            continue
+        if quote:
+            current.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            current.append(ch)
+        elif ch == delimiter:
+            fields.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    fields.append("".join(current).strip())
+    return fields
+
+
+def _strip_branch_quotes(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
+def _parse_ihtx_if(pipe_str: str) -> tuple[str, list[str]] | None:
+    """Parse if:<lhs>|<operator>|<rhs>|then:"..."|else:"..." syntax."""
+    raw = pipe_str.strip()
+    if not raw.lower().startswith("if:"):
+        return None
+    fields = _split_quoted_fields(raw[3:])
+    if len(fields) not in (4, 5):
+        return ("__if_error__", ["expected if:variable|operator|value|then:\"...\"|else:\"...\""])
+    lhs, operator, rhs = (part.strip() for part in fields[:3])
+    then_field = fields[3]
+    else_field = fields[4] if len(fields) == 5 else "else:"
+    if not then_field.lower().startswith("then:") or not else_field.lower().startswith("else:"):
+        return ("__if_error__", ["expected then:\"...\" and optional else:\"...\""])
+    then_code = _strip_branch_quotes(then_field[5:].strip())
+    else_code = _strip_branch_quotes(else_field[5:].strip())
+    return ("__if__", [lhs, operator, rhs, then_code, else_code])
+
+
+def _resolve_ihtx_if(
+    effects: list[tuple[str, list[str]]],
+    context: dict[str, object],
+) -> tuple[list[tuple[str, list[str]]] | None, str]:
+    """Resolve conditional effects against the current th/ihtx invocation."""
+    resolved: list[tuple[str, list[str]]] = []
+    for name, params in effects:
+        if name == "__if_error__":
+            return None, params[0] if params else "Invalid if syntax."
+        if name != "__if__":
+            resolved.append((name, params))
+            continue
+        lhs, operator, rhs, then_code, else_code = params
+        if lhs not in context:
+            return None, f"if: unknown variable `{lhs}`."
+        left_value = context[lhs]
+        try:
+            left_num = float(left_value)
+            right_num = float(rhs)
+            numeric = True
+        except (TypeError, ValueError):
+            numeric = False
+        if numeric:
+            left_cmp: object = left_num
+            right_cmp: object = right_num
+        else:
+            left_cmp = str(left_value)
+            right_cmp = rhs
+        if operator in ("=", "=="):
+            matched = left_cmp == right_cmp
+        elif operator == "!=":
+            matched = left_cmp != right_cmp
+        elif operator == ">":
+            matched = left_cmp > right_cmp if numeric else False
+        elif operator == "<":
+            matched = left_cmp < right_cmp if numeric else False
+        elif operator == ">=":
+            matched = left_cmp >= right_cmp if numeric else False
+        elif operator == "<=":
+            matched = left_cmp <= right_cmp if numeric else False
+        elif operator.lower() == "contains":
+            matched = str(right_cmp) in str(left_cmp)
+        else:
+            return None, f"if: unsupported operator `{operator}`."
+        branch = then_code if matched else else_code
+        if branch:
+            branch_effects = _parse_pipe_effects(branch)
+            resolved.extend(branch_effects)
+    return resolved, ""
 
 
 def _expand_user_effects(pipe_str: str) -> str:
@@ -3325,6 +3450,9 @@ def _parse_pipe_effects(pipe_str: str) -> list[tuple[str, list[str]]]:
     ``ffmpeg(...)`` is a special effect whose content is passed verbatim as raw
     FFmpeg args; semicolons inside the parens do *not* act as delimiters.
     """
+    conditional = _parse_ihtx_if(pipe_str)
+    if conditional is not None:
+        return [conditional]
     pipe_str = _expand_user_effects(pipe_str)
     # VIDEO: <vf_filter> AUDIO: <af_filter> raw format — pass directly to FFmpeg
     if re.search(r'\b(VIDEO|AUDIO):', pipe_str, re.IGNORECASE):
@@ -5935,6 +6063,22 @@ def _run_ihtx_tagscript_workflow(
     if not dur_ok:
         return False, dur_or_error
     dur = dur_or_error
+    resolved_effects, condition_error = _resolve_ihtx_if(
+        effects,
+        {
+            "exports": exports,
+            "duration": float(dur),
+            "vidlen": vidlen,
+            "no_trim": no_trim,
+            "format": export_format,
+            "output_format": output_format,
+        },
+    )
+    if condition_error:
+        return False, condition_error
+    effects = resolved_effects or []
+    if not effects:
+        return False, "The selected if branch contains no pipe effects."
     _progress(0, abs(exports), "Checking output format")
     # A pitchtransition filter needs its Rubber Band tail to finish emitting
     # the final automation command. Keep that tail through every export pass.
