@@ -106,4 +106,4 @@ PORT = "8081"
 
 [nix]
 channel = "stable-25_05"
-packages = ["libuv", "rubberband"]
+packages = ["freetype", "lcms2", "libimagequant", "libjpeg", "libtiff", "libuv", "libwebp", "libxcrypt", "openjpeg", "rubberband", "tcl", "tk", "zlib"]

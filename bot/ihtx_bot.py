@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-20: [Python] Updated parametric mirror to the fast rotated-geq reflection model with configurable line offsets; replaced pinch&punch with the supplied one-pass scaled-center geq warp while leaving mirror presets unchanged.
 - 2026-08-05: [Python] Made prefix `th/ihtx` jobs restart-recoverable: pending command messages are persisted before processing and replayed automatically after the bot reconnects.
 - 2026-08-05: [Python] Connected `/ihtxgen` pipe status to real workflow callbacks: intermediate-format check, duration check, output-format check, base preparation, export code passes, final concatenation, and output-ready.
 - 2026-08-05: [Python] Expanded pipe code-workflow status to show duration, trim behavior, intermediate format, final output format, export count, and progress bar instead of pipe-effect names.
@@ -3512,39 +3513,22 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
             }
             return _mirror_vf.get(first_resolved, _mirror_vf["left"])
         else:
-            # Parametric mode: mirror=angle[,cx,cy]
-            # Folds the image along a line through (cx,cy) at `angle` degrees.
-            # angle=90  → horizontal fold (default)
-            # angle=0   → vertical fold
-            # angle=45  → diagonal fold
+            # Parametric mode: mirror=angle[;percentX][;percentY].
+            # Keep this in one FFmpeg pass: rotate onto a 2x canvas, reflect
+            # pixels below the computed line, rotate back, and crop.
             try:
-                A = float(first) if first else 90.0
+                angle = float(first) if first else 90.0
             except ValueError:
-                A = 90.0
-            cx = float(params[1]) if len(params) > 1 else 0.5
-            cy = float(params[2]) if len(params) > 2 else 0.5
-            # In the 2x canvas (W=2·OW, H=2·OH) the fold line's Y position is:
-            #   fold_y = H/2 + (cx-0.5)*(W/2)*sin(A°) + (cy-0.5)*(H/2)*cos(A°)
-            a_rad = f"{A}/180*PI"
-            cx_off = cx - 0.5
-            cy_off = cy - 0.5
-            cx_term = (
-                f"+{cx_off:.6f}*(W/2)*sin({a_rad})" if cx_off >= 0
-                else f"{cx_off:.6f}*(W/2)*sin({a_rad})"
-            )
-            cy_term = (
-                f"+{cy_off:.6f}*(H/2)*cos({a_rad})" if cy_off >= 0
-                else f"{cy_off:.6f}*(H/2)*cos({a_rad})"
-            )
-            fold_y = f"H/2{cx_term}{cy_term}"
-            return (
-                f"rotate={A}/180*PI:iw*2:ih*2,"
-                f"geq='if(gte(Y,{fold_y}),p(X,2*({fold_y})-Y),p(X,Y))',"
-                f"format=yuv420p,"
-                f"rotate={A}/-180*PI,"
-                f"crop=iw/2:ih/2,"
-                f"format=yuv420p"
-            )
+                angle = 90.0
+            try:
+                percent_x = float(params[1]) if len(params) > 1 else 0.5
+            except (ValueError, TypeError):
+                percent_x = 0.5
+            try:
+                percent_y = float(params[2]) if len(params) > 2 else 0.5
+            except (ValueError, TypeError):
+                percent_y = 0.5
+            return _build_parametric_mirror_vf(angle, percent_x, percent_y)
     if name == "scale1280":
         # params: width|height  (height defaults to -2 = preserve aspect ratio)
         width = params[0] if params else "1280"
@@ -3612,15 +3596,23 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
             f"scale=iw:ih,format=yuv420p"
         )
     if name in ("pinch&punch", "p&p", "pinchpunch"):
+        # Parameters mirror the compact TS implementation:
+        # strength|xScale|yScale|xCenter|yCenter.
         strength = params[0] if len(params) > 0 else "1"
-        radius = params[1] if len(params) > 1 else "0.5"
-        cx = params[2] if len(params) > 2 else "0.5"
-        cy = params[3] if len(params) > 3 else "0.5"
+        # The default normalized radius is (0.5 * 2) * 0.45 = 0.45.
+        x_scale = params[1] if len(params) > 1 else "0.45"
+        y_scale = params[2] if len(params) > 2 else "0.45"
+        cx = params[3] if len(params) > 3 else "0.5"
+        cy = params[4] if len(params) > 4 else "0.5"
         geq_expr = (
-            f"p(W*{cx}+(X-W*{cx})*max(1-({strength})*gauss(-3.3333*pow(hypot((X-W*{cx})/(W*{radius}),(Y-H*{cy})/(H*{radius})),2)),0),"
-            f"H*{cy}+(Y-H*{cy})*max(1-({strength})*gauss(-3.3333*pow(hypot((X-W*{cx})/(W*{radius}),(Y-H*{cy})/(H*{radius})),2)),0))"
+            f"p(W*{cx}+((X-W*{cx})/(min(W,H)*0.5))"
+            f"*(1-(({strength}/4)*PI)*pow(1-pow(min(hypot((X-W*{cx})/(W*{x_scale}),"
+            f"(Y-H*{cy})/(H*{y_scale}))/1,1),2),2))*(min(W,H)*0.5),"
+            f"H*{cy}+((Y-H*{cy})/(min(W,H)*0.5))"
+            f"*(1-(({strength}/4)*PI)*pow(1-pow(min(hypot((X-W*{cx})/(W*{x_scale}),"
+            f"(Y-H*{cy})/(H*{y_scale}))/1,1),2),2))*(min(W,H)*0.5))"
         )
-        return f"format=yuv444p,geq='{geq_expr}',scale=iw:ih,format=yuv420p"
+        return f"format=yuv444p16le,geq='{geq_expr}',scale=iw:ih,format=yuv420p"
     if name == "vreverse":
         return "reverse"
     if name == "gm91deform":
@@ -12425,7 +12417,7 @@ async def addsource_command(ctx: commands.Context, *, args: str = ""):
             await status_msg.edit(content=f"❌ Upload failed: `{exc}`")
 
 
-# ---------- th/mirror — mirror presets via FFmpeg split/crop/flip/stack ----------
+# ---------- th/mirror — mirror presets and parametric reflection ----------
 
 # Each preset is (vf_filter, description)
 # Native FFmpeg: split the frame, crop each half, flip one, stack back.
@@ -12455,12 +12447,30 @@ _MIRROR_SUPPORTED_EXTS = {
 }
 
 
+def _build_parametric_mirror_vf(angle: float, percent_x: float = 0.5, percent_y: float = 0.5) -> str:
+    """Build the fast rotated-geq mirror filter used by pipe and standalone modes."""
+    angle_text = f"{angle:.4f}"
+    px = max(0.0, min(1.0, percent_x))
+    py = max(0.0, min(1.0, percent_y))
+    fold_y = (
+        f"H/2+({px:.6f}-0.5)*(W/2)*sin(({angle_text})*PI/180)"
+        f"+({py:.6f}-0.5)*(H/2)*cos(({angle_text})*PI/180)"
+    )
+    return (
+        f"rotate=({angle_text})*PI/180:iw*2:ih*2,"
+        f"geq='st(0,{fold_y});if(gte(Y,ld(0)),p(X,2*ld(0)-Y),p(X,Y))',"
+        f"rotate=({angle_text})*-PI/180:iw/2:ih/2,"
+        "format=yuv420p"
+    )
+
+
 @bot.command(name="mirror")
 async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str = ""):
     """Mirror media along an axis.
 
     Usage:
       th/mirror <preset>
+      th/mirror <angle> [percentX] [percentY]
       Presets: left (l), right (r), top (t), bottom (b)
 
     Examples:
@@ -12474,6 +12484,26 @@ async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str =
     preset_key = preset.strip().lower()
     preset_key = _MIRROR_ALIASES.get(preset_key, preset_key)
 
+    # Numeric mode uses the same fast reflection filter as mirror=<angle>
+    # in the pipe engine. Offsets are ratios in [0, 1], defaulting to centre.
+    parametric_vf: str | None = None
+    try:
+        angle = float(preset_key)
+    except (ValueError, TypeError):
+        angle = None
+    if angle is not None:
+        numeric_args = [tok for tok in args.split() if not tok.startswith(("http://", "https://"))]
+        try:
+            percent_x = float(numeric_args[0]) if numeric_args else 0.5
+        except ValueError:
+            percent_x = 0.5
+        try:
+            percent_y = float(numeric_args[1]) if len(numeric_args) > 1 else 0.5
+        except ValueError:
+            percent_y = 0.5
+        preset_key = f"{angle:g}"
+        parametric_vf = _build_parametric_mirror_vf(angle, percent_x, percent_y)
+
     # A URL might have been passed in the preset slot; re-route it
     media_url: str | None = None
     if preset.startswith(("http://", "https://")):
@@ -12481,12 +12511,38 @@ async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str =
         preset_key = args.split()[0].lower() if args.strip() else ""
         preset_key = _MIRROR_ALIASES.get(preset_key, preset_key)
 
-    if preset_key not in _MIRROR_PRESETS:
+    # The URL-first form may put the numeric angle into preset_key above.
+    if parametric_vf is None:
+        try:
+            angle = float(preset_key)
+        except (ValueError, TypeError):
+            angle = None
+        if angle is not None:
+            numeric_args = [
+                tok for tok in args.split()
+                if not tok.startswith(("http://", "https://")) and tok != preset_key
+            ]
+            try:
+                percent_x = float(numeric_args[0]) if numeric_args else 0.5
+            except ValueError:
+                percent_x = 0.5
+            try:
+                percent_y = float(numeric_args[1]) if len(numeric_args) > 1 else 0.5
+            except ValueError:
+                percent_y = 0.5
+            preset_key = f"{angle:g}"
+            parametric_vf = _build_parametric_mirror_vf(angle, percent_x, percent_y)
+
+    if parametric_vf is None and preset_key not in _MIRROR_PRESETS:
         preset_list = ", ".join(f"`{k}`" for k in _MIRROR_PRESETS)
-        await ctx.reply(f"❌ Available presets: {preset_list}")
+        await ctx.reply(f"❌ Available presets: {preset_list}, or an angle such as `45 0.5 0.5`")
         return
 
-    vf, description = _MIRROR_PRESETS[preset_key]
+    if parametric_vf is not None:
+        vf = parametric_vf
+        description = f"{angle:g}° fold at ({percent_x:.3g}, {percent_y:.3g})"
+    else:
+        vf, description = _MIRROR_PRESETS[preset_key]
 
     # Scan args for a URL if not already found
     if media_url is None:
