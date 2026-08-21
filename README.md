@@ -68,6 +68,35 @@ th/ihtx 1 5 - mp4 negate,huehsv=0.5
 th/ihtx 3 vidlen - mp4 multipitch=1;6;7,hue=90
 ```
 
+Conditional pipe branches compare invocation values before rendering. Keep
+each branch in quotes so its effect separators stay together:
+
+```text
+th/ihtx 10 0.4 - mp4 mov if:exports|>|1|then:"negate;hflip"|else:"vflip"
+```
+
+Supported condition variables include `exports`, `duration`, `vidlen`,
+`no_trim`, `format`, and `output_format`; operators are `=`, `==`, `!=`,
+`>`, `<`, `>=`, `<=`, and `contains`.
+
+`$i`, `i`, `powers`, `repetitions`, and `reps` are aliases for `exports`.
+The controls can also be written by name:
+
+```text
+th/ihtx exports=10 duration=0.4 notrim=- format=mp4 output_format=mov if:$i|>|1|then:"negate;hflip"|else:"vflip"
+```
+
+For raw FFmpeg+ code that should run on every export, use:
+
+```text
+th/ihtxffmpeg 10 0.483 - mp4 mov -vf negate
+th/ihtxffmpeg exports=10 duration=0.483 notrim=- format=mp4 output_format=mov -vf negate
+```
+
+`th/ihtxffmpeg` reserves the input and output arguments, applies the supplied
+FFmpeg options once per export, and concatenates the export sequence into the
+requested output format.
+
 **Shorthand pipe mode** (no leading digits, no preset name → 1 rep, full duration, mp4):
 ```
 th/ihtx negate,hue=90

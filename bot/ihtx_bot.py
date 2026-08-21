@@ -8,6 +8,8 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-21: [Python] Added `$i`/`powers` aliases for IHTX export count, keyword arguments for th/ihtx, and the standalone th/ihtxffmpeg iterative raw-FFmpeg command.
+- 2026-08-20: [Python] Added quote-aware th/ihtx conditionals: if:<variable>|<operator>|<value>|then:"<pipe code>"|else:"<pipe code>", with numeric/string comparisons and branch effect parsing.
 - 2026-08-20: [Python] Updated parametric mirror to the fast rotated-geq reflection model with configurable line offsets; replaced pinch&punch with the supplied one-pass scaled-center geq warp while leaving mirror presets unchanged.
 - 2026-08-05: [Python] Made prefix `th/ihtx` jobs restart-recoverable: pending command messages are persisted before processing and replayed automatically after the bot reconnects.
 - 2026-08-05: [Python] Connected `/ihtxgen` pipe status to real workflow callbacks: intermediate-format check, duration check, output-format check, base preparation, export code passes, final concatenation, and output-ready.
@@ -3381,6 +3383,15 @@ def _resolve_ihtx_if(
             resolved.append((name, params))
             continue
         lhs, operator, rhs, then_code, else_code = params
+        aliases = {
+            "$i": "exports", "i": "exports", "powers": "exports",
+            "repetitions": "exports", "reps": "exports",
+            "notrim": "no_trim", "export_format": "format",
+            "export_fmt": "format", "output_fmt": "output_format",
+        }
+        lhs = aliases.get(lhs.lower(), lhs.lower())
+        if rhs.lower() in aliases:
+            rhs = str(context.get(aliases[rhs.lower()], rhs))
         if lhs not in context:
             return None, f"if: unknown variable `{lhs}`."
         left_value = context[lhs]
@@ -5903,10 +5914,52 @@ def _parse_ihtx_custom_args(args: str) -> tuple[int, str, str, str, str, str] | 
 
     Example:
       10 0.483 - mp4 mov huehsv 0.5;negate;multipitch=1|6|7
+      10 0.4 - mp4 mov if:exports|>|1|then:"negate;hflip"|else:"vflip"
     """
     parts = shlex.split(args)
     if len(parts) <= 5:
         return None
+    named_keys = {
+        "exports": "exports", "powers": "exports", "repetitions": "exports",
+        "reps": "exports", "i": "exports", "duration": "duration",
+        "dur": "duration", "notrim": "no_trim", "no_trim": "no_trim",
+        "format": "format", "export_format": "format", "export_fmt": "format",
+        "output_format": "output_format", "output_fmt": "output_format",
+    }
+    named: dict[str, str] = {}
+    named_count = 0
+    for token in parts:
+        if "=" not in token:
+            break
+        key, value = token.split("=", 1)
+        canonical = named_keys.get(key.lower())
+        if canonical is None:
+            break
+        named[canonical] = value
+        named_count += 1
+    if named_count:
+        required = {"exports", "duration", "no_trim", "format", "output_format"}
+        if not required.issubset(named):
+            return None
+        try:
+            exports = int(named["exports"])
+        except ValueError:
+            return None
+        if exports == 0:
+            return None
+        no_trim = named["no_trim"].lower()
+        if no_trim not in {"true", "yes", "+", "1", "false", "no", "-", "0"}:
+            return None
+        output_format = named["output_format"].lstrip(".").lower()
+        if output_format not in _IHTX_FINAL_OUTPUT_FORMATS:
+            return None
+        pipe_effects = _raw_tail_after_n_tokens(args, named_count)
+        if not pipe_effects:
+            return None
+        return (
+            exports, named["duration"], no_trim,
+            named["format"].lstrip(".") or "mp4", output_format, pipe_effects,
+        )
     try:
         exports = int(parts[0])
     except ValueError:
@@ -5915,7 +5968,7 @@ def _parse_ihtx_custom_args(args: str) -> tuple[int, str, str, str, str, str] | 
         return None
     duration_expr = parts[1]
     no_trim = parts[2].lower()
-    if no_trim not in {"true", "yes", "+", "false", "no", "-"}:
+    if no_trim not in {"true", "yes", "+", "1", "false", "no", "-", "0"}:
         return None
     export_format = parts[3].lstrip(".") or "mp4"
     output_format = parts[4].lstrip(".").lower()
@@ -6027,7 +6080,9 @@ def _run_ihtx_tagscript_workflow(
 
     Pipe effects are applied sequentially to each export. Intermediate files
     use ``export_format``; the final concatenated output uses the required
-    ``output_format``.
+    ``output_format``. A conditional pipe can choose a quoted branch before
+    rendering, for example:
+    ``if:exports|>|1|then:"negate;hflip"|else:"vflip"``.
     """
     if abs(exports) > MAX_REPETITIONS:
         exports = MAX_REPETITIONS if exports > 0 else -MAX_REPETITIONS
@@ -6108,7 +6163,7 @@ def _run_ihtx_tagscript_workflow(
         ], timeout=60)
 
         no_trim_enabled = no_trim.lower() in {"true", "yes", "+"}
-        if no_trim.lower() not in {"true", "yes", "+", "false", "no", "-"}:
+        if no_trim.lower() not in {"true", "yes", "+", "1", "false", "no", "-", "0"}:
             return False, "no_trim must be one of: true, yes, +, false, no, -."
         preserve_ytpmv_vidlen = (
             duration_expr.strip().lower() == "vidlen"
@@ -10952,6 +11007,142 @@ async def mpb_command(ctx: commands.Context, *, args: str = "") -> None:
                 content=f"✅ Multipitch Bungee done! `{pitch_display}`",
                 attachments=[discord.File(output_path, filename=out_name)],
             )
+
+
+# ---------- th/ihtxffmpeg — iterative FFmpeg+ command ----------
+
+def _run_ihtxffmpeg_plus(
+    input_path: str,
+    output_path: str,
+    exports: int,
+    duration_expr: str,
+    no_trim: str,
+    export_format: str,
+    output_format: str,
+    ffmpeg_code: str,
+) -> tuple[bool, str]:
+    """Run the supplied FFmpeg+ loop: transform each export, then concat."""
+    vidlen = _ffprobe_duration(input_path)
+    if vidlen <= 0:
+        return False, "Could not read input duration."
+    ok, duration_or_error = _safe_awk_duration(duration_expr, vidlen)
+    if not ok:
+        return False, duration_or_error
+    duration = f"{float(duration_or_error):.6f}"
+    trim = no_trim.lower() in {"true", "yes", "+", "1"}
+    try:
+        code_args = shlex.split(ffmpeg_code)
+    except ValueError as exc:
+        return False, f"Invalid FFmpeg code: {exc}"
+    if not code_args or any(arg in {"-i", "-y"} for arg in code_args):
+        return False, "FFmpeg code must contain filter/output options only; -i and -y are reserved."
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base = os.path.join(tmpdir, "0.mov")
+        base_cmd = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
+        if trim:
+            base_cmd += ["-i", input_path]
+        else:
+            base_cmd += ["-stream_loop", "-1", "-i", input_path, "-t", duration]
+        base_cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+                     "-c:a", "aac", "-b:a", "96k", base]
+        ok, err = _run_ffmpeg_raw(base_cmd, timeout=300)
+        if not ok:
+            return False, f"Base render failed: {err}"
+        files: list[str] = []
+        for index in range(1, abs(exports) + 1):
+            previous = base if index == 1 else files[-1]
+            current = os.path.join(tmpdir, f"{index}.{export_format}")
+            cmd = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
+            if trim:
+                cmd += ["-i", previous]
+            else:
+                cmd += ["-stream_loop", "1", "-i", previous]
+            cmd += code_args
+            if not trim:
+                cmd += ["-t", duration]
+            cmd += ["-movflags", "+faststart", current]
+            ok, err = _run_ffmpeg_raw(cmd, timeout=300)
+            if not ok:
+                return False, f"Export {index} failed: {err}"
+            files.append(current)
+        if exports < 0:
+            files.reverse()
+        concat = os.path.join(tmpdir, "concat.txt")
+        with open(concat, "w", encoding="utf-8") as handle:
+            for path in files:
+                handle.write(f"file '{path}'\n")
+        final = os.path.join(tmpdir, f"ihtxffmpeg.{output_format}")
+        cmd = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
+               "-f", "concat", "-safe", "0", "-i", concat]
+        cmd += _concat_codec_args(output_format)
+        cmd += ["-movflags", "+faststart", final]
+        ok, err = _run_ffmpeg_raw(cmd, timeout=300)
+        if not ok:
+            return False, f"Final concat failed: {err}"
+        shutil.copyfile(final, output_path)
+    return True, ""
+
+
+@bot.command(name="ihtxffmpeg", aliases=["ihtx+ffmpeg"])
+async def ihtxffmpeg_command(ctx: commands.Context, *, args: str = ""):
+    """Iterative raw FFmpeg+ syntax.
+
+    Usage: th/ihtxffmpeg <exports> <duration> <notrim> <format>
+           <output_format> <ffmpeg args>
+    """
+    if not args:
+        await ctx.reply(
+            "**th/ihtxffmpeg** — iterative raw FFmpeg+ processing.\n"
+            "Usage: `th/ihtxffmpeg 10 0.483 - mp4 mov -vf negate`\n"
+            "Named form: `exports=10 duration=0.483 notrim=- format=mp4 "
+            "output_format=mov -vf negate`"
+        )
+        return
+    try:
+        parsed = _parse_ihtx_custom_args(args)
+    except ValueError as exc:
+        await ctx.reply(f"❌ Invalid IHTX FFmpeg+ arguments: `{exc}`")
+        return
+    if parsed is None:
+        await ctx.reply("❌ Use `<exports> <duration> <notrim> <format> <output_format> <ffmpeg args>`.")
+        return
+    exports, duration, notrim, export_fmt, output_fmt, ffmpeg_code = parsed
+    source = await _resolve_media_source(ctx)
+    if source is None:
+        await ctx.reply("❌ Attach a file or reply to a media message.")
+        return
+    status = await ctx.reply(f"🔧 Running FFmpeg+ (`{exports}` exports)…")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        suffix = Path(source.filename).suffix.lower() if isinstance(source, discord.Attachment) else ".mp4"
+        input_path = os.path.join(tmpdir, f"input{suffix}")
+        output_path = os.path.join(tmpdir, f"ihtxffmpeg.{output_fmt}")
+        try:
+            if isinstance(source, discord.Attachment):
+                await download_attachment(source, input_path)
+            else:
+                await download_url(source, input_path)
+        except Exception as exc:
+            await status.edit(content=f"❌ Download failed: {exc}")
+            return
+        loop = asyncio.get_event_loop()
+        ok, err = await loop.run_in_executor(
+            None, _run_ihtxffmpeg_plus, input_path, output_path, exports,
+            duration, notrim, export_fmt, output_fmt, ffmpeg_code,
+        )
+        if not ok:
+            await status.edit(content=f"❌ FFmpeg+ failed: {err[-1400:]}")
+            return
+        if os.path.getsize(output_path) > CATBOX_THRESHOLD:
+            url = await _upload_to_catbox(output_path)
+            if url:
+                await status.edit(content=f"✅ FFmpeg+ complete: {url}")
+            else:
+                await status.edit(content="❌ Output exceeds Discord's upload limit and Catbox upload failed.")
+            return
+        await status.edit(
+            content=f"✅ FFmpeg+ complete — `{exports}` exports.",
+            attachments=[discord.File(output_path, filename=os.path.basename(output_path))],
+        )
 
 
 # ---------- th/ffmpeg — raw FFmpeg command ----------

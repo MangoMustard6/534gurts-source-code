@@ -1032,7 +1032,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                     pipe_effects=pe,
                     repetitions=reps,
                     duration=dur,
-                    no_trim=notrim.lower() in {"true", "yes"},
+                    no_trim=notrim.lower() in {"true", "yes", "+", "1"},
                     export_fmt=fmt or "mov",
                     output_fmt=output_fmt,
                 )
