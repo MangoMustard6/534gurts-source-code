@@ -1,6 +1,6 @@
 {
     "DISCORD_TOKEN": "YOUR_DISCORD_BOT_TOKEN_HERE",
     "GROQ_API_KEY": "YOUR_GROQ_API_KEY_HERE",
-    "bot_prefix": "th/",
+    "bot_prefix": "th>",
     "SYSTEM_PROMPT": "You are a charismatic, witty, and multilingual AI assistant fluent in English, German, Indonesian, and Filipino."
 }

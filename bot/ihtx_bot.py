@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-22: [Python/TypeScript] Changed the command prefix from `th/` to `th>` and updated preview1280 to use the supplied 2160-square base montage render.
 - 2026-08-21: [Python] Added `$i`/`powers` aliases for IHTX export count, keyword arguments for th/ihtx, and the standalone th/ihtxffmpeg iterative raw-FFmpeg command.
 - 2026-08-20: [Python] Added quote-aware th/ihtx conditionals: if:<variable>|<operator>|<value>|then:"<pipe code>"|else:"<pipe code>", with numeric/string comparisons and branch effect parsing.
 - 2026-08-20: [Python] Updated parametric mirror to the fast rotated-geq reflection model with configurable line offsets; replaced pinch&punch with the supplied one-pass scaled-center geq warp while leaving mirror presets unchanged.
@@ -807,15 +808,15 @@ if _BOT_CONFIG_PATH.exists():
     except Exception as e:
         print(f"Warning: could not load config.json: {e}")
 
-_BOT_PREFIX = _bot_config.get("bot_prefix") or _bot_config.get("BOT_PREFIX") or "th/"
+_BOT_PREFIX = _bot_config.get("bot_prefix") or _bot_config.get("BOT_PREFIX") or "th>"
 if not isinstance(_BOT_PREFIX, str) or not _BOT_PREFIX:
-    print(f"Warning: invalid bot_prefix ({_BOT_PREFIX!r}), falling back to 'th/'")
+    print(f"Warning: invalid bot_prefix ({_BOT_PREFIX!r}), falling back to 'th>'")
     _BOT_PREFIX = "th/"
 
 # Intents and bot
 intents = discord.Intents.default()
 intents.message_content = True
-_BOT_PREFIXES = list(dict.fromkeys([_BOT_PREFIX, "th/", "t!"]))
+_BOT_PREFIXES = [_BOT_PREFIX]
 bot = commands.Bot(command_prefix=_BOT_PREFIXES, intents=intents, help_command=None)
 
 
@@ -7651,7 +7652,7 @@ def _run_preview1280(
 ) -> tuple[bool, str]:
     """Run the preview1280 TV-simulator montage pipeline.
 
-    This creates a 12-segment montage at 640x360, then scales to original size.
+    This creates a 12-segment montage at 2160x2160, then scales to original size.
     Requires: ffmpeg, ImageMagick (magick), and the tvsimulator.mov displacement map.
     Uses rubberband audio filter for high-quality pitch shifting.
     """
@@ -7696,11 +7697,11 @@ def _run_preview1280(
         t2 = segment_dur / 2
         t3 = start_offset + segment_dur
 
-        # Step 1: Pre-process input to 640x360 FFV1
+        # Step 1: Pre-process input to the supplied 2160x2160 FFV1 base
         avi0 = os.path.join(tmpdir, "0.avi")
         cmd = [
             "ffmpeg", "-y", "-stream_loop", "-1", "-i", input_path,
-            "-vf", "scale=640:360,setsar=1:1",
+            "-vf", "scale=2160:2160,setsar=1:1",
             "-ss", str(start_offset), "-to", str(t3),
             "-c:v", "ffv1", "-c:a", "pcm_s16le",
             avi0
@@ -7711,10 +7712,10 @@ def _run_preview1280(
 
         avi_w = _ffprobe(avi0, "-select_streams", "v:0",
                          "-show_entries", "stream=width",
-                         "-of", "default=nw=1:nk=1") or "640"
+                         "-of", "default=nw=1:nk=1") or "2160"
         avi_h = _ffprobe(avi0, "-select_streams", "v:0",
                          "-show_entries", "stream=height",
-                         "-of", "default=nw=1:nk=1") or "360"
+                         "-of", "default=nw=1:nk=1") or "2160"
 
         # Helper to build segment ffmpeg commands
         segments = []
@@ -7753,7 +7754,7 @@ def _run_preview1280(
                 f"movie={clut_180}[h];"
                 f"[0][h]haldclut,hflip,crop=iw/2:ih:0:0,split[left][tmp];"
                 f"[tmp]hflip[right];[left][right]hstack,format=yuv420p,format=bgr32[00];"
-                f"[1]crop=iw:ih/1:0:0,scale={avi_w}:{avi_h},eq=contrast=0.375,format=bgr32,hue=b=-0.033[x];"
+                f"[1]crop=iw:ih/1:0:0,scale={avi_w}:{avi_h},eq=contrast=(1-0.70)*5,format=bgr32,hue=b=-0.033[x];"
                 f"nullsrc=1x1,geq=r=128:g=128:b=128,scale={avi_w}:{avi_h},format=bgr32[y];"
                 f"[00][x][y]displace=edge=wrap[v]"
             )
@@ -14462,7 +14463,7 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "fun",
-        "name": "th/preview1280 [start] [dur] [r3=true|false]  (aliases: p1280, pv1280)",
+        "name": "th>preview1280 [start] [dur] [r3=true|false]  (aliases: p1280, pv1280)",
         "value": "12-segment TV-simulator montage. Defaults: start=1.85, dur=0.85. The boolean selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`). Pipe form: `preview1280=1.85|0.85|true`.",
     },
     {
@@ -14477,12 +14478,12 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "fun",
-        "name": "th/preview1280with640x360resize [start] [dur] [r3=true|false]  (aliases: p1280ff!3, p1280w16:9r)",
+        "name": "th>preview1280with640x360resize [start] [dur] [r3=true|false]  (aliases: p1280ff!3, p1280w16:9r)",
         "value": "Same 12-segment TV-simulator montage as preview1280 but the final output is locked to **640×360** regardless of input resolution. Defaults: start=1.85, dur=0.85. The boolean selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`).",
     },
     {
         "cat": "fun",
-        "name": "th/preview1280what [start] [dur] [r3] [target_len] [use_tempo]  (aliases: p1280what, p1280fev8v2plus)",
+        "name": "th>preview1280what [start] [dur] [r3] [target_len] [use_tempo]  (aliases: p1280what, p1280fev8v2plus)",
         "value": (
             "**28-segment** TV-simulator extended montage (FFmpeg Extended v8 v2+). "
             "The boolean after duration selects native Rubber Band R3 (`true`) or FFmpeg Rubber Band (`false`).\n"
