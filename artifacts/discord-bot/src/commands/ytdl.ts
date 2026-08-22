@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { uploadToCatbox } from "./catboxupload.js";
 import { logger } from "../lib/logger.js";
+import { PREFIX } from "../config.js";
 
 const DISCORD_MAX_BYTES = 8 * 1024 * 1024;
 const MAX_FILESIZE_BYTES = 200 * 1024 * 1024;
@@ -27,7 +28,7 @@ function runYtDlp(args: string[]): Promise<{ stdout: string; stderr: string }> {
 export async function runYtdl(message: Message): Promise<void> {
   const trimmed = message.content.trim();
 
-  const PREFIXES = ["th/youtubedownload", "th/ytdl"];
+  const PREFIXES = [`${PREFIX}youtubedownload`, `${PREFIX}ytdl`];
   const matchedPrefix = PREFIXES.find((p) =>
     trimmed.toLowerCase().startsWith(p + " ") || trimmed.toLowerCase() === p
   );
@@ -37,10 +38,10 @@ export async function runYtdl(message: Message): Promise<void> {
 
   if (!query) {
     await message.reply(
-      "❌ **Usage:** `th/ytdl <URL or search query>` / `th/youtubedownload <URL or search query>`\n" +
+      `❌ **Usage:** \`${PREFIX}ytdl <URL or search query>\` / \`${PREFIX}youtubedownload <URL or search query>\`\n` +
       "Examples:\n" +
-      "• `th/ytdl https://youtube.com/watch?v=...`\n" +
-      "• `th/ytdl never gonna give you up`",
+      `• \`${PREFIX}ytdl https://youtube.com/watch?v=...\`\n` +
+      `• \`${PREFIX}ytdl never gonna give you up\``,
     );
     return;
   }
