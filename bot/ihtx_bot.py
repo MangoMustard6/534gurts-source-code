@@ -9,6 +9,7 @@ ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
 - 2026-08-22: [Python/TypeScript] Changed the command prefix from `th/` to `th>` and updated preview1280 to use the supplied 2160-square base montage render.
+- 2026-08-22: [Python] Updated huehsv and ccshue to generate ImageMagick Hald CLUTs through the imported subprocess path using the supplied hald:6 color-processing pipelines.
 - 2026-08-21: [Python] Added `$i`/`powers` aliases for IHTX export count, keyword arguments for th/ihtx, and the standalone th/ihtxffmpeg iterative raw-FFmpeg command.
 - 2026-08-20: [Python] Added quote-aware th/ihtx conditionals: if:<variable>|<operator>|<value>|then:"<pipe code>"|else:"<pipe code>", with numeric/string comparisons and branch effect parsing.
 - 2026-08-20: [Python] Updated parametric mirror to the fast rotated-geq reflection model with configurable line offsets; replaced pinch&punch with the supplied one-pass scaled-center geq warp while leaving mirror presets unchanged.
@@ -1576,7 +1577,7 @@ def _run_huehsv(
         modulate_arg = f"{lightness_pct:.6g},{sat_pct:.6g},{hue_pct:.6g}"
 
         cmd = [
-            "magick", "hald:8",
+            "magick", "hald:6",
             "-define", f"modulate:colorspace={colorspace}",
             "-modulate", modulate_arg,
         ]
@@ -2922,7 +2923,7 @@ def _run_ccshue(
     with tempfile.TemporaryDirectory() as tmpdir:
         hald_path = os.path.join(tmpdir, "ccs.ppm")
 
-        cmd = ["magick", "hald:8"]
+        cmd = ["magick", "hald:6"]
 
         # Hue rotation (YUV-space rotation matrix via -fx)
         if abs(hue) > 0.001:
@@ -2964,7 +2965,7 @@ def _run_ccshue(
         ok, err = _run_ffmpeg_raw([
             "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
             "-i", input_path,
-            "-vf", f"movie={hald_path},[in]haldclut",
+            "-vf", f"movie={hald_path},[in]haldclut,format=yuv420p",
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-pix_fmt", "yuv420p", "-c:a", "copy",
             output_path,
