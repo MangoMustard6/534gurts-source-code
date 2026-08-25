@@ -26,3 +26,17 @@ psycopg2-binary
 python-dotenv
 uvloop
 yt-dlp>=2026.7.4
+aiohttp
+catboxpy
+discord.py
+email_validator
+flask
+flask-sqlalchemy
+groq
+gunicorn
+numpy
+Pillow
+psycopg2-binary
+python-dotenv
+uvloop
+yt-dlp
