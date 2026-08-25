@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-25: [Python] Updated huehsv argument handling to match the imported five-argument ImageMagick Hald CLUT script, including zero hue default and rgb48le filter output.
 - 2026-08-22: [Python/TypeScript] Changed the command prefix from `th/` to `th>` and updated preview1280 to use the supplied 2160-square base montage render.
 - 2026-08-22: [Python] Updated huehsv and ccshue to generate ImageMagick Hald CLUTs through the imported subprocess path using the supplied hald:6 color-processing pipelines.
 - 2026-08-21: [Python] Added `$i`/`powers` aliases for IHTX export count, keyword arguments for th/ihtx, and the standalone th/ihtxffmpeg iterative raw-FFmpeg command.
@@ -1550,7 +1551,7 @@ def get_output_ext(input_ext: str, is_video: bool) -> str:
 def _run_huehsv(
     input_path: str,
     output_path: str,
-    hue: float = 0.5,
+    hue: float = 0.0,
     sat: float = 1.0,
     lightness: float = 1.0,
     colorspace: str = "hsl",
@@ -1595,10 +1596,11 @@ def _run_huehsv(
         if result.returncode != 0:
             return False, f"huehsv: ImageMagick failed: {result.stderr}"
 
-        # Apply via FFmpeg haldclut filter; preserve audio by copying it.
+        # Match the imported script's high-precision intermediate format before
+        # converting to the requested yuv420p output pixel format.
         ok, err = _run_ffmpeg_raw([
             "ffmpeg", "-y", "-i", input_path,
-            "-vf", f"movie={hald_path},[in]haldclut,format=yuv420p",
+            "-vf", f"movie={hald_path},[in]haldclut,format=rgb48le",
             "-c:a", "copy",
             "-pix_fmt", "yuv420p",
             output_path,
@@ -12999,7 +13001,7 @@ async def mirror_command(ctx: commands.Context, preset: str = "", *, args: str =
 @bot.command(name="huehsv", aliases=["hhsv"])
 async def huehsv_command(
     ctx: commands.Context,
-    hue: float = 0.5,
+    hue: float = 0.0,
     sat: float = 1.0,
     lightness: float = 1.0,
     colorspace: str = "hsl",
@@ -13012,14 +13014,14 @@ async def huehsv_command(
       th/hhsv <hue>   — alias
 
     Parameters:
-      hue         — hue rotation (0.0=unchanged, 0.5=full rotation)
+      hue         — hue rotation (0.0=unchanged, 0.5=full rotation; default 0)
       sat         — saturation multiplier (default 1.0)
       lightness   — lightness multiplier (default 1.0)
       colorspace  — ImageMagick modulate colorspace (default hsl)
       betterfully — 1/true/yes to boost saturation to 125% and posterize hue
 
-    Internally: magick hald:8 -define modulate:colorspace=<cs> -modulate <L>,<S>,<H> [betterfully ops] hsv.ppm
-    Then: ffmpeg -vf "movie=hsv.ppm,[in]haldclut,format=yuv420p" -pix_fmt yuv420p
+    Internally: magick hald:6 -define modulate:colorspace=<cs> -modulate <L>,<S>,<H> [betterfully ops] hsv.ppm
+    Then: ffmpeg -vf "movie=hsv.ppm,[in]haldclut,format=rgb48le" -pix_fmt yuv420p
     """
     _TRUE_VALS = {"1", "true", "t", "y", "yes", "+", "on"}
     bf = betterfully.strip().lower() in _TRUE_VALS
