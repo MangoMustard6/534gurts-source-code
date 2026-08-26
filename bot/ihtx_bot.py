@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-26: [Python] Added generated FFmpeg command reporting to th>ihtx pipe completions, compensated native Rubber Band R3 multipitch latency, and updated ccshue to the imported seven-argument Hald CLUT logic.
 - 2026-08-25: [Python] Updated huehsv argument handling to match the imported five-argument ImageMagick Hald CLUT script, including zero hue default and rgb48le filter output.
 - 2026-08-22: [Python/TypeScript] Changed the command prefix from `th/` to `th>` and updated preview1280 to use the supplied 2160-square base montage render.
 - 2026-08-22: [Python] Updated huehsv and ccshue to generate ImageMagick Hald CLUTs through the imported subprocess path using the supplied hald:6 color-processing pipelines.
@@ -225,6 +226,7 @@ import discord
 from discord.ext import commands, tasks
 from bot.tags.cog import TagCog
 import asyncio
+from contextvars import ContextVar
 import json
 import math
 import os
@@ -265,6 +267,13 @@ except Exception:
     _smiley_preview_available = False
 
 _preview_cache: dict[str, str] = {}
+
+# A per-thread trace used by the hybrid IHTX command to show the actual FFmpeg
+# commands emitted by each pipe pass.  It is deliberately scoped around the
+# pipe renderer so unrelated bot commands are never included.
+_PIPE_CODE_TRACE: ContextVar[list[str] | None] = ContextVar(
+    "ihtx_pipe_code_trace", default=None
+)
 
 # Logo Editing Wiki knowledge cache.  The category index is intentionally
 # cached separately from page extracts so a temporary Fandom outage does not
@@ -1235,6 +1244,17 @@ def _ffprobe_sample_rate(input_path: str) -> int:
 
 def _run_ffmpeg_raw(cmd: list[str], timeout: int = 180) -> tuple[bool, str]:
     """Run an arbitrary ffmpeg command. Returns (ok, stderr-or-empty)."""
+    _pipe_code_trace = _PIPE_CODE_TRACE.get()
+    if _pipe_code_trace is not None:
+        rendered = shlex.join(str(part) for part in cmd)
+        # Temporary directories are deleted before Discord can display the
+        # completion response. Keep only stable basenames in the trace.
+        rendered = re.sub(
+            r"/tmp/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+",
+            lambda match: Path(match.group()).name,
+            rendered,
+        )
+        _pipe_code_trace.append(rendered)
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if result.returncode != 0:
@@ -2907,6 +2927,8 @@ def _run_ccshue(
     gamma: float = 1.0,
     gain: float = 1.0,
     offset: float = 0.0,
+    secondary_angle: float = 0.0,
+    secondary_multiplier: float = 0.0,
 ) -> tuple[bool, str]:
     """Apply color-correction via ImageMagick haldclut + FFmpeg haldclut filter.
 
@@ -2916,9 +2938,11 @@ def _run_ccshue(
         gamma  — gamma correction (default 1.0)
         gain   — RGB gain / multiply (default 1.0)
         offset — add to every channel (-1…1, default 0)
+        secondary_angle — angle for the optional secondary U/V rotation
+        secondary_multiplier — strength of the optional secondary rotation
 
     Generates ccs.ppm via:
-        magick hald:8 [hue] [sat] [gamma] [gain] [offset] ccs.ppm
+        magick hald:6 [secondary rotation] [hue] [sat] [gamma] [gain] [offset] ccs.ppm
     Then applies:
         ffmpeg -i input -vf "movie=ccs.ppm,[in]haldclut" output
     """
@@ -2926,6 +2950,19 @@ def _run_ccshue(
         hald_path = os.path.join(tmpdir, "ccs.ppm")
 
         cmd = ["magick", "hald:6"]
+
+        # Optional secondary U/V rotation from the imported CCS Hald CLUT
+        # implementation. Keep this before the primary hue rotation so the
+        # six/eight-argument pipe form has the same operation order.
+        if secondary_multiplier != 0:
+            secondary_fx = (
+                f"channel(u,u+(sin({secondary_angle}*-PI/180)*{secondary_multiplier}),"
+                f"u+(cos({secondary_angle}*-PI/180)*{secondary_multiplier}))"
+            )
+            cmd += [
+                "-colorspace", "yuv", "-fx", secondary_fx,
+                "-colorspace", "srgb",
+            ]
 
         # Hue rotation (YUV-space rotation matrix via -fx)
         if abs(hue) > 0.001:
@@ -4330,6 +4367,8 @@ def _apply_pipe_effects(
                     gamma=_pfloat(params, 2, 1.0),
                     gain=_pfloat(params, 3, 1.0),
                     offset=_pfloat(params, 4, 0.0),
+                    secondary_angle=_pfloat(params, 5, 0.0),
+                    secondary_multiplier=_pfloat(params, 6, 0.0),
                 )
                 if not ok:
                     return False, err
@@ -6079,6 +6118,7 @@ def _run_ihtx_tagscript_workflow(
     output_format: str,
     pipe_effects_str: str,
     progress_callback=None,
+    pipe_code_trace: list[str] | None = None,
 ) -> tuple[bool, str]:
     """Run custom IHTX using the TagScript-style shell workflow with pipe effects.
 
@@ -6199,7 +6239,16 @@ def _run_ihtx_tagscript_workflow(
         for i in range(1, total_exports + 2):
             _progress(min(i - 1, total_exports), total_exports, f"Running export code {i}/{total_exports}")
             current = os.path.join(tmpdir, f"{i}.{export_format}")
-            ok, err = _apply_pipe_effects(previous, current, effects, step_timeout=_per_rep_timeout)
+            _trace_token = _PIPE_CODE_TRACE.set([])
+            try:
+                ok, err = _apply_pipe_effects(
+                    previous, current, effects, step_timeout=_per_rep_timeout
+                )
+            finally:
+                _pass_trace = _PIPE_CODE_TRACE.get() or []
+                _PIPE_CODE_TRACE.reset(_trace_token)
+            if pipe_code_trace is not None:
+                pipe_code_trace.extend(_pass_trace)
             if not ok:
                 return False, f"Export {i} failed: {err}"
             if not no_trim_enabled:
@@ -6276,6 +6325,12 @@ def _run_ihtx_tagscript_workflow(
 # ---------- Multipitch (Rubber Band R3 pitch-shift pipeline) ----------
 
 MAX_PITCHES = 100
+
+# Native Rubber Band R3 uses a short analysis window before its first stable
+# output sample.  Pad before processing and remove the same amount afterward;
+# otherwise the transformed audio starts late even when the container stream
+# timestamp says 0.
+_RUBBERBAND_R3_LATENCY = 0.08
 
 # Path to the Signalsmith multi-pitch binary (downloaded at startup)
 _MULTIPITCH_BIN = os.path.join(os.path.dirname(__file__), "fileaa")
@@ -6634,7 +6689,11 @@ def _run_multipitch_rb3(
                 "ffmpeg", "-y",
                 "-t", cap, "-i", input_path,
                 "-vn", "-ar", "44100", "-ac", "2",
-                "-c:a", "pcm_s16le", "-t", cap,
+                "-af", (
+                    f"apad=pad_dur={_RUBBERBAND_R3_LATENCY:.6f},"
+                    f"atrim=duration={actual_dur + _RUBBERBAND_R3_LATENCY:.6f}"
+                ),
+                "-c:a", "pcm_s16le",
                 base_wav,
             ], timeout=120)
             if not ok:
@@ -6673,22 +6732,46 @@ def _run_multipitch_rb3(
                     if not ok:
                         print(f"[multipitch] amix failed: {err[-200:]} — trying filter_complex fallback")
                     else:
+                        # Compensate R3's front analysis delay after mixing. The
+                        # padded input above preserves the real tail so this
+                        # does not shorten the last pitched audio.
+                        corrected_wav = os.path.join(tmpdir, "pitched_corrected.wav")
+                        ok, err = _run_ffmpeg_raw([
+                            "ffmpeg", "-y", "-i", out_wav,
+                            "-af", (
+                                f"atrim=start={_RUBBERBAND_R3_LATENCY:.6f},"
+                                "asetpts=PTS-STARTPTS"
+                            ),
+                            "-c:a", "pcm_s16le", "-t", dur_flag,
+                            corrected_wav,
+                        ], timeout=300)
+                        if not ok:
+                            print(f"[multipitch] R3 latency compensation failed: {err[-200:]} — trying filter_complex fallback")
+                        else:
+                            out_wav = corrected_wav
                         # Remux to MKV/FLAC
                         mkv_out = os.path.join(tmpdir, "mp_t1.mkv")
-                        if has_video:
+                        if ok and has_video:
                             ok, err = _run_ffmpeg_raw([
                                 "ffmpeg", "-y",
-                                "-t", cap, "-i", input_path,
+                                "-i", input_path,
                                 "-i", out_wav,
                                 "-map", "0:v", "-map", "1:a",
-                                "-c:v", "copy", "-c:a", "flac",
+                                "-map_metadata", "-1", "-avoid_negative_ts", "make_zero",
+                                "-vf", "setpts=PTS-STARTPTS",
+                                "-af", "asetpts=PTS-STARTPTS",
+                                "-c:v", "libx264", "-preset", "fast", "-tune", "zerolatency",
+                                "-bf", "0", "-crf", "23",
+                                "-pix_fmt", "yuv420p", "-c:a", "flac",
                                 "-t", dur_flag, mkv_out,
                             ], timeout=300)
-                        else:
+                        elif ok:
                             ok, err = _run_ffmpeg_raw([
                                 "ffmpeg", "-y",
                                 "-i", out_wav,
+                                "-af", "asetpts=PTS-STARTPTS",
                                 "-c:a", "flac",
+                                "-t", dur_flag,
                                 mkv_out,
                             ], timeout=180)
                         if ok:
@@ -6703,7 +6786,10 @@ def _run_multipitch_rb3(
     if n == 1:
         pitch_ratio = 2.0 ** (semitones[0] / 12.0)
         fc = (
-            f"[0:a]rubberband=pitch={pitch_ratio:.6f},"
+            f"[0:a]apad=pad_dur={_RUBBERBAND_R3_LATENCY:.6f},"
+            f"atrim=duration={actual_dur + _RUBBERBAND_R3_LATENCY:.6f},"
+            f"rubberband=pitch={pitch_ratio:.6f},"
+            f"atrim=start={_RUBBERBAND_R3_LATENCY:.6f},"
             f"asetpts=PTS-STARTPTS[outa]"
         )
     else:
@@ -6713,7 +6799,11 @@ def _run_multipitch_rb3(
         for j, st in enumerate(semitones):
             pr = 2.0 ** (st / 12.0)
             voice_parts.append(
-                f"[mp_s{j}]rubberband=pitch={pr:.6f},asetpts=PTS-STARTPTS[mp_v{j}]"
+                f"[mp_s{j}]apad=pad_dur={_RUBBERBAND_R3_LATENCY:.6f},"
+                f"atrim=duration={actual_dur + _RUBBERBAND_R3_LATENCY:.6f},"
+                f"rubberband=pitch={pr:.6f},"
+                f"atrim=start={_RUBBERBAND_R3_LATENCY:.6f},"
+                f"asetpts=PTS-STARTPTS[mp_v{j}]"
             )
         mix_inputs = "".join(f"[mp_v{j}]" for j in range(n))
         mix_part   = f"{mix_inputs}amix=inputs={n}:normalize=0[outa]"
@@ -6727,7 +6817,12 @@ def _run_multipitch_rb3(
                 + ["-t", cap, "-i", input_path]
                 + ["-filter_complex", fc]
                 + ["-map", "0:v", "-map", "[outa]"]
-                + ["-c:v", "copy", "-c:a", "flac"]
+                + [
+                    "-vf", "setpts=PTS-STARTPTS",
+                    "-c:v", "libx264", "-preset", "fast", "-tune", "zerolatency",
+                    "-bf", "0", "-crf", "23",
+                    "-pix_fmt", "yuv420p", "-c:a", "flac",
+                ]
                 + ["-t", dur_flag, mkv_out2]
             )
         else:
@@ -14186,7 +14281,7 @@ _HELP_ENTRIES: list[dict] = [
         "name": "Pipe effects (comma-separated)",
         "value": (
             "**Video:** `hflip` `vflip` `negate` `grayscale` `sepia` `rotate=<deg>` "
-            "`huehsv=hue|sat|lightness|colorspace|betterfully` `ccshue=hue|sat|gamma|gain|offset` `brightness=<val>` `contrast=<val>` "
+            "`huehsv=hue|sat|lightness|colorspace|betterfully` `ccshue=hue|sat|gamma|gain|offset|angle|rotation` `brightness=<val>` `contrast=<val>` "
             "`saturation=<val>` `swapuv` `invlum` `invertrgb=r;g;b` `gm91deform` `randomjitter=<strength>`\n"
             "**Distortion:** `mirror=<deg|preset>` `zoom=<amt>` (≥ 1 = zoom in, < 1 = zoom out) `ripple=spd|freq|amp|phase` `pan=px|py` `tile=tx|ty` `pinch&punch=str;r;cx;cy` `shake=<h>|<v>` `wave=hSpd|hFreq|hAmp|hPhase|vSpd|vFreq|vAmp|vPhase[|sep][|noclip]` `spherize=amount|radius|cx|cy`\n"
             "**Scroll:** `scroll=hpos=V` · `scroll=hpos=V;ypos=V` · `scroll=h;v` (continuous) · `scroll=x1:y1:x2:y2[:dur]` (animated pan)\n"
