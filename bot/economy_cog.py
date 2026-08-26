@@ -527,6 +527,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                 _pipe_effects_label,
                 _parse_ihtx_custom_args,
                 _last_exports,
+                _clip_discord_text,
             )
         except ImportError as exc:
             await ctx.reply(f"❌ Internal error importing IHTX pipeline: `{exc}`", ephemeral=True)
@@ -751,6 +752,7 @@ class EconomyCog(commands.Cog, name="Economy"):
             _export_completed = 0
             _export_total = max(abs(repetitions), 1)
             _workflow_stage = "Starting IHTX code workflow"
+            _pipe_code_trace: list[str] = []
 
             def _export_status(
                 completed: int,
@@ -835,6 +837,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                 output_fmt.lstrip("."),
                         pipe_effects,
                         _on_progress,
+                        _pipe_code_trace,
                     )
                 else:
                     ok, err = await loop.run_in_executor(
@@ -865,6 +868,22 @@ class EconomyCog(commands.Cog, name="Economy"):
             if not ok:
                 await _update(f"❌ FFmpeg failed:\n```\n{err[-1200:]}\n```", 0xED4245)
                 return
+
+            async def _send_pipe_code() -> None:
+                """Show the stable, generated FFmpeg commands after completion."""
+                if not use_pipe or not _pipe_code_trace:
+                    return
+                unique_commands = list(dict.fromkeys(_pipe_code_trace))
+                code = "\n".join(unique_commands)
+                # Keep the code block valid while staying below Discord's
+                # content limit. Repeated export passes intentionally collapse
+                # to one representative command sequence.
+                prefix = "🧾 **Generated FFmpeg code:**\n```bash\n"
+                suffix = "\n```"
+                room = 1900 - len(prefix) - len(suffix)
+                if len(code) > room:
+                    code = code[: max(0, room - 32)] + "\n# …code truncated…"
+                await ctx.send(content=prefix + code + suffix)
 
             # Sidecar mp4 render path (written by _run_ihtx_tagscript_workflow when
             # export fmt is mkv or mxf — produced alongside the requested format).
@@ -949,6 +968,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                         _cb2 = await _upload_to_catbox(_render_mp4)
                         if _cb2:
                             await ctx.send(f"🎬 MP4 render: {_cb2}")
+                await _send_pipe_code()
                 return
 
             stem = Path(media_filename).stem
@@ -997,6 +1017,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                     _cb2 = await _upload_to_catbox(_render_mp4)
                     if _cb2:
                         await ctx.send(f"🎬 MP4 render: {_cb2}")
+            await _send_pipe_code()
 
     # -----------------------------------------------------------------------
     # roxi ihtx / roxi effect / roxi destroy — prefix-only alias that consumes the
