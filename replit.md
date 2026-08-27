@@ -13,6 +13,24 @@ A Discord bot that applies destructive visual and audio effects to videos and im
   - `BOT_OWNER_ID` — your Discord user ID (both bots exit at startup if missing)
 - Optional secrets: `GROQ_API_KEY` (AI chat on Python bot), `GEMINI_API_KEY` (AI chat on TS bot), `CATBOX_USERHASH` (links Catbox uploads to your account)
 
+## Setup verification
+
+The imported workspace is ready to run with the existing workflows:
+
+- `IHTX Discord Bot` — `PYTHONUNBUFFERED=1 python3 -u main.py`
+- `IHTX Discord Bot (TypeScript)` — `pnpm --filter @workspace/discord-bot run dev`
+- `Pipeline Visualizer` — `PORT=8099 node public/serve.mjs`
+
+After installing dependencies, verify the workspace with:
+
+```bash
+python3 -m compileall -q main.py bot AutotuneBot groq_chatbot videoEditBot
+pnpm run typecheck
+```
+
+The Python and TypeScript bots require their Discord secrets before startup;
+the visualizer serves its preview on port `8099`.
+
 ## Stack
 
 - Python 3.11
