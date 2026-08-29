@@ -20,9 +20,6 @@ author = "agent"
 task = "workflow.run"
 args = "IHTX Discord Bot"
 
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "IHTX Discord Bot (TypeScript)"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
