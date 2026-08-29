@@ -9,7 +9,7 @@ A Discord bot that applies destructive visual and audio effects to videos and im
   - `IHTX Discord Bot (TypeScript)` — TypeScript bot (`pnpm --filter @workspace/discord-bot run dev`)
 - Required secrets (set via Replit Secrets):
   - `DISCORD_TOKEN` — Python bot token
-  - `DISCORD_TOKEN_TS` — TypeScript bot token (separate Discord app so both can run simultaneously)
+  - `DISCORD_TOKEN_TS` — TypeScript bot token from a separate Discord application
   - `BOT_OWNER_ID` — your Discord user ID (both bots exit at startup if missing)
 - Optional secrets: `GROQ_API_KEY` (AI chat on Python bot), `GEMINI_API_KEY` (AI chat on TS bot), `CATBOX_USERHASH` (links Catbox uploads to your account)
 
