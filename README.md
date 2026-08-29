@@ -32,6 +32,8 @@ python3 main.py
 
 On **Replit**, set these via the Secrets panel and run the `IHTX Discord Bot` workflow.
 
+# Remember, The Typescript Bot Workflow should stay optional, even if it requests for `DISCORD_TOKEN_TS`, You should decline the request.
+
 ---
 
 ## Core Interface — ihtxgen / th/ihtx
@@ -127,13 +129,8 @@ Apply with `th/ihtx <preset>` or `/ihtxgen effect:<preset>`.
 Use in `th/ihtx` or `/ihtxgen pipe_effects:`. Effects are **comma-separated**; parameters within each effect are **semicolon-, space-, or pipe-separated**.
 
 ```
-th/ihtx 1 5 - mp4 hflip,negate,multipitch=1;6;7
-th/ihtx 2 3 - mp4 swirl=180;0.4,huehsv=0.3,multipitch=-4;0;4
-```
-
-You can also use the raw filter passthrough syntax to mix hand-written FFmpeg filters:
-```
-VIDEO: hue=h=t*90:s=2,negate AUDIO: volume=2,acontrast=50
+th/ihtx 1 5 - mov mp4 hflip,negate,multipitch=1;6;7
+th/ihtx 2 3 - mov mp4 swirl=180;0.4,huehsv=0.3,multipitch=-4;0;4
 ```
 
 ### Video / Visual Effects
@@ -184,10 +181,10 @@ VIDEO: hue=h=t*90:s=2,negate AUDIO: volume=2,acontrast=50
 | `rightsplit` | `rightsplit=<inner_effects>` | Apply inner pipe effects to right half, mirror to left | crop right → apply effects → hstack + hflip |
 | `earthquake` / `nbfx` | `earthquake` | 2-pass vidstab destabilize shake (extreme camera shake) | `vidstabdetect` on shake sample → `vidstabtransform=invert=1` |
 | `sierpinskiransomware` | `sierpinskiransomware` | Full 2×2 Sierpinski preset as a pipe step | See preset table |
-| `preview1280` | `preview1280[=start][;dur]` | Full 12-segment TV-simulator montage as a pipe step | See `th/preview1280` |
-| `oppositep1280` / `op1280` | `oppositep1280[=start][;dur]` | Opposite-polarity TV-simulator as a pipe step | See `th/oppositep1280` |
+| `preview1280` | `preview1280[=start][;dur]` | Full 12-segment TV-simulator montage as a pipe step | See `th>preview1280` |
+| `oppositep1280` / `op1280` | `oppositep1280[=start][;dur]` | Opposite-polarity TV-simulator as a pipe step | See `th>oppositep1280` |
 | `folkvalley` / `fv` | `folkvalley` | Folk Valley music + brightness boost + overlay as a pipe step | See `th/folkvalley` |
-| `tvsim` / `tv` | `tvsim=<line_sync>[;zoom][;vsync][;phosphor][;interlace][;scan][;aperture][;static]` | CRT simulator as a pipe step | See `th/tvsim` |
+| `tvsim` / `tv` | `tvsim=<line_sync>[;zoom][;vsync][;phosphor][;interlace][;scan][;aperture][;static]` | CRT simulator as a pipe step | See `th>tvsim` |
 | `speed` | `speed=<multiplier>` | Change playback speed (0.01–100×). Chains `atempo` for audio | `setpts=1/s*PTS` + chained `atempo` |
 | `trim` | `trim=<start>[;end]` | Trim to time range (`hh:mm:ss` or seconds) | `ffmpeg -ss start -to end` |
 | `vreverse` | `vreverse` | Reverse video frames | `reverse` |
@@ -241,12 +238,12 @@ Both `VIDEO:` and `AUDIO:` blocks are optional — use either or both.
 
 ## Standalone Effect Commands
 
-### `th/preview1280` / `th/p1280`
+### `th>preview1280` / `th>p1280`
 
 12-segment TV-simulator montage. Runs the full pipeline: Hald CLUTs, horizontal flips, mirror compositions, TV displacement mapping, rubberband pitch shifts per segment, final upscale.
 
 ```
-th/preview1280 [start_offset] [segment_duration]
+th>preview1280 [start_offset] [segment_duration]
 ```
 
 Defaults: start=1.85s, duration=0.85s.
@@ -255,19 +252,19 @@ Defaults: start=1.85s, duration=0.85s.
 
 ---
 
-### `th/oppositep1280` / `th/op1280`
+### `th>oppositep1280` / `th>op1280`
 
-Same as `preview1280` but with inverse colour polarity. Aliases: `th/opposite`, `th/opposite1280`.
-
----
-
-### `th/preview1280with640x360resize` / `th/p1280ff!3`
-
-`preview1280` with 640×360 output resize. Alias: `th/p1280w16:9r`.
+Same as `preview1280` but with inverse colour polarity. Aliases: `th>opposite`, `th>opposite1280`.
 
 ---
 
-### `th/multipitch` / `th/mp`
+### `th>preview1280with640x360resize` / `th>p1280ff!3`
+
+`preview1280` with 640×360 output resize. Alias: `th>p1280w16:9r`.
+
+---
+
+### `th>multipitch` / `th>mp`
 
 Multi-voice pitch shift. Each semicolon-separated semitone value creates a separate pitch copy, all mixed together via `amix`.
 
