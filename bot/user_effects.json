@@ -200,5 +200,29 @@
     "guild_id": "1496091892067209307",
     "guild_name": "the challenge",
     "submitted_at": "2026-07-27T13:03:19.125478+00:00"
+  },
+  "gm74": {
+    "effects": "invlum,ffmpeg(-vf format=yuv444p16le,\"geq='p(W*0.5+((X-W*0.5)/(min(W,H)*0.5))*(1-((0.5/4)*PI)*pow(1-pow(min(hypot((X-W*0.5)/(W*0.5),(Y-H*0.5)/(H*0.5))/1,1),2),2))*(min(W,H)*0.5),H*0.5+((Y-H*0.5)/(min(W,H)*0.5))*(1-((0.5/4)*PI)*pow(1-pow(min(hypot((X-W*0.5)/(W*0.5),(Y-H*0.5)/(H*0.5))/1,1),2),2))*(min(W,H)*0.5))'\",scale=iw:ih,format=yuv420p16le -filter_complex \"[0:a]rubberband=pitch=2^(-10/12):window=short:transients=crisp:detector=2.14748e+09/4.9[a1];[0:a]rubberband=pitch=2^(9/12):window=short:transients=crisp:detector=2.14748e+09/4.9[a2];[0:a]rubberband=pitch=2^(14/12):window=short:transients=crisp:detector=2.14748e+09/4.9[a3];[a1][a2][a3]amix=3:normalize=0[a]\" -map 0:v -map \"[a]\" -c:a flac)",
+    "author_id": "1355759019330895973",
+    "author_name": "meatloaf_fan534",
+    "guild_id": "1496091892067209307",
+    "guild_name": "534gurts OFFICIAL server",
+    "submitted_at": "2026-08-27T23:58:53.537204+00:00"
+  },
+  "congabusher": {
+    "effects": "ccshue=232.653,ffmpeg(-vf \"crop=iw/2:ih:iw/2:0,split[right][tmp];[tmp]hflip[left];[left][right]hstack\" -filter_complex \"[0]acrusher=1:1:16:1:log:4:1:19[a1];[a1]amix=1[a]\" -map 0:v -map \"[a]\" -c:a pcm_s16le)",
+    "author_id": "1355759019330895973",
+    "author_name": "meatloaf_fan534",
+    "guild_id": "1496091892067209307",
+    "guild_name": "534gurts OFFICIAL server",
+    "submitted_at": "2026-08-28T00:00:29.841432+00:00"
+  },
+  "amber_gm12": {
+    "effects": "realgm4,huehsv=0.833,mirror=right,ffmpeg(-f mp4 -filter_complex \"[0]rubberband=pitch=2^(0/12):window=short:transients=crisp:detector=2.14748e+09/4.9[a1];[0]rubberband=pitch=2^(-7.5/12):window=short:transients=crisp:detector=2.14748e+09/4.9[a2];[a1][a2]amix=2,volume=2[a]\" -map 0:v -map \"[a]\" -c:a pcm_s16le)",
+    "author_id": "1355759019330895973",
+    "author_name": "meatloaf_fan534",
+    "guild_id": "1124758333883158638",
+    "guild_name": "VideoEditBot Collection 1.0",
+    "submitted_at": "2026-08-28T12:38:27.127143+00:00"
   }
 }
