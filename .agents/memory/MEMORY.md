@@ -28,3 +28,4 @@
 - [IHTX restart recovery](ihtx-restart-recovery.md) — interrupted prefix jobs persist their Discord message and replay after reconnect.
 - [IHTX conditional parsing](ihtx-conditional-parsing.md) — parse quote-protected conditionals before generic delimiters; split semicolon chains only before known effects.
 - [IHTX auxiliary uploads](ihtx-auxiliary-uploads.md) — prefix jobs accept bounded .cube and pitch-binary attachments alongside the source video, with per-job binary overrides.
+- [File export and owner shell](file-export-and-owner-shell.md) — keep structured attachment export separate from owner-only async bash; exact `!` aliases avoid changing the global prefix.

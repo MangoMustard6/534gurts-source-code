@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-30: [Python] Added `/export` plus `th>export`/`!export` for structured attachment JSON exports, and owner-only async `th>bash`/`!bash` with persistent audit logging.
 - 2026-08-30: [Python] Added th>ihtx auxiliary asset uploads: attached .cube LUTs resolve by filename and uploaded multipitch/fileaa binaries are used for pitch effects with safe per-job overrides.
 - 2026-08-26: [Python] Added generated FFmpeg command reporting to th>ihtx pipe completions, compensated native Rubber Band R3 multipitch latency, and updated ccshue to the imported seven-argument Hald CLUT logic.
 - 2026-08-25: [Python] Updated huehsv argument handling to match the imported five-argument ImageMagick Hald CLUT script, including zero hue default and rgb48le filter output.
@@ -8651,6 +8652,20 @@ async def on_ready():
             print("AudioCog loaded.")
         except Exception as _audio_exc:
             print(f"Warning: AudioCog failed to load — {_audio_exc}")
+    if "File Export" not in bot.cogs:
+        try:
+            from bot.file_export_cog import setup as _file_export_setup
+            await _file_export_setup(bot)
+            print("FileExportCog loaded.")
+        except Exception as _export_exc:
+            print(f"Warning: FileExportCog failed to load — {_export_exc}")
+    if "Admin" not in bot.cogs:
+        try:
+            from bot.admin_cog import setup as _admin_setup
+            await _admin_setup(bot)
+            print("AdminCog loaded.")
+        except Exception as _admin_exc:
+            print(f"Warning: AdminCog failed to load — {_admin_exc}")
     # Auto-sync slash commands in a background task so exceptions surface in
     # the console and don't silently fail inside on_ready's exception handler.
     async def _auto_sync_slash():
