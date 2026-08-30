@@ -30,6 +30,68 @@ from discord.ext import commands
 # Prefix th/ihtx jobs are recorded before processing starts so a bot restart
 # can replay the original command message instead of losing the job.
 _PENDING_IHTX_FILE = Path("output/pending_ihtx_jobs.json")
+_IHTX_BINARY_NAMES = {"multipitch", "fileaa", "fileaa_seg"}
+_IHTX_ASSET_EXTENSIONS = {".cube", ".bin"}
+
+
+def _is_ihtx_media_attachment(
+    attachment: discord.Attachment,
+    supported_extensions: set[str],
+) -> bool:
+    return Path(attachment.filename).suffix.lower() in supported_extensions
+
+
+def _is_ihtx_asset_attachment(
+    attachment: discord.Attachment,
+    supported_extensions: set[str],
+) -> bool:
+    """Accept explicit LUTs and common uploaded executable binary names."""
+    filename = Path(attachment.filename).name.lower()
+    suffix = Path(filename).suffix.lower()
+    stem = Path(filename).stem.lower()
+    return (
+        suffix in _IHTX_ASSET_EXTENSIONS
+        or filename in _IHTX_BINARY_NAMES
+        or stem in _IHTX_BINARY_NAMES
+    )
+
+
+def _replace_ihtx_asset_references(
+    pipe_effects: str,
+    asset_paths: dict[str, str],
+    cube_paths: list[str],
+) -> str:
+    """Replace uploaded asset names with safe, temporary local paths."""
+    rewritten = pipe_effects
+    for alias, path in sorted(asset_paths.items(), key=lambda item: len(item[0]), reverse=True):
+        rewritten = __import__("re").sub(
+            rf"(?<![A-Za-z0-9_.-]){__import__('re').escape(alias)}(?![A-Za-z0-9_.-])",
+            path,
+            rewritten,
+            flags=__import__("re").IGNORECASE,
+        )
+    if len(cube_paths) == 1:
+        rewritten = __import__("re").sub(
+            r"(?i)(?<![A-Za-z0-9_.-])lut(?!\s*=)(?=[,;\s]|$)",
+            f"lut={cube_paths[0]}",
+            rewritten,
+        )
+    return rewritten
+
+
+def _run_ihtx_with_asset_context(
+    workflow,
+    workflow_args: tuple,
+    multipitch_binary_path: str | None,
+):
+    """Run one IHTX worker with an isolated uploaded-binary override."""
+    from bot.ihtx_bot import _MULTIPITCH_BIN_OVERRIDE
+
+    token = _MULTIPITCH_BIN_OVERRIDE.set(multipitch_binary_path)
+    try:
+        return workflow(*workflow_args)
+    finally:
+        _MULTIPITCH_BIN_OVERRIDE.reset(token)
 
 
 def _read_pending_ihtx_jobs() -> list[dict[str, int]]:

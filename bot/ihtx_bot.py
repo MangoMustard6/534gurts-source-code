@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-30: [Python] Added th>ihtx auxiliary asset uploads: attached .cube LUTs resolve by filename and uploaded multipitch/fileaa binaries are used for pitch effects with safe per-job overrides.
 - 2026-08-26: [Python] Added generated FFmpeg command reporting to th>ihtx pipe completions, compensated native Rubber Band R3 multipitch latency, and updated ccshue to the imported seven-argument Hald CLUT logic.
 - 2026-08-25: [Python] Updated huehsv argument handling to match the imported five-argument ImageMagick Hald CLUT script, including zero hue default and rgb48le filter output.
 - 2026-08-22: [Python/TypeScript] Changed the command prefix from `th/` to `th>` and updated preview1280 to use the supplied 2160-square base montage render.
@@ -4452,21 +4453,26 @@ def _apply_pipe_effects(
             if name == "lut":
                 lut_url = params[0] if len(params) > 0 else ""
                 if not lut_url:
-                    return False, "lut effect requires a URL parameter."
-                lut_path = os.path.join(tmpdir, f"lut_{i}.cube")
-                try:
-                    import urllib.request
-                    import ssl
-                    ssl_ctx = ssl.create_default_context()
-                    req = urllib.request.Request(
-                        lut_url,
-                        headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"}
-                    )
-                    with urllib.request.urlopen(req, context=ssl_ctx, timeout=60) as resp:
-                        with open(lut_path, "wb") as f:
-                            f.write(resp.read())
-                except Exception as e:
-                    return False, f"Failed to download LUT from {lut_url}: {e}"
+                    return False, "lut effect requires a URL or uploaded .cube filename."
+                if os.path.isfile(lut_url):
+                    if not lut_url.lower().endswith(".cube"):
+                        return False, "Uploaded LUT assets must use the .cube extension."
+                    lut_path = lut_url
+                else:
+                    lut_path = os.path.join(tmpdir, f"lut_{i}.cube")
+                    try:
+                        import urllib.request
+                        import ssl
+                        ssl_ctx = ssl.create_default_context()
+                        req = urllib.request.Request(
+                            lut_url,
+                            headers={"User-Agent": "Mozilla/5.0 (compatible; IHTX-Bot)"}
+                        )
+                        with urllib.request.urlopen(req, context=ssl_ctx, timeout=60) as resp:
+                            with open(lut_path, "wb") as f:
+                                f.write(resp.read())
+                    except Exception as e:
+                        return False, f"Failed to download LUT from {lut_url}: {e}"
                 ok, err = _run_ffmpeg_raw(
                     _FF_BASE + ["-i", current, "-vf", f"lut3d={lut_path},format=yuv420p",
                                 *_VF_CODEC, "-movflags", "+faststart", out],
@@ -6335,6 +6341,14 @@ _RUBBERBAND_R3_LATENCY = 0.08
 # Path to the Signalsmith multi-pitch binary (downloaded at startup)
 _MULTIPITCH_BIN = os.path.join(os.path.dirname(__file__), "fileaa")
 _MULTIPITCH_URL = "https://file.garden/aTXso15ukD3mnuPI/multipitch"
+_MULTIPITCH_BIN_OVERRIDE: ContextVar[str | None] = ContextVar(
+    "ihtx_multipitch_bin_override", default=None
+)
+
+
+def _active_multipitch_bin() -> str:
+    """Return the current job's uploaded binary, or the bundled binary."""
+    return _MULTIPITCH_BIN_OVERRIDE.get() or _MULTIPITCH_BIN
 
 
 def _is_native_arch(match: str) -> bool:
@@ -6351,6 +6365,16 @@ def _ensure_multipitch_bin() -> bool:
     so we skip the download and return False immediately — callers must then
     fall through to the rubberband/FFmpeg fallback path.
     """
+    override = _MULTIPITCH_BIN_OVERRIDE.get()
+    if override is not None:
+        if os.path.isfile(override):
+            try:
+                os.chmod(override, 0o755)
+            except OSError:
+                pass
+            return os.access(override, os.X_OK)
+        return False
+
     if os.path.isfile(_MULTIPITCH_BIN) and os.access(_MULTIPITCH_BIN, os.X_OK):
         # Even if the file exists, it might be the wrong architecture
         # (e.g. checked into the repo or downloaded on a different machine).
@@ -6401,7 +6425,7 @@ def _run_fileaa_with_fallback(
     # ── Tier 1: fileaa binary ───────────────────────────────────────────────
     if _ensure_multipitch_bin():
         result = subprocess.run(
-            [_MULTIPITCH_BIN, in_wav, out_wav, pitches_csv],
+            [_active_multipitch_bin(), in_wav, out_wav, pitches_csv],
             capture_output=True, timeout=timeout,
         )
         if result.returncode == 0:
@@ -6580,7 +6604,7 @@ def _run_multipitch_bungee(
         # 4. Run bungee pitch processor
         out_wav = os.path.join(tmpdir, "bungee_out.wav")
         res = subprocess.run(
-            [_MULTIPITCH_BIN, half_wav, out_wav, pitch_arg, "--bungee", "--no-normalize"],
+            [_active_multipitch_bin(), half_wav, out_wav, pitch_arg, "--bungee", "--no-normalize"],
             capture_output=True, timeout=300,
         )
         if res.returncode != 0:
@@ -10608,7 +10632,7 @@ def _run_ihtxsap(
                 # Tier 2: fileaa --rubberband-args "-2"
                 if _ensure_multipitch_bin():
                     res = subprocess.run(
-                        [_MULTIPITCH_BIN, src, dst, pitch_arg,
+                        [_active_multipitch_bin(), src, dst, pitch_arg,
                          "--rubberband-args", "-2"],
                         capture_output=True, timeout=300,
                     )
@@ -10647,7 +10671,7 @@ def _run_ihtxsap(
                 # Tier 2: fileaa --rubberband-args "-3"
                 if _ensure_multipitch_bin():
                     res = subprocess.run(
-                        [_MULTIPITCH_BIN, src, dst, pitch_arg,
+                        [_active_multipitch_bin(), src, dst, pitch_arg,
                          "--rubberband-args", "-3"],
                         capture_output=True, timeout=300,
                     )
@@ -10703,7 +10727,7 @@ def _run_ihtxsap(
                 # Tier 1: multipitch --bungee --no-normalize (all pitches, single call)
                 if _ensure_multipitch_bin():
                     res = subprocess.run(
-                        [_MULTIPITCH_BIN, src, dst, pitch_arg, "--bungee", "--no-normalize"],
+                        [_active_multipitch_bin(), src, dst, pitch_arg, "--bungee", "--no-normalize"],
                         capture_output=True, timeout=300,
                     )
                     if res.returncode == 0:
