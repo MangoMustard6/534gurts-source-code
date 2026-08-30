@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-30: [Python] Kept custom pitch/raw audio jobs lossless with PCM/FFV1 intermediates and removed audio timestamp filters from their export trim and concat paths.
 - 2026-08-30: [Python] Fixed th>ihtx raw `ffmpeg(...)` pipe steps to encode filtered audio as `pcm_s16le` and video as `ffv1` instead of stream-copy audio.
 - 2026-08-30: [Python] Added `multipitchcustom`/`mpcustom` for custom fileaa pitch flags and pitch-engine options inside th>ihtx.
 - 2026-08-30: [Python] Added `/export` plus `th>export`/`!export` for structured attachment JSON exports, and owner-only async `th>bash`/`!bash` with persistent audit logging.
@@ -4305,6 +4306,7 @@ def _apply_pipe_effects(
     effects: list[tuple[str, list[str]]],
     _in_split: bool = False,
     step_timeout: int = 180,
+    lossless_audio: bool = False,
 ) -> tuple[bool, str]:
     """Apply pipe effects sequentially — each effect is rendered individually
     before the next begins (no filter batching).
@@ -4680,8 +4682,8 @@ def _apply_pipe_effects(
                 if af:
                     # pcm_s16le is lossless but requires a container that supports it.
                     # Use .mkv for intermediates; for the final output honour the extension.
-                    _pcm_exts = {".mkv", ".wav", ".avi", ".mka"}
-                    if name == "volume":
+                    _pcm_exts = {".mkv", ".wav", ".avi", ".mka", ".nut", ".mov"}
+                    if name == "volume" and not lossless_audio:
                         # Volume pipe output is intentionally AAC-encoded, including
                         # intermediate stages, to avoid carrying raw PCM through
                         # the rest of a volume-heavy chain.
@@ -6125,9 +6127,17 @@ def _safe_awk_duration(duration_expr: str, vidlen: float) -> tuple[bool, str]:
     return True, str(min(dur, MAX_DURATION))
 
 
-def _concat_codec_args(output_format: str) -> list[str]:
-    """Return compressed final codec args for each supported output format."""
+def _concat_codec_args(output_format: str, lossless_audio: bool = False) -> list[str]:
+    """Return final codec args, optionally preserving FFV1/PCM losslessly."""
     fmt = output_format.lower().lstrip(".")
+    if lossless_audio:
+        if fmt not in {"mkv", "mov"}:
+            raise ValueError("Lossless PCM output requires mkv or mov.")
+        return [
+            "-c:v", "ffv1", "-level", "3", "-coder", "1",
+            "-context", "1", "-g", "1", "-pix_fmt", "yuv420p",
+            "-c:a", "pcm_s16le",
+        ]
     if fmt == "mkv":
         return [
             "-c:v", "libx264", "-preset", "medium", "-crf", "28",
@@ -6237,6 +6247,22 @@ def _run_ihtx_tagscript_workflow(
     effects = resolved_effects or []
     if not effects:
         return False, "The selected if branch contains no pipe effects."
+    clean_audio_mode = any(
+        name in ("multipitchcustom", "mpcustom", "fileaa")
+        or (
+            name == "ffmpeg"
+            and bool(re.search(
+                r"(?<!\S)(?:-af|-filter:a(?::0)?)(?:\s|=|$)",
+                params[0] if params else "",
+                re.IGNORECASE,
+            ))
+        )
+        for name, params in effects
+    )
+    if clean_audio_mode and export_format.lower().lstrip(".") not in {
+        "mkv", "nut", "mov"
+    }:
+        return False, "Clean PCM audio requires an mkv, nut, or mov intermediate format."
     _progress(0, abs(exports), "Checking output format")
     # A pitchtransition filter needs its Rubber Band tail to finish emitting
     # the final automation command. Keep that tail through every export pass.
@@ -6250,11 +6276,14 @@ def _run_ihtx_tagscript_workflow(
 
     _fmt_lower = output_format.lower()
     extension = _fmt_lower
-    dual_render = _fmt_lower in {"mkv", "mxf"}
+    if clean_audio_mode and _fmt_lower not in {"mkv", "mov"}:
+        return False, "Clean PCM audio requires mkv or mov as the final output format."
+    dual_render = _fmt_lower in {"mkv", "mxf"} and not clean_audio_mode
     total_exports = abs(exports)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        base = os.path.join(tmpdir, "0.mp4")
+        base_extension = export_format.lower().lstrip(".") if clean_audio_mode else "mp4"
+        base = os.path.join(tmpdir, f"0.{base_extension}")
         final_output = os.path.join(tmpdir, f"icfplus.{extension}")
 
         warmup = os.path.join(tmpdir, "a.mp4")
@@ -6280,13 +6309,22 @@ def _run_ihtx_tagscript_workflow(
 
         base_cmd = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
         base_cmd += ["-i", input_path] if no_trim_enabled else ["-stream_loop", "-1", "-i", input_path]
-        base_cmd += [
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
-            "-c:a", "aac", "-b:a", "96k",
-        ]
+        if clean_audio_mode:
+            base_cmd += [
+                "-c:v", "ffv1", "-level", "3", "-coder", "1",
+                "-context", "1", "-g", "1", "-pix_fmt", "yuv420p",
+                "-c:a", "pcm_s16le",
+            ]
+        else:
+            base_cmd += [
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+                "-c:a", "aac", "-b:a", "96k",
+            ]
         if not no_trim_enabled:
             base_cmd += ["-t", effective_duration]
-        base_cmd += ["-movflags", "+faststart", base]
+        if not clean_audio_mode:
+            base_cmd += ["-movflags", "+faststart"]
+        base_cmd += [base]
         _progress(0, total_exports, "Preparing base export")
         ok, err = _run_ffmpeg_raw(base_cmd, timeout=180)
         if not ok:
@@ -6301,7 +6339,11 @@ def _run_ihtx_tagscript_workflow(
             _trace_token = _PIPE_CODE_TRACE.set([])
             try:
                 ok, err = _apply_pipe_effects(
-                    previous, current, effects, step_timeout=_per_rep_timeout
+                    previous,
+                    current,
+                    effects,
+                    step_timeout=_per_rep_timeout,
+                    lossless_audio=clean_audio_mode,
                 )
             finally:
                 _pass_trace = _PIPE_CODE_TRACE.get() or []
@@ -6319,15 +6361,23 @@ def _run_ihtx_tagscript_workflow(
                     "-stream_loop", "-1", "-i", current,
                     "-t", effective_duration,
                     "-map", "0:v?", "-map", "0:a?",
-                    # Each export pass must begin both streams at t=0.
-                    # Without this, AAC priming/previous filter PTS becomes
-                    # cumulative delay in the final IHTX export.
-                    "-vf", "setpts=PTS-STARTPTS",
-                    "-af", "asetpts=PTS-STARTPTS",
-                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
-                    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-                    "-movflags", "+faststart", trimmed,
                 ]
+                if clean_audio_mode:
+                    trim_cmd += [
+                        "-c:v", "ffv1", "-level", "3", "-coder", "1",
+                        "-context", "1", "-g", "1", "-pix_fmt", "yuv420p",
+                        "-c:a", "pcm_s16le", trimmed,
+                    ]
+                else:
+                    trim_cmd += [
+                        # Normal exports reset timestamps to avoid AAC
+                        # priming from accumulating between passes.
+                        "-vf", "setpts=PTS-STARTPTS",
+                        "-af", "asetpts=PTS-STARTPTS",
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+                        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                        "-movflags", "+faststart", trimmed,
+                    ]
                 ok, err = _run_ffmpeg_raw(trim_cmd, timeout=_per_rep_timeout)
                 if not ok:
                     return False, f"Export {i} trim failed: {err}"
@@ -6357,11 +6407,13 @@ def _run_ihtx_tagscript_workflow(
         concat_cmd = [
             "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
             "-f", "concat", "-safe", "0", "-i", concat_list,
-            "-vf", "setpts=PTS-STARTPTS",
-            "-af", "asetpts=PTS-STARTPTS",
         ]
-        concat_cmd.extend(_concat_codec_args(extension))
-        concat_cmd.extend(["-movflags", "+faststart", final_output])
+        if not clean_audio_mode:
+            concat_cmd.extend(["-vf", "setpts=PTS-STARTPTS", "-af", "asetpts=PTS-STARTPTS"])
+        concat_cmd.extend(_concat_codec_args(extension, lossless_audio=clean_audio_mode))
+        if not clean_audio_mode:
+            concat_cmd.extend(["-movflags", "+faststart"])
+        concat_cmd.append(final_output)
         _progress(total_exports, total_exports, "Concatenating final output")
         ok, err = _run_ffmpeg_raw(concat_cmd, timeout=300)
         if not ok:

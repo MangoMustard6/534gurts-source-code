@@ -31,3 +31,4 @@
 - [File export and owner shell](file-export-and-owner-shell.md) — keep structured attachment export separate from owner-only async bash; exact `!` aliases avoid changing the global prefix.
 - [Raw FFmpeg pipe codecs](raw-ffmpeg-pipe-codecs.md) — raw IHTX passes use FFV1/PCM for filter-safe lossless intermediates; FFV1/PCM cannot be written to MP4.
 - [Custom pitch pipe](custom-pitch-pipe.md) — use mpcustom with ::-separated fileaa flags when the stock multipitch mode is not enough.
+- [Clean audio pitch route](clean-audio-pitch-route.md) — custom pitch/raw audio jobs stay PCM/FFV1 and avoid audio timestamp resets; use lossless containers.
