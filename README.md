@@ -206,6 +206,7 @@ th/ihtx 2 3 - mov mp4 swirl=180;0.4,huehsv=0.3,multipitch=-4;0;4
 | Effect | Syntax | Description | FFmpeg filter |
 |--------|--------|-------------|---------------|
 | `multipitch` | `multipitch=<semitones>` | Multi-voice pitch shift. Semicolon-separated: `multipitch=1;6;7` | Signalsmith multi-pitch binary (x86-64) or `rubberband` fallback |
+| `multipitchcustom` / `mpcustom` / `fileaa` | `mpcustom=<semitones>::<fileaa options>` | Custom fileaa pitch engine/options. Example: `mpcustom=-3.5|5::--backend bungee::--no-normalize` | Uploaded or bundled fileaa binary |
 | `multipitch2` / `mp2` | `multipitch2=<semitones>` | Alternate multipitch path | `rubberband` pitch chain |
 | `ssmp` / `soundstretchmultipitch` | `ssmp=<semitones>` | SoundTouch pitch shift (soundstretch binary) | `soundstretch` |
 | `volume` | `volume=<val>` | Adjust volume multiplier | `volume=val` |

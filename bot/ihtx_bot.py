@@ -9,6 +9,7 @@ ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
 - 2026-08-30: [Python] Fixed th>ihtx raw `ffmpeg(...)` pipe steps to encode filtered audio as `pcm_s16le` and video as `ffv1` instead of stream-copy audio.
+- 2026-08-30: [Python] Added `multipitchcustom`/`mpcustom` for custom fileaa pitch flags and pitch-engine options inside th>ihtx.
 - 2026-08-30: [Python] Added `/export` plus `th>export`/`!export` for structured attachment JSON exports, and owner-only async `th>bash`/`!bash` with persistent audit logging.
 - 2026-08-30: [Python] Added th>ihtx auxiliary asset uploads: attached .cube LUTs resolve by filename and uploaded multipitch/fileaa binaries are used for pitch effects with safe per-job overrides.
 - 2026-08-26: [Python] Added generated FFmpeg command reporting to th>ihtx pipe completions, compensated native Rubber Band R3 multipitch latency, and updated ccshue to the imported seven-argument Hald CLUT logic.
@@ -3168,7 +3169,8 @@ PIPE_EFFECT_NAMES = {
     "ccshue", "brightness", "contrast", "saturation", "swapuv", "mirror",
     "zoom", "pinch&punch", "p&p", "pinchpunch", "gm91deform",
     "invertrgb", "invlum", "volume", "vibrato", "areverse", "vreverse",
-    "channelblend", "huehsv", "multipitch", "mp", "multi", "lut",
+    "channelblend", "huehsv", "multipitch", "mp", "multi",
+    "multipitchcustom", "mpcustom", "fileaa", "lut",
     "syncaudio", "speed", "ffmpeg", "frei0r",
     "wave",
     "tvsim", "tv",
@@ -3541,7 +3543,15 @@ def _parse_pipe_effects(pipe_str: str) -> list[tuple[str, list[str]]]:
         # Raw wrapper effects own their entire parenthesized payload. Do not
         # split inner FFmpeg options such as `geq=lum=...` or
         # `-filter_complex ...` into separate pipe effects.
-        if re.match(r"^(?:ffmpeg|imagemagick|im|leftsplit|rightsplit)\s*\(", stripped_segment, re.IGNORECASE):
+        if re.match(
+            r"^(?:ffmpeg|imagemagick|im|leftsplit|rightsplit)\s*\(",
+            stripped_segment,
+            re.IGNORECASE,
+        ) or re.match(
+            r"^(?:multipitchcustom|mpcustom|fileaa)\s*=",
+            stripped_segment,
+            re.IGNORECASE,
+        ):
             assignment_parts = [stripped_segment]
         else:
             assignment_parts = re.split(
@@ -4431,6 +4441,20 @@ def _apply_pipe_effects(
                     if _lim_ok:
                         os.replace(_lim_out, out)
                 current = out
+                continue
+
+            # Custom fileaa pitch engine/options. The first parameter is the
+            # pitch list; `::`-separated parameters are passed to fileaa.
+            if name in ("multipitchcustom", "mpcustom", "fileaa"):
+                custom_out = (
+                    out
+                    if is_last
+                    else os.path.join(tmpdir, f"custom_pitch_{i}.mkv")
+                )
+                ok, err = _run_multipitch_custom(current, custom_out, params)
+                if not ok:
+                    return False, err
+                current = custom_out
                 continue
 
             if name in ("pitchtransition", "pitchtrans"):
@@ -6659,6 +6683,125 @@ def _run_multipitch_bungee(
             ], timeout=180)
         if not ok:
             return False, f"bungee: remux failed: {err}"
+
+    return True, ""
+
+
+def _custom_pitch_codec_args(output_path: str) -> list[str]:
+    """Use lossless codecs where the requested pipe container supports them."""
+    suffix = Path(output_path).suffix.lower()
+    if suffix in {".mkv", ".nut", ".mov", ".avi", ".mxf"}:
+        return [
+            "-c:v", "ffv1", "-level", "3", "-coder", "1",
+            "-context", "1", "-g", "1", "-pix_fmt", "yuv420p",
+            "-c:a", "pcm_s16le",
+        ]
+    return [
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+    ]
+
+
+def _custom_pitch_audio_codec_args(output_path: str) -> list[str]:
+    """Choose an audio-only codec compatible with the requested output."""
+    suffix = Path(output_path).suffix.lower()
+    if suffix in {".wav", ".mka", ".mkv", ".nut", ".avi", ".mov"}:
+        return ["-c:a", "pcm_s16le"]
+    return ["-c:a", "aac", "-b:a", "192k"]
+
+
+def _run_multipitch_custom(
+    input_path: str,
+    output_path: str,
+    params: list[str],
+) -> tuple[bool, str]:
+    """Run fileaa with custom pitch values and passthrough engine options.
+
+    The first parameter is the pitch list. Additional parameters are
+    tokenized as fileaa arguments, for example:
+      mpcustom=-3.5|5::--backend bungee::--no-normalize
+      mpcustom=-3.5|5::--bungee-args="chunk=8192 flush=4096"
+    """
+    if not params or not params[0].strip():
+        return False, "❌ Custom multipitch requires pitch values."
+
+    pitch_values = [
+        value.strip()
+        for value in re.split(r"[;|,\s]+", params[0])
+        if value.strip()
+    ]
+    if not pitch_values:
+        return False, "❌ Custom multipitch requires pitch values."
+    if len(pitch_values) > MAX_PITCHES:
+        return False, f"❌ Too many pitch values (maximum: {MAX_PITCHES})."
+    try:
+        for value in pitch_values:
+            parsed = float(value)
+            if not math.isfinite(parsed) or abs(parsed) > 120:
+                raise ValueError
+    except ValueError:
+        return False, "❌ Custom multipitch values must be finite semitone numbers from -120 to 120."
+
+    extra_args: list[str] = []
+    try:
+        for raw_param in params[1:]:
+            extra_args.extend(shlex.split(raw_param))
+    except ValueError as exc:
+        return False, f"❌ Invalid custom pitch options: {exc}"
+
+    if any(argument in {"-i", "--input"} for argument in extra_args):
+        return False, "❌ Custom pitch options cannot add another input file."
+    if any(argument in {"-o", "--output"} for argument in extra_args):
+        return False, "❌ Custom pitch options cannot add another output file."
+
+    if not _ensure_multipitch_bin():
+        return False, "❌ Multipitch binary unavailable — download failed."
+
+    has_video = bool(_ffprobe(
+        input_path,
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_type",
+        "-of", "default=nw=1:nk=1",
+    ).strip())
+    source_rate = _ffprobe_sample_rate(input_path)
+    pitch_arg = ",".join(pitch_values)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_wav = os.path.join(tmpdir, "custom_pitch_input.wav")
+        output_wav = os.path.join(tmpdir, "custom_pitch_output.wav")
+        ok, err = _run_ffmpeg_raw([
+            "ffmpeg", "-y", "-i", input_path,
+            "-vn", "-ar", str(source_rate), "-ac", "2",
+            "-c:a", "pcm_s16le", input_wav,
+        ], timeout=180)
+        if not ok:
+            return False, f"custom multipitch: WAV extraction failed: {err}"
+
+        result = subprocess.run(
+            [_active_multipitch_bin(), input_wav, output_wav, pitch_arg, *extra_args],
+            capture_output=True,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.decode(errors="replace")[-600:] if result.stderr else ""
+            return False, f"custom multipitch binary failed: {detail}"
+
+        if has_video:
+            remux_cmd = [
+                "ffmpeg", "-y", "-i", input_path, "-i", output_wav,
+                "-map", "0:v", "-map", "1:a",
+                *_custom_pitch_codec_args(output_path),
+                output_path,
+            ]
+        else:
+            remux_cmd = [
+                "ffmpeg", "-y", "-i", output_wav,
+                *_custom_pitch_audio_codec_args(output_path),
+                output_path,
+            ]
+        ok, err = _run_ffmpeg_raw(remux_cmd, timeout=300)
+        if not ok:
+            return False, f"custom multipitch remux failed: {err}"
 
     return True, ""
 
@@ -14354,7 +14497,7 @@ _HELP_ENTRIES: list[dict] = [
             "**Scroll:** `scroll=hpos=V` · `scroll=hpos=V;ypos=V` · `scroll=h;v` (continuous) · `scroll=x1:y1:x2:y2[:dur]` (animated pan)\n"
             "**Split:** `leftsplit(<inner_effects>)` · `rightsplit(<inner_effects>)` — apply inner effects to one half, mirror/combine\n"
             "**Reverse:** `vreverse` (video frames) · `areverse` (audio)\n"
-             "**Audio:** `multipitch=semis` `pitchtransition=start,end[;start,end]` `volume=<val>` `vibrato=freq;depth` `syncaudio` `vocoder=mode;url` `ilvocodex=url` `orangevocoder=url` `4ormulator=url` `audacity=url`\n"
+            "**Audio:** `multipitch=semis` `mpcustom=semis::fileaa_options` `pitchtransition=start,end[;start,end]` `volume=<val>` `vibrato=freq;depth` `syncaudio` `vocoder=mode;url` `ilvocodex=url` `orangevocoder=url` `4ormulator=url` `audacity=url`\n"
             "**CRT:** `tvsim=curvature[;line_sync;detail_zoom;vert_sync;phosphor;interlace;aperture_grill;static]`\n"
             "**Swirl:** `swirl=strength[;radius;xc;yc;fallout;is1to1]`\n"
             "**Aesthetics:** `folkvalley` / `fv` — music replacement + brightness + overlay\n"
@@ -16543,7 +16686,8 @@ Heavy/effects commands:
     hflip, vflip, invert/negate, grayscale, sepia, rotate=angle, ccshue=val,
     brightness=val, contrast=val, saturation=val, swapuv, mirror=right/left/top/bottom/deg,
     zoom=amt, pinch&punch/p&p, gm91deform, invertrgb, invlum/il, volume=val, vibrato,
-    areverse, vreverse, channelblend=b|g|r, huehsv=val, multipitch=semis, mp=semis,
+    areverse, vreverse, channelblend=b|g|r, multipitch=semis, mp=semis,
+    mpcustom=semis::fileaa_options,
     lut=url, syncaudio, speed=factor, wave[=preset], tvsim[=params], tv,
     swirl=amount[;radius;xc;yc;fallout;is1to1], sierpinskiransomware/srw,
      preview1280/p1280, ytpmvscan/ytpmv, oppositep1280/op1280, earthquake/nbfx, ssmp, mpsox/multipitchsox, folkvalley/fv,
@@ -17015,7 +17159,8 @@ Heavy (media processing):
       ccshue=val, brightness=val, contrast=val, saturation=val, swapuv,
       mirror=right/left/top/bottom/deg, zoom=amt, pinch&punch/p&p, gm91deform,
       invertrgb, invlum/il, volume=val, vibrato, areverse, vreverse,
-      channelblend=b|g|r, huehsv=val, multipitch/mp=semis, lut=url, syncaudio,
+      channelblend=b|g|r, huehsv=val, multipitch/mp=semis,
+      mpcustom=semis::fileaa_options, lut=url, syncaudio,
       speed=factor, wave[=preset], tvsim[=params], swirl=amount[;radius;xc;yc;fallout;is1to1],
       sierpinskiransomware/srw, preview1280/p1280, oppositep1280/op1280, earthquake/nbfx,
       ssmp, mpsox/multipitchsox, folkvalley/fv, vocoder, alimiter, freakzinga, fzgm156,
