@@ -16,6 +16,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import tempfile
 import time
@@ -64,14 +65,18 @@ def _replace_ihtx_asset_references(
     """Replace uploaded asset names with safe, temporary local paths."""
     rewritten = pipe_effects
     for alias, path in sorted(asset_paths.items(), key=lambda item: len(item[0]), reverse=True):
-        rewritten = __import__("re").sub(
-            rf"(?<![A-Za-z0-9_.-]){__import__('re').escape(alias)}(?![A-Za-z0-9_.-])",
+        # A binary named `multipitch` is selected automatically for pitch
+        # effects; never replace the effect name itself with its file path.
+        if alias in _IHTX_BINARY_NAMES:
+            continue
+        rewritten = re.sub(
+            rf"(?<![A-Za-z0-9_.-]){re.escape(alias)}(?![A-Za-z0-9_.-])",
             path,
             rewritten,
-            flags=__import__("re").IGNORECASE,
+            flags=re.IGNORECASE,
         )
     if len(cube_paths) == 1:
-        rewritten = __import__("re").sub(
+        rewritten = re.sub(
             r"(?i)(?<![A-Za-z0-9_.-])lut(?!\s*=)(?=[,;\s]|$)",
             f"lut={cube_paths[0]}",
             rewritten,
@@ -641,6 +646,9 @@ class EconomyCog(commands.Cog, name="Economy"):
                                  "`<exports> <duration> <no_trim> <format> <output_format> <pipe effects>`\n"
                                  "Example: `10 0.483 - mp4 huehsv 0.5;negate;multipitch=1|6|7`\n"
                                  "Example with final conversion: `10 0.4 - mp4 mov huehsv=0.5`\n\n"
+                                "For prefix `th>ihtx`, attach a video plus an optional `.cube` LUT "
+                                "or `multipitch`/`fileaa` binary. Reference a LUT by its uploaded "
+                                "filename, for example `lut=MyLook.cube`.\n\n"
                                 "Or use the dedicated `pipe_effects:` parameter alongside `effect:`."
                             ),
                             color=0xED4245,
@@ -654,12 +662,16 @@ class EconomyCog(commands.Cog, name="Economy"):
         if use_pipe and not output_fmt.strip():
             output_fmt = export_fmt or "mov"
 
-        # Resolve media: slash attachment > url param > message attachment > reply attachment
+        # Resolve media: slash attachment > URL > message media attachment > reply media.
+        # Additional .cube/binary attachments on a prefix message are IHTX assets.
         media_url: Optional[str] = None
         media_filename: str = "input"
         media_size: int = 0
+        media_attachment: Optional[discord.Attachment] = None
+        asset_attachments: list[discord.Attachment] = []
 
         if attachment is not None:
+            media_attachment = attachment
             media_url = attachment.proxy_url or attachment.url
             media_filename = attachment.filename
             media_size = attachment.size
@@ -667,19 +679,46 @@ class EconomyCog(commands.Cog, name="Economy"):
             media_url = url
             media_filename = url.split("?")[0].split("/")[-1] or "input.mp4"
             media_size = 0
-        elif ctx.message and ctx.message.attachments:
-            a = ctx.message.attachments[0]
-            media_url = a.proxy_url or a.url
-            media_filename = a.filename
-            media_size = a.size
-        elif ctx.message and ctx.message.reference:
+        else:
+            current_attachments = list(ctx.message.attachments) if ctx.message else []
+            media_attachment = next(
+                (
+                    a for a in current_attachments
+                    if _is_ihtx_media_attachment(a, SUPPORTED_EXTENSIONS)
+                ),
+                None,
+            )
+            asset_attachments.extend(
+                a for a in current_attachments
+                if a is not media_attachment
+                and _is_ihtx_asset_attachment(a, SUPPORTED_EXTENSIONS)
+            )
+            if media_attachment is not None:
+                media_url = media_attachment.proxy_url or media_attachment.url
+                media_filename = media_attachment.filename
+                media_size = media_attachment.size
+
+        if media_url is None and ctx.message and ctx.message.reference:
             try:
                 ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
-                if ref.attachments:
-                    a = ref.attachments[0]
-                    media_url = a.url
-                    media_filename = a.filename
-                    media_size = a.size
+                ref_attachments = list(ref.attachments)
+                ref_media = next(
+                    (
+                        a for a in ref_attachments
+                        if _is_ihtx_media_attachment(a, SUPPORTED_EXTENSIONS)
+                    ),
+                    None,
+                )
+                asset_attachments.extend(
+                    a for a in ref_attachments
+                    if a is not ref_media
+                    and _is_ihtx_asset_attachment(a, SUPPORTED_EXTENSIONS)
+                )
+                if ref_media is not None:
+                    media_attachment = ref_media
+                    media_url = ref_media.proxy_url or ref_media.url
+                    media_filename = ref_media.filename
+                    media_size = ref_media.size
             except Exception:
                 pass
 
@@ -792,17 +831,70 @@ class EconomyCog(commands.Cog, name="Economy"):
             out_final_ext = f".{(output_fmt or export_fmt).lstrip('.')}" if use_pipe else out_ext
             output_path = os.path.join(tmpdir, f"output{out_final_ext}")
 
-            # Download
+            # Download the media and any explicitly attached IHTX assets.
             try:
                 await _update("⬇️ Downloading media…")
                 async with __import__("aiohttp").ClientSession() as session:
-                    async with session.get(media_url) as resp:
+                    download_url = (
+                        media_attachment.proxy_url or media_attachment.url
+                        if media_attachment is not None
+                        else media_url
+                    )
+                    async with session.get(download_url) as resp:
                         if resp.status != 200:
                             await _update(f"❌ Failed to download media (HTTP {resp.status}).", 0xED4245)
                             return
                         data = await resp.read()
-                with open(input_path, "wb") as fh:
-                    fh.write(data)
+                    with open(input_path, "wb") as fh:
+                        fh.write(data)
+
+                    asset_paths: dict[str, str] = {}
+                    cube_paths: list[str] = []
+                    multipitch_binary_path: str | None = None
+                    for index, asset in enumerate(asset_attachments[:4]):
+                        asset_name = Path(asset.filename).name
+                        safe_name = re.sub(
+                            r"[^A-Za-z0-9_.-]", "_", asset_name
+                        )
+                        asset_path = os.path.join(
+                            tmpdir, f"asset_{index}_{safe_name or 'upload.bin'}"
+                        )
+                        if asset.size > MAX_FILE_SIZE:
+                            await _update(
+                                f"❌ Asset `{asset.filename}` is too large (max 25 MB).",
+                                0xED4245,
+                            )
+                            return
+                        async with session.get(asset.proxy_url or asset.url) as asset_resp:
+                            if asset_resp.status != 200:
+                                await _update(
+                                    f"❌ Failed to download asset `{asset.filename}` "
+                                    f"(HTTP {asset_resp.status}).",
+                                    0xED4245,
+                                )
+                                return
+                            asset_data = await asset_resp.read()
+                        with open(asset_path, "wb") as fh:
+                            fh.write(asset_data)
+
+                        asset_path_obj = Path(asset_name)
+                        if asset_path_obj.suffix.lower() == ".cube":
+                            cube_paths.append(asset_path)
+                        base_name = asset_path_obj.name.lower()
+                        stem_name = asset_path_obj.stem.lower()
+                        for alias in {base_name, stem_name}:
+                            asset_paths[alias] = asset_path
+                        if (
+                            base_name in _IHTX_BINARY_NAMES
+                            or stem_name in _IHTX_BINARY_NAMES
+                            or asset_path_obj.suffix.lower() == ".bin"
+                        ) and multipitch_binary_path is None:
+                            multipitch_binary_path = asset_path
+
+                if use_pipe and asset_paths:
+                    pipe_effects = _replace_ihtx_asset_references(
+                        pipe_effects, asset_paths, cube_paths
+                    )
             except Exception as exc:
                 await _update(f"❌ Download failed: `{exc}`", 0xED4245)
                 return
@@ -891,15 +983,22 @@ class EconomyCog(commands.Cog, name="Economy"):
             try:
                 if use_pipe:
                     ok, err = await loop.run_in_executor(
-                        None, _run_ihtx_tagscript_workflow,
-                        input_path, output_path,
-                        repetitions, duration,
-                        "true" if no_trim else "-",
-                        export_fmt.lstrip(".") or "mov",
-                output_fmt.lstrip("."),
-                        pipe_effects,
-                        _on_progress,
-                        _pipe_code_trace,
+                        None,
+                        _run_ihtx_with_asset_context,
+                        _run_ihtx_tagscript_workflow,
+                        (
+                            input_path,
+                            output_path,
+                            repetitions,
+                            duration,
+                            "true" if no_trim else "-",
+                            export_fmt.lstrip(".") or "mov",
+                            output_fmt.lstrip("."),
+                            pipe_effects,
+                            _on_progress,
+                            _pipe_code_trace,
+                        ),
+                        multipitch_binary_path,
                     )
                 else:
                     ok, err = await loop.run_in_executor(
@@ -1090,7 +1189,11 @@ class EconomyCog(commands.Cog, name="Economy"):
     @commands.command(name="ihtx", aliases=["effect", "destroy"])
     async def ihtx_prefix(self, ctx: commands.Context, *, args: str = "") -> None:
         """Prefix alias for /ihtxgen — handles both preset names and the full
-        custom syntax: <exports> <duration> <no_trim> <fmt> <pipe_effects>"""
+        custom syntax: <exports> <duration> <no_trim> <fmt> <pipe_effects>.
+
+        A prefix message may also attach a .cube LUT and/or a multipitch/fileaa
+        binary alongside the source video.
+        """
         message_id = getattr(ctx.message, "id", 0)
         channel_id = getattr(ctx.channel, "id", 0)
         author_id = getattr(ctx.author, "id", 0)
