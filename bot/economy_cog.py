@@ -75,11 +75,13 @@ def _replace_ihtx_asset_references(
             rewritten,
             flags=re.IGNORECASE,
         )
-    if len(cube_paths) == 1:
-        rewritten = re.sub(
+    if cube_paths and re.search(
             r"(?i)(?<![A-Za-z0-9_.-])lut(?!\s*=)(?=[,;\s]|$)",
-            f"lut={cube_paths[0]}",
             rewritten,
+        ):
+        raise ValueError(
+            "An uploaded .cube LUT must be referenced by its filename, "
+            "for example `lut=MyLook.cube`."
         )
     return rewritten
 
@@ -647,8 +649,8 @@ class EconomyCog(commands.Cog, name="Economy"):
                                  "Example: `10 0.483 - mp4 huehsv 0.5;negate;multipitch=1|6|7`\n"
                                  "Example with final conversion: `10 0.4 - mp4 mov huehsv=0.5`\n\n"
                                 "For prefix `th>ihtx`, attach a video plus an optional `.cube` LUT "
-                                "or `multipitch`/`fileaa` binary. Reference a LUT by its uploaded "
-                                "filename, for example `lut=MyLook.cube`.\n\n"
+                                "or `multipitch`/`fileaa` binary. An uploaded LUT must be named "
+                                "in the effects, for example `lut=MyLook.cube`.\n\n"
                                 "Or use the dedicated `pipe_effects:` parameter alongside `effect:`."
                             ),
                             color=0xED4245,
