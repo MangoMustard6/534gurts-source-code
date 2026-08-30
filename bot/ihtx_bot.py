@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-30: [Python] Fixed th>ihtx raw `ffmpeg(...)` pipe steps to encode filtered audio as `pcm_s16le` and video as `ffv1` instead of stream-copy audio.
 - 2026-08-30: [Python] Added `/export` plus `th>export`/`!export` for structured attachment JSON exports, and owner-only async `th>bash`/`!bash` with persistent audit logging.
 - 2026-08-30: [Python] Added th>ihtx auxiliary asset uploads: attached .cube LUTs resolve by filename and uploaded multipitch/fileaa binaries are used for pitch effects with safe per-job overrides.
 - 2026-08-26: [Python] Added generated FFmpeg command reporting to th>ihtx pipe completions, compensated native Rubber Band R3 multipitch latency, and updated ccshue to the imported seven-argument Hald CLUT logic.
@@ -3954,17 +3955,30 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
 
 # ── Pipe-effect inline helpers ───────────────────────────────────────────────
 
+# Named IHTX video-filter passes use the existing compatible x264/PCM settings.
+# Raw `ffmpeg(...)` passes below use their stricter FFV1/PCM intermediate path.
 _VF_CODEC = ["-c:v", "libx264", "-preset", "fast", "-crf", "23",
              "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le"]
 _FF_BASE   = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
 
 def _ff_vf(inp: str, vf: str, out: str, timeout: int = 180) -> tuple[bool, str]:
-    """Run a -vf filter with standard x264/pcm_s16le settings."""
+    """Run a -vf filter with standard x264/PCM settings."""
     return _run_ffmpeg_raw(_FF_BASE + ["-i", inp, "-vf", vf, *_VF_CODEC, out], timeout=timeout)
 
 def _ff_af(inp: str, af: str, out: str, timeout: int = 180) -> tuple[bool, str]:
     """Run a -af filter keeping video stream unchanged."""
     return _run_ffmpeg_raw(_FF_BASE + ["-i", inp, "-af", af, "-c:v", "copy", "-c:a", "pcm_s16le", out], timeout=timeout)
+
+
+def _normalize_raw_pipe_codecs(args: list[str]) -> list[str]:
+    """Keep raw IHTX pipe passes on the requested lossless codecs."""
+    normalized = list(args)
+    for index, argument in enumerate(normalized[:-1]):
+        if argument.lower() in {"-c:a", "-codec:a"} and normalized[index + 1].lower() == "copy":
+            normalized[index + 1] = "pcm_s16le"
+        elif argument.lower() in {"-c:v", "-codec:v"} and normalized[index + 1].lower() == "libx264":
+            normalized[index + 1] = "ffv1"
+    return normalized
 
 
 def _run_pitch_transition(
@@ -4581,6 +4595,7 @@ def _apply_pipe_effects(
                     user_args = shlex.split(raw_args)
                 except ValueError as e:
                     return False, f"ffmpeg() pipe step — invalid args: {e}"
+                user_args = _normalize_raw_pipe_codecs(user_args)
                 # Preserve audio unless the user explicitly opted out with -map or -an
                 has_map = any(a in ("-map", "-an") for a in user_args)
                 # When -filter_complex is used, the user may supply -map 0:a (audio only)
@@ -4611,15 +4626,27 @@ def _apply_pipe_effects(
                             for lbl, cnt in label_counts.items():
                                 if cnt == 1 and not lbl.isdigit() and ':' not in lbl:
                                     auto_video_map += ["-map", f"[{lbl}]"]
-                audio_map = [] if has_map else ["-map", "0:v:0", "-map", "0:a?", "-c:a", "copy"]
+                # A filtered audio stream cannot be stream-copied.  FFV1/PCM
+                # also keeps this raw step safe for later IHTX filter passes.
+                audio_map = [] if has_map else [
+                    "-map", "0:v:0", "-map", "0:a?",
+                    "-c:v", "ffv1", "-level", "3", "-coder", "1",
+                    "-context", "1", "-g", "1", "-pix_fmt", "yuv420p",
+                    "-c:a", "pcm_s16le",
+                ]
+                raw_out = (
+                    out
+                    if is_last
+                    else os.path.join(tmpdir, f"pipe_{i}.mkv")
+                )
                 cmd = [
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                     "-i", current,
-                ] + user_args + auto_video_map + audio_map + [out]
+                ] + user_args + auto_video_map + audio_map + [raw_out]
                 ok, err = _run_ffmpeg_raw(cmd, timeout=step_timeout)
                 if not ok:
                     return False, f"ffmpeg() pipe step failed: {err}"
-                current = out
+                current = raw_out
                 continue
 
             # Named audio filters — rendered immediately
@@ -4645,7 +4672,8 @@ def _apply_pipe_effects(
                         audio_codec_args = ["-c:a", "pcm_s16le"]
                     ok, err = _run_ffmpeg_raw(
                         _FF_BASE + ["-i", current, "-af", af,
-                                    "-c:v", "copy", *audio_codec_args, audio_out],
+                                    "-c:v", "copy",
+                                    *audio_codec_args, audio_out],
                         timeout=step_timeout,
                     )
                     if not ok:
