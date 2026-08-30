@@ -30,3 +30,4 @@
 - [IHTX auxiliary uploads](ihtx-auxiliary-uploads.md) — prefix jobs accept bounded .cube and pitch-binary attachments alongside the source video, with per-job binary overrides.
 - [File export and owner shell](file-export-and-owner-shell.md) — keep structured attachment export separate from owner-only async bash; exact `!` aliases avoid changing the global prefix.
 - [Raw FFmpeg pipe codecs](raw-ffmpeg-pipe-codecs.md) — raw IHTX passes use FFV1/PCM for filter-safe lossless intermediates; FFV1/PCM cannot be written to MP4.
+- [Custom pitch pipe](custom-pitch-pipe.md) — use mpcustom with ::-separated fileaa flags when the stock multipitch mode is not enough.
