@@ -27,3 +27,4 @@
 - [Pipe output format default](pipe-output-format-default.md) — omitting the final format keeps the intermediate export container and skips final conversion.
 - [IHTX restart recovery](ihtx-restart-recovery.md) — interrupted prefix jobs persist their Discord message and replay after reconnect.
 - [IHTX conditional parsing](ihtx-conditional-parsing.md) — parse quote-protected conditionals before generic delimiters; split semicolon chains only before known effects.
+- [IHTX auxiliary uploads](ihtx-auxiliary-uploads.md) — prefix jobs accept bounded .cube and pitch-binary attachments alongside the source video, with per-job binary overrides.
