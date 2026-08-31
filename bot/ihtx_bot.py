@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-08-31: [Python] Updated restart notices to announce recent changes and attach IHTX comeback artwork; removed multipitch audio timestamp cleanup and kept custom pitch video preview-compatible.
 - 2026-08-30: [Python] Kept custom pitch/raw audio jobs lossless with PCM/FFV1 intermediates and removed audio timestamp filters from their export trim and concat paths.
 - 2026-08-30: [Python] Fixed th>ihtx raw `ffmpeg(...)` pipe steps to encode filtered audio as `pcm_s16le` and video as `ffv1` instead of stream-copy audio.
 - 2026-08-30: [Python] Added `multipitchcustom`/`mpcustom` for custom fileaa pitch flags and pitch-engine options inside th>ihtx.
@@ -3966,8 +3967,9 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
 
 # ── Pipe-effect inline helpers ───────────────────────────────────────────────
 
-# Named IHTX video-filter passes use the existing compatible x264/PCM settings.
-# Raw `ffmpeg(...)` passes below use their stricter FFV1/PCM intermediate path.
+# Named IHTX video-filter passes use compatible x264/PCM settings.
+# Raw `ffmpeg(...)` passes below use FFV1/PCM because their video codec is
+# user-controlled and may be stream-copied into another raw pass.
 _VF_CODEC = ["-c:v", "libx264", "-preset", "fast", "-crf", "23",
              "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le"]
 _FF_BASE   = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
@@ -4384,7 +4386,10 @@ def _apply_pipe_effects(
 
         for i, (name, params) in enumerate(effects):
             is_last = (i == len(effects) - 1)
-            out = output_path if is_last else os.path.join(tmpdir, f"pipe_{i}.mp4")
+            out = output_path if is_last else os.path.join(
+                tmpdir,
+                f"pipe_{i}.mkv" if lossless_audio else f"pipe_{i}.mp4",
+            )
 
             # ccshue — ImageMagick haldclut with hue/sat/gamma/gain/offset
             if name == "ccshue":
@@ -6128,14 +6133,14 @@ def _safe_awk_duration(duration_expr: str, vidlen: float) -> tuple[bool, str]:
 
 
 def _concat_codec_args(output_format: str, lossless_audio: bool = False) -> list[str]:
-    """Return final codec args, optionally preserving FFV1/PCM losslessly."""
+    """Return final codec args, optionally preserving PCM audio."""
     fmt = output_format.lower().lstrip(".")
     if lossless_audio:
         if fmt not in {"mkv", "mov"}:
             raise ValueError("Lossless PCM output requires mkv or mov.")
         return [
-            "-c:v", "ffv1", "-level", "3", "-coder", "1",
-            "-context", "1", "-g", "1", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-pix_fmt", "yuv420p",
             "-c:a", "pcm_s16le",
         ]
     if fmt == "mkv":
@@ -6311,8 +6316,8 @@ def _run_ihtx_tagscript_workflow(
         base_cmd += ["-i", input_path] if no_trim_enabled else ["-stream_loop", "-1", "-i", input_path]
         if clean_audio_mode:
             base_cmd += [
-                "-c:v", "ffv1", "-level", "3", "-coder", "1",
-                "-context", "1", "-g", "1", "-pix_fmt", "yuv420p",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                "-pix_fmt", "yuv420p",
                 "-c:a", "pcm_s16le",
             ]
         else:
@@ -6364,8 +6369,8 @@ def _run_ihtx_tagscript_workflow(
                 ]
                 if clean_audio_mode:
                     trim_cmd += [
-                        "-c:v", "ffv1", "-level", "3", "-coder", "1",
-                        "-context", "1", "-g", "1", "-pix_fmt", "yuv420p",
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                        "-pix_fmt", "yuv420p",
                         "-c:a", "pcm_s16le", trimmed,
                     ]
                 else:
@@ -6436,12 +6441,6 @@ def _run_ihtx_tagscript_workflow(
 # ---------- Multipitch (Rubber Band R3 pitch-shift pipeline) ----------
 
 MAX_PITCHES = 100
-
-# Native Rubber Band R3 uses a short analysis window before its first stable
-# output sample.  Pad before processing and remove the same amount afterward;
-# otherwise the transformed audio starts late even when the container stream
-# timestamp says 0.
-_RUBBERBAND_R3_LATENCY = 0.08
 
 # Path to the Signalsmith multi-pitch binary (downloaded at startup)
 _MULTIPITCH_BIN = os.path.join(os.path.dirname(__file__), "fileaa")
@@ -6740,12 +6739,12 @@ def _run_multipitch_bungee(
 
 
 def _custom_pitch_codec_args(output_path: str) -> list[str]:
-    """Use lossless codecs where the requested pipe container supports them."""
+    """Keep custom pitch video previewable while preserving PCM audio."""
     suffix = Path(output_path).suffix.lower()
     if suffix in {".mkv", ".nut", ".mov", ".avi", ".mxf"}:
         return [
-            "-c:v", "ffv1", "-level", "3", "-coder", "1",
-            "-context", "1", "-g", "1", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-pix_fmt", "yuv420p",
             "-c:a", "pcm_s16le",
         ]
     return [
@@ -6927,20 +6926,23 @@ def _run_multipitch_rb3(
     cap = str(int(min(actual_dur, MAX_DURATION)) + 1) if actual_dur > 0 else str(MAX_DURATION)
     dur_flag = str(round(actual_dur, 6)) if actual_dur > 0 else cap
 
-    # ── 4. Tier 1: rubberband R3 CLI per voice → amix → MKV/FLAC ─────────────
+    # ── 4. Tier 1: rubberband R3 CLI per voice → amix → codec-compatible output
     rb_bin = shutil.which("rubberband")
     if rb_bin:
         with tempfile.TemporaryDirectory() as tmpdir:
+            output_suffix = Path(output_path).suffix.lower()
+            output_container = (
+                output_suffix
+                if output_suffix in {".mp4", ".mkv", ".mov", ".nut", ".avi", ".mxf"}
+                else ".mkv"
+            )
+            mkv_out = os.path.join(tmpdir, f"mp_t1{output_container}")
             # Extract stereo PCM WAV for rubberband
             base_wav = os.path.join(tmpdir, "base.wav")
             ok, err = _run_ffmpeg_raw([
                 "ffmpeg", "-y",
                 "-t", cap, "-i", input_path,
                 "-vn", "-ar", "44100", "-ac", "2",
-                "-af", (
-                    f"apad=pad_dur={_RUBBERBAND_R3_LATENCY:.6f},"
-                    f"atrim=duration={actual_dur + _RUBBERBAND_R3_LATENCY:.6f}"
-                ),
                 "-c:a", "pcm_s16le",
                 base_wav,
             ], timeout=120)
@@ -6980,45 +6982,24 @@ def _run_multipitch_rb3(
                     if not ok:
                         print(f"[multipitch] amix failed: {err[-200:]} — trying filter_complex fallback")
                     else:
-                        # Compensate R3's front analysis delay after mixing. The
-                        # padded input above preserves the real tail so this
-                        # does not shorten the last pitched audio.
-                        corrected_wav = os.path.join(tmpdir, "pitched_corrected.wav")
-                        ok, err = _run_ffmpeg_raw([
-                            "ffmpeg", "-y", "-i", out_wav,
-                            "-af", (
-                                f"atrim=start={_RUBBERBAND_R3_LATENCY:.6f},"
-                                "asetpts=PTS-STARTPTS"
-                            ),
-                            "-c:a", "pcm_s16le", "-t", dur_flag,
-                            corrected_wav,
-                        ], timeout=300)
-                        if not ok:
-                            print(f"[multipitch] R3 latency compensation failed: {err[-200:]} — trying filter_complex fallback")
-                        else:
-                            out_wav = corrected_wav
-                        # Remux to MKV/FLAC
-                        mkv_out = os.path.join(tmpdir, "mp_t1.mkv")
-                        if ok and has_video:
+                        # Keep the mixed PCM samples intact. Do not repair the
+                        # stream with audio timestamp filters; the output
+                        # duration cap is applied by the muxer instead.
+                        if has_video:
                             ok, err = _run_ffmpeg_raw([
                                 "ffmpeg", "-y",
                                 "-i", input_path,
                                 "-i", out_wav,
                                 "-map", "0:v", "-map", "1:a",
-                                "-map_metadata", "-1", "-avoid_negative_ts", "make_zero",
                                 "-vf", "setpts=PTS-STARTPTS",
-                                "-af", "asetpts=PTS-STARTPTS",
-                                "-c:v", "libx264", "-preset", "fast", "-tune", "zerolatency",
-                                "-bf", "0", "-crf", "23",
-                                "-pix_fmt", "yuv420p", "-c:a", "flac",
+                                *_custom_pitch_codec_args(output_path),
                                 "-t", dur_flag, mkv_out,
                             ], timeout=300)
-                        elif ok:
+                        else:
                             ok, err = _run_ffmpeg_raw([
                                 "ffmpeg", "-y",
                                 "-i", out_wav,
-                                "-af", "asetpts=PTS-STARTPTS",
-                                "-c:a", "flac",
+                                *_custom_pitch_audio_codec_args(output_path),
                                 "-t", dur_flag,
                                 mkv_out,
                             ], timeout=180)
@@ -7033,13 +7014,7 @@ def _run_multipitch_rb3(
     #   asplit=N → rubberband:pitch per voice → amix=inputs=N:normalize=0
     if n == 1:
         pitch_ratio = 2.0 ** (semitones[0] / 12.0)
-        fc = (
-            f"[0:a]apad=pad_dur={_RUBBERBAND_R3_LATENCY:.6f},"
-            f"atrim=duration={actual_dur + _RUBBERBAND_R3_LATENCY:.6f},"
-            f"rubberband=pitch={pitch_ratio:.6f},"
-            f"atrim=start={_RUBBERBAND_R3_LATENCY:.6f},"
-            f"asetpts=PTS-STARTPTS[outa]"
-        )
+        fc = f"[0:a]rubberband=pitch={pitch_ratio:.6f}[outa]"
     else:
         split_labels = "".join(f"[mp_s{j}]" for j in range(n))
         split_part   = f"[0:a]asplit={n}{split_labels}"
@@ -7047,18 +7022,20 @@ def _run_multipitch_rb3(
         for j, st in enumerate(semitones):
             pr = 2.0 ** (st / 12.0)
             voice_parts.append(
-                f"[mp_s{j}]apad=pad_dur={_RUBBERBAND_R3_LATENCY:.6f},"
-                f"atrim=duration={actual_dur + _RUBBERBAND_R3_LATENCY:.6f},"
-                f"rubberband=pitch={pr:.6f},"
-                f"atrim=start={_RUBBERBAND_R3_LATENCY:.6f},"
-                f"asetpts=PTS-STARTPTS[mp_v{j}]"
+                f"[mp_s{j}]rubberband=pitch={pr:.6f}[mp_v{j}]"
             )
         mix_inputs = "".join(f"[mp_v{j}]" for j in range(n))
         mix_part   = f"{mix_inputs}amix=inputs={n}:normalize=0[outa]"
         fc = ";".join([split_part] + voice_parts + [mix_part])
 
     with tempfile.TemporaryDirectory() as _t2_tmp:
-        mkv_out2 = os.path.join(_t2_tmp, "mp_t2.mkv")
+        output_suffix = Path(output_path).suffix.lower()
+        output_container = (
+            output_suffix
+            if output_suffix in {".mp4", ".mkv", ".mov", ".nut", ".avi", ".mxf"}
+            else ".mkv"
+        )
+        mkv_out2 = os.path.join(_t2_tmp, f"mp_t2{output_container}")
         if has_video:
             cmd = (
                 _FF_BASE
@@ -7067,10 +7044,8 @@ def _run_multipitch_rb3(
                 + ["-map", "0:v", "-map", "[outa]"]
                 + [
                     "-vf", "setpts=PTS-STARTPTS",
-                    "-c:v", "libx264", "-preset", "fast", "-tune", "zerolatency",
-                    "-bf", "0", "-crf", "23",
-                    "-pix_fmt", "yuv420p", "-c:a", "flac",
                 ]
+                + _custom_pitch_codec_args(output_path)
                 + ["-t", dur_flag, mkv_out2]
             )
         else:
@@ -7079,7 +7054,8 @@ def _run_multipitch_rb3(
                 + ["-i", input_path]
                 + ["-filter_complex", fc]
                 + ["-map", "[outa]"]
-                + ["-c:a", "flac", mkv_out2]
+                + _custom_pitch_audio_codec_args(output_path)
+                + ["-t", dur_flag, mkv_out2]
             )
         ok, err = _run_ffmpeg_raw(cmd, timeout=300)
         if ok:
@@ -8711,16 +8687,38 @@ def _run_preview1280what(
 # ---------- Bot events & commands ----------
 
 _STARTUP_NOTICE_CHANNEL_ID = 1496114769458106509
+_STARTUP_NOTICE_IMAGE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "attached_assets"
+    / "Untitled244_20260830154844_1788076146075.png"
+)
 _startup_notice_sent = False
 
 
-def _latest_update_reason() -> str:
-    """Return the newest update-log entry for the restart notification."""
+def _restart_change_summary(max_chars: int = 1700) -> str:
+    """Return a Discord-safe bullet list of recent update-log entries."""
+    entries: list[str] = []
     for line in (__doc__ or "").splitlines():
         line = line.strip()
         if line.startswith("- ") and len(line) > 2:
-            return line[2:].strip()
-    return "Routine restart."
+            entries.append(line[2:].strip())
+    if not entries:
+        return "• Routine restart."
+
+    bullets: list[str] = []
+    used = 0
+    for entry in entries:
+        bullet = f"• {entry}"
+        if used + len(bullet) + (1 if bullets else 0) > max_chars:
+            break
+        bullets.append(bullet)
+        used += len(bullet) + (1 if len(bullets) > 1 else 0)
+    remaining = len(entries) - len(bullets)
+    if remaining:
+        more = f"• … and {remaining} more update(s)."
+        if used + len(more) + 1 <= max_chars:
+            bullets.append(more)
+    return "\n".join(bullets) or "• Routine restart."
 
 
 async def _send_startup_notice():
@@ -8734,11 +8732,27 @@ async def _send_startup_notice():
         channel = bot.get_channel(_STARTUP_NOTICE_CHANNEL_ID)
         if channel is None:
             channel = await bot.fetch_channel(_STARTUP_NOTICE_CHANNEL_ID)
-        await channel.send(
-            "✅ **IHTX Bot restarted successfully.**\n"
-            f"**Change/reason:** {_latest_update_reason()}"
+        notice = (
+            "IM BACK PEOPLE!!! HERE'S WHAT CHANGED:\n"
+            f"{_restart_change_summary()}"
         )
-        print(f"[startup] Restart notice sent to channel {_STARTUP_NOTICE_CHANNEL_ID}.")
+        if _STARTUP_NOTICE_IMAGE_PATH.is_file():
+            await channel.send(
+                content=notice,
+                file=discord.File(
+                    str(_STARTUP_NOTICE_IMAGE_PATH),
+                    filename="ihtx-restart.png",
+                ),
+            )
+            print(
+                f"[startup] Restart notice with artwork sent to channel "
+                f"{_STARTUP_NOTICE_CHANNEL_ID}."
+            )
+        else:
+            await channel.send(
+                content=f"{notice}\n• Restart artwork was not found."
+            )
+            print(f"[startup] Restart notice sent to channel {_STARTUP_NOTICE_CHANNEL_ID}.")
     except Exception as exc:
         print(f"[startup] Could not send restart notice: {exc}")
 
