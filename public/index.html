@@ -86,7 +86,7 @@ header .tagline { color: var(--muted2); font-size: .8rem; margin-left: auto; }
 
 /* ── EXPORT CONTROLS ─────────────────────────────────────────────── */
 .export-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px;
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 12px;
 }
 .export-group {
   display: flex; flex-direction: column; gap: 5px; background: var(--panel);
@@ -227,6 +227,22 @@ header .tagline { color: var(--muted2); font-size: .8rem; margin-left: auto; }
   overflow-y: auto; max-height: calc(100vh - 320px);
 }
 .pipeline-panel { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.pipe-paste {
+  display: flex; flex-direction: column; gap: 5px; padding: 10px 12px;
+  background: var(--panel); border: 1px solid var(--border2); border-radius: 8px;
+}
+.pipe-paste label {
+  font-size: .65rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--muted);
+}
+.pipe-paste input {
+  width: 100%; background: var(--bg); border: 1px solid var(--border2);
+  border-radius: 5px; color: var(--text); padding: 7px 9px; outline: none;
+  font: .8rem 'Consolas','Fira Code',monospace;
+}
+.pipe-paste input:focus { border-color: var(--accent2); }
+.pipe-paste input::placeholder { color: var(--muted); }
+.pipe-paste span { font-size: .68rem; color: var(--muted2); }
 
 /* palette */
 .palette-group { margin-bottom: 12px; }
@@ -402,6 +418,8 @@ header .tagline { color: var(--muted2); font-size: .8rem; margin-left: auto; }
           <option value="webm">webm</option>
           <option value="mov">mov</option>
           <option value="mkv">mkv</option>
+          <option value="mxf">mxf</option>
+          <option value="avi">avi</option>
           <option value="gif">gif</option>
           <option value="mp3">mp3</option>
           <option value="wav">wav</option>
@@ -411,7 +429,15 @@ header .tagline { color: var(--muted2); font-size: .8rem; margin-left: auto; }
           <option value="png">png</option>
           <option value="webp">webp</option>
         </select>
-        <span class="export-hint">Output container</span>
+        <span class="export-hint">Output container · lossless audio where supported</span>
+      </div>
+      <div class="export-group">
+        <label>Quality</label>
+        <select id="qualityInput">
+          <option value="high" selected>High · CRF 18</option>
+          <option value="maximum">Maximum · CRF 16</option>
+        </select>
+        <span class="export-hint">Video + audio quality</span>
       </div>
     </div>
 
@@ -454,6 +480,12 @@ header .tagline { color: var(--muted2); font-size: .8rem; margin-left: auto; }
     </div>
     <div class="pipeline-panel">
       <div class="pl-label">Pipeline</div>
+      <div class="pipe-paste">
+        <label for="pipeInput">Paste pipe effects</label>
+        <input id="pipeInput" type="text" spellcheck="false"
+          placeholder="negate,huehsv=0.5,multipitch=1|6|7">
+        <span>Use a comma-separated pipe string, or leave blank to use the effect chips.</span>
+      </div>
       <div id="plEmpty" class="pl-empty">
         <span>🎬</span>
         <span>No effects yet</span>
@@ -579,6 +611,7 @@ const EFFECTS = {
 let pipeline = [];
 let currentFile = null;
 let dragSrcIdx  = null;
+const pipeInput = document.getElementById('pipeInput');
 
 // ─── FILE HANDLING ────────────────────────────────────────────────────────────
 
@@ -675,6 +708,7 @@ async function processFile() {
     fd.append('duration', document.getElementById('durInput').value || '');
     fd.append('noTrim', document.getElementById('noTrimInput').checked ? '1' : '0');
     fd.append('format', document.getElementById('fmtInput').value);
+    fd.append('quality', document.getElementById('qualityInput').value);
 
     const resp = await fetch('/process', { method: 'POST', body: fd });
     const json = await resp.json();
@@ -788,6 +822,7 @@ function renderPalette() {
 // ─── PIPELINE ─────────────────────────────────────────────────────────────────
 
 function addEffect(name, params, hint) {
+  pipeInput.value = '';
   pipeline.push({ name, params, hint: hint || '' });
   renderPipeline(); updateCmd(); updateProcessNote();
 }
@@ -798,7 +833,9 @@ function moveEffect(i, d) {
   [pipeline[i], pipeline[t]] = [pipeline[t], pipeline[i]];
   renderPipeline(); updateCmd();
 }
-function clearPipeline() { pipeline = []; renderPipeline(); updateCmd(); updateProcessNote(); }
+function clearPipeline() { pipeline = []; pipeInput.value = ''; renderPipeline(); updateCmd(); updateProcessNote(); }
+
+pipeInput.addEventListener('input', () => { updateCmd(); updateProcessNote(); });
 
 function renderPipeline() {
   const list  = document.getElementById('pipeList');
@@ -848,7 +885,8 @@ function clearDragOver() {
 // ─── COMMAND ──────────────────────────────────────────────────────────────────
 
 function buildPipeStr() {
-  return pipeline.map(e => e.params.trim() ? `${e.name}=${e.params.trim()}` : e.name).join(',');
+  const pasted = pipeInput.value.trim();
+  return pasted || pipeline.map(e => e.params.trim() ? `${e.name}=${e.params.trim()}` : e.name).join(',');
 }
 
 function updateCmd() {

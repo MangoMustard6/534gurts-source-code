@@ -168,7 +168,38 @@ function numOrExpr(val, fallback) {
   return v;                           // expression string → return as-is
 }
 
-// Intermediate step: re-encodes to mkv for lossless-ish quality between steps
+const QUALITY_PROFILES = {
+  high: {
+    crf: 18,
+    preset: 'slow',
+    audioBitrate: '256k',
+    webmCrf: 20,
+    opusBitrate: '192k',
+    jpegQ: 1,
+    webpQ: 95,
+  },
+  maximum: {
+    crf: 16,
+    preset: 'slower',
+    audioBitrate: '320k',
+    webmCrf: 18,
+    opusBitrate: '256k',
+    jpegQ: 1,
+    webpQ: 100,
+  },
+};
+
+function qualityProfile(value) {
+  return QUALITY_PROFILES[String(value || 'high').toLowerCase()] || QUALITY_PROFILES.high;
+}
+
+function h264QualityArgs(quality) {
+  const q = qualityProfile(quality);
+  return ['-c:v', 'libx264', '-preset', q.preset, '-crf', String(q.crf)];
+}
+
+// Intermediate step: keep video visually near-lossless and audio lossless
+// while effects are chained. The final export applies the selected profile.
 async function encodeStep(inPath, outPath, vf, af, isImage) {
   if (isImage) {
     const args = ['-y', '-i', inPath];
@@ -181,7 +212,7 @@ async function encodeStep(inPath, outPath, vf, af, isImage) {
   if (vf) args.push('-vf', vf);
   if (af) args.push('-af', af);
   args.push(
-    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '10',
+    '-c:v', 'libx264', '-preset', 'medium', '-crf', '10',
     '-c:a', 'pcm_s16le',
     '-max_muxing_queue_size', '1024',
     outPath,
@@ -189,7 +220,7 @@ async function encodeStep(inPath, outPath, vf, af, isImage) {
   await runFFmpeg(args);
 }
 
-async function encodeFinal(inPath, outPath, vf, af, isImage) {
+async function encodeFinal(inPath, outPath, vf, af, isImage, quality) {
   if (isImage) {
     const args = ['-y', '-i', inPath];
     if (vf) args.push('-vf', vf);
@@ -201,8 +232,8 @@ async function encodeFinal(inPath, outPath, vf, af, isImage) {
   if (vf) args.push('-vf', vf);
   if (af) args.push('-af', af);
   args.push(
-    '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-    '-c:a', 'aac', '-b:a', '128k',
+    ...h264QualityArgs(quality),
+    '-c:a', 'aac', '-b:a', qualityProfile(quality).audioBitrate,
     '-movflags', '+faststart',
     '-max_muxing_queue_size', '1024',
     '-pix_fmt', 'yuv420p',
@@ -215,12 +246,15 @@ async function encodeFinal(inPath, outPath, vf, af, isImage) {
 
 const FORMAT_MIME = {
   'mp4': 'video/mp4', 'webm': 'video/webm', 'mov': 'video/quicktime', 'mkv': 'video/x-matroska',
+  'mxf': 'application/mxf', 'avi': 'video/x-msvideo',
   'gif': 'image/gif', 'mp3': 'audio/mpeg', 'wav': 'audio/wav', 'flac': 'audio/flac',
   'ogg': 'audio/ogg', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 'webp': 'image/webp',
 };
+const SUPPORTED_FORMATS = new Set(Object.keys(FORMAT_MIME));
 
-async function exportTo(inPath, outPath, fmt, info, isImage) {
+async function exportTo(inPath, outPath, fmt, info, isImage, quality) {
   const fmtNorm = fmt.toLowerCase().replace(/^\./, '');
+  const q = qualityProfile(quality);
   const args = ['-y'];
   if (isImage) {
     args.push('-i', inPath, '-frames:v', '1');
@@ -230,22 +264,28 @@ async function exportTo(inPath, outPath, fmt, info, isImage) {
 
   switch (fmtNorm) {
     case 'mp4':
-      args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-pix_fmt', 'yuv420p', '-movflags', '+faststart');
+      args.push(...h264QualityArgs(quality), '-c:a', 'aac', '-b:a', q.audioBitrate, '-pix_fmt', 'yuv420p', '-movflags', '+faststart');
       break;
     case 'webm':
-      args.push('-c:v', 'libvpx-vp9', '-deadline', 'good', '-cpu-used', '4', '-b:v', '0', '-crf', '30', '-c:a', 'libopus', '-b:a', '128k', '-pix_fmt', 'yuv420p');
+      args.push('-c:v', 'libvpx-vp9', '-deadline', 'good', '-cpu-used', '2', '-b:v', '0', '-crf', String(q.webmCrf), '-c:a', 'libopus', '-b:a', q.opusBitrate, '-pix_fmt', 'yuv420p');
       break;
     case 'mov':
-      args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'aac', '-b:a', '128k', '-pix_fmt', 'yuv420p');
+      args.push(...h264QualityArgs(quality), '-c:a', 'aac', '-b:a', q.audioBitrate, '-pix_fmt', 'yuv420p');
       break;
     case 'mkv':
-      args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'flac', '-pix_fmt', 'yuv420p');
+      args.push(...h264QualityArgs(quality), '-c:a', 'flac', '-pix_fmt', 'yuv420p');
+      break;
+    case 'mxf':
+      args.push('-c:v', 'mpeg2video', '-qscale:v', '2', '-c:a', 'pcm_s16le', '-ar', '48000', '-pix_fmt', 'yuv420p');
+      break;
+    case 'avi':
+      args.push('-c:v', 'mpeg4', '-q:v', '2', '-c:a', 'pcm_s16le', '-ar', '48000', '-pix_fmt', 'yuv420p');
       break;
     case 'gif':
-      args.push('-vf', 'split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse', '-loop', '0');
+      args.push('-vf', 'split[s0][s1];[s0]palettegen=max_colors=256:stats_mode=full[p];[s1][p]paletteuse=dither=sierra2_4a', '-loop', '0');
       break;
     case 'mp3':
-      args.push('-vn', '-c:a', 'libmp3lame', '-b:a', '192k');
+      args.push('-vn', '-c:a', 'libmp3lame', '-b:a', q.audioBitrate);
       break;
     case 'wav':
       args.push('-vn', '-c:a', 'pcm_s16le');
@@ -254,19 +294,19 @@ async function exportTo(inPath, outPath, fmt, info, isImage) {
       args.push('-vn', '-c:a', 'flac');
       break;
     case 'ogg':
-      args.push('-vn', '-c:a', 'libopus', '-b:a', '128k');
+      args.push('-vn', '-c:a', 'libopus', '-b:a', q.opusBitrate);
       break;
     case 'jpg': case 'jpeg':
-      args.push('-q:v', '2', '-pix_fmt', 'yuvj420p');
+      args.push('-q:v', String(q.jpegQ), '-pix_fmt', 'yuvj420p');
       break;
     case 'png':
       args.push('-compression_level', '3');
       break;
     case 'webp':
-      args.push('-q:v', '85');
+      args.push('-q:v', String(q.webpQ));
       break;
     default:
-      args.push('-c:a', 'aac', '-b:a', '128k', '-c:v', 'libx264', '-crf', '23', '-pix_fmt', 'yuv420p');
+      args.push(...h264QualityArgs(quality), '-c:a', 'aac', '-b:a', q.audioBitrate, '-pix_fmt', 'yuv420p');
   }
 
   args.push(outPath);
@@ -275,7 +315,7 @@ async function exportTo(inPath, outPath, fmt, info, isImage) {
 
 // ─── Duration / repetitions / trim helper ─────────────────────────────────────
 
-async function applyPostEffects(inPath, outPath, { reps, duration, noTrim, format }, info, tmpDir) {
+async function applyPostEffects(inPath, outPath, { reps, duration, noTrim, format, quality }, info, tmpDir) {
   const isAudioOnly = ['mp3', 'wav', 'flac', 'ogg'].includes(format);
   const isImageFmt  = ['jpg', 'jpeg', 'png', 'webp'].includes(format);
   const isImageInput = !info.hasVideo && !info.hasAudio && /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(inPath);
@@ -296,7 +336,7 @@ async function applyPostEffects(inPath, outPath, { reps, duration, noTrim, forma
       // Need to trim or loop; use stream_loop for loop-friendly media and -t target
       if (isVideo) {
         await runFFmpeg(['-y', '-stream_loop', '-1', '-i', current, '-t', String(target),
-          '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'aac', '-b:a', '128k',
+          ...h264QualityArgs(quality), '-c:a', 'aac', '-b:a', qualityProfile(quality).audioBitrate,
           '-pix_fmt', 'yuv420p', outDur]);
       } else if (isImage) {
         // For images, just re-encode to the chosen format; duration irrelevant
@@ -332,14 +372,14 @@ async function applyPostEffects(inPath, outPath, { reps, duration, noTrim, forma
     for (let i = 0; i < reps; i++) list.push(`file '${current.replace(/'/g, "'\\''")}'`);
     await fsp.writeFile(listFile, list.join('\n'));
     await runFFmpeg(['-y', '-f', 'concat', '-safe', '0', '-i', listFile,
-      '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-      '-c:a', 'aac', '-b:a', '128k', '-pix_fmt', 'yuv420p', outRep]);
+      ...h264QualityArgs(quality),
+      '-c:a', 'aac', '-b:a', qualityProfile(quality).audioBitrate, '-pix_fmt', 'yuv420p', outRep]);
     await fsp.unlink(listFile).catch(() => {});
     current = outRep;
   }
 
   // 3) Final export to requested format
-  await exportTo(current, outPath, format, info, isImage);
+  await exportTo(current, outPath, format, info, isImage, quality);
   return { isImage, isAudioOnly, isVideo };
 }
 
@@ -1026,7 +1066,7 @@ function splitPipeSegments(pipe) {
   return parts;
 }
 
-async function applyPipeline(inputPath, finalOutPath, pipeStr, tmpDir, isImage) {
+async function applyPipeline(inputPath, finalOutPath, pipeStr, tmpDir, isImage, quality) {
   const parts = splitPipeSegments(pipeStr).filter(Boolean);
   if (!parts.length) throw new Error('No effects specified');
 
@@ -1047,7 +1087,7 @@ async function applyPipeline(inputPath, finalOutPath, pipeStr, tmpDir, isImage) 
     const out = isFinal ? finalOutPath : tmpPath(`batch_${stepN}`, midExt);
     const vf  = pendingVf.length ? pendingVf.join(',') : null;
     const af  = pendingAf.length ? pendingAf.join(',') : null;
-    if (isFinal) await encodeFinal(current, out, vf, af, isImage);
+    if (isFinal) await encodeFinal(current, out, vf, af, isImage, quality);
     else         await encodeStep(current, out, vf, af, isImage);
     current   = out;
     pendingVf = []; pendingAf = [];
@@ -1093,9 +1133,9 @@ async function applyPipeline(inputPath, finalOutPath, pipeStr, tmpDir, isImage) 
       const fcArgs = ['-y', '-i', current, '-filter_complex', resolved.fc];
       for (const m of (resolved.maps || [])) fcArgs.push('-map', m);
       if (!isImage) {
-        fcArgs.push('-c:v','libx264','-preset', isLast ? 'fast' : 'ultrafast',
-          '-crf', isLast ? '23' : '10',
-          '-c:a','aac','-pix_fmt','yuv420p');
+        fcArgs.push('-c:v','libx264','-preset', isLast ? qualityProfile(quality).preset : 'medium',
+          '-crf', isLast ? String(qualityProfile(quality).crf) : '10',
+          '-c:a','aac','-b:a',qualityProfile(quality).audioBitrate,'-pix_fmt','yuv420p');
       } else {
         fcArgs.push('-frames:v','1','-q:v','2');
       }
@@ -1179,6 +1219,9 @@ async function handleProcess(req, res) {
     const duration = (fields.duration || '').trim();
     const noTrim   = fields.noTrim === '1' || fields.noTrim === 'true';
     const format   = (fields.format || 'mp4').toLowerCase().replace(/^\./, '');
+    const quality  = String(fields.quality || 'high').toLowerCase();
+    if (!QUALITY_PROFILES[quality]) throw new Error('Unknown quality profile. Choose high or maximum.');
+    if (!SUPPORTED_FORMATS.has(format)) throw new Error(`Unsupported output format: ${format}`);
 
     const ext     = path.extname(fe.filename).toLowerCase() || '.mp4';
     const isImage = /^image\//.test(fe.type) || ['.jpg','.jpeg','.png','.gif','.webp','.bmp'].includes(ext);
@@ -1188,9 +1231,9 @@ async function handleProcess(req, res) {
     await fsp.writeFile(inPath, fe.data);
 
     const info = await ffprobeInfo(inPath);
-    const unsupported = await applyPipeline(inPath, stagePath, pipeStr, tmpDir, isImage);
+    const unsupported = await applyPipeline(inPath, stagePath, pipeStr, tmpDir, isImage, quality);
     const { isImage: finalIsImage, isAudioOnly } = await applyPostEffects(stagePath, finalPath,
-      { reps, duration, noTrim, format }, info, tmpDir);
+      { reps, duration, noTrim, format, quality }, info, tmpDir);
 
     const outData = await fsp.readFile(finalPath);
     const outMime = FORMAT_MIME[format] || (finalIsImage ? 'image/jpeg' : isAudioOnly ? 'audio/mpeg' : 'video/mp4');
