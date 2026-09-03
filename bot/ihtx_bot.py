@@ -8,6 +8,8 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-09-03: [Python] Fixed owner th>ihtx `ffmpeg(...)` Bash substitutions so quoted `$()`/backtick filter payloads keep commas intact and execute through Bash.
+- 2026-09-02: [Python] Added owner-only th>ihtx Bash/Python worker attachments with FILE_1/OUTPUT_FILE context and dynamic-prefix bothelp rendering.
 - 2026-09-02: [Python/Visualizer] Raised IHTX pipe/export quality defaults, added maximum-quality visualizer exports, and exposed pasted pipe-effect strings plus AVI/MXF output choices.
 - 2026-08-31: [Python] Updated restart notices to announce recent changes and attach IHTX comeback artwork; removed multipitch audio timestamp cleanup and kept custom pitch video preview-compatible.
 - 2026-08-30: [Python] Kept custom pitch/raw audio jobs lossless with PCM/FFV1 intermediates and removed audio timestamp filters from their export trim and concat paths.
@@ -829,7 +831,7 @@ if _BOT_CONFIG_PATH.exists():
 _BOT_PREFIX = _bot_config.get("bot_prefix") or _bot_config.get("BOT_PREFIX") or "th>"
 if not isinstance(_BOT_PREFIX, str) or not _BOT_PREFIX:
     print(f"Warning: invalid bot_prefix ({_BOT_PREFIX!r}), falling back to 'th>'")
-    _BOT_PREFIX = "th/"
+    _BOT_PREFIX = "th>"
 
 # Intents and bot
 intents = discord.Intents.default()
@@ -1271,6 +1273,43 @@ def _run_ffmpeg_raw(cmd: list[str], timeout: int = 180) -> tuple[bool, str]:
         return False, f"FFmpeg timed out (>{timeout}s)"
     except Exception as e:
         return False, str(e)
+
+
+def _run_ffmpeg_shell_pipe(
+    current: str,
+    raw_args: str,
+    extra_args: list[str],
+    output: str,
+    timeout: int,
+) -> tuple[bool, str]:
+    """Run an owner-approved raw FFmpeg step through Bash.
+
+    The regular raw pipe path intentionally uses argv execution, which treats
+    ``$(...)`` and backticks as literal filter text. IHTX's imported scripts
+    use those constructs to generate LUT filenames, so this path provides the
+    same Bash semantics while still quoting bot-controlled paths/options.
+    """
+    command = (
+        "set -o pipefail\n"
+        "ffmpeg() { command ffmpeg -hide_banner -loglevel error -y \"$@\"; }\n"
+        f"ffmpeg -i {shlex.quote(current)} {raw_args} "
+        f"{shlex.join(extra_args)} {shlex.quote(output)}\n"
+    )
+    try:
+        result = subprocess.run(
+            ["bash", "-lc", command],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=os.path.dirname(output) or None,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"FFmpeg Bash step timed out (>{timeout}s)"
+    except Exception as exc:
+        return False, str(exc)
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout)[-2000:]
+    return True, ""
 
 
 def _frei0r_mirr0r_available() -> bool:
@@ -4310,6 +4349,7 @@ def _apply_pipe_effects(
     _in_split: bool = False,
     step_timeout: int = 180,
     lossless_audio: bool = False,
+    allow_bash_functions: bool = False,
 ) -> tuple[bool, str]:
     """Apply pipe effects sequentially — each effect is rendered individually
     before the next begins (no filter batching).
@@ -4623,6 +4663,12 @@ def _apply_pipe_effects(
                     return False, "ffmpeg() pipe step requires args inside the parentheses."
                 # Substitute $fc/$vd/$d/$sr/$fr/$f/$w/$h before tokenising.
                 raw_args = _preprocess_math_expr(raw_args, frame_count, media_vars)
+                uses_shell = "$(" in raw_args or "`" in raw_args
+                if uses_shell and not allow_bash_functions:
+                    return False, (
+                        "ffmpeg() Bash substitutions are restricted to the bot owner. "
+                        "Use a named pipe effect or an owner account."
+                    )
                 try:
                     user_args = shlex.split(raw_args)
                 except ValueError as e:
@@ -4675,7 +4721,16 @@ def _apply_pipe_effects(
                     "ffmpeg", "-loglevel", "error", "-hide_banner", "-y",
                     "-i", current,
                 ] + user_args + auto_video_map + audio_map + [raw_out]
-                ok, err = _run_ffmpeg_raw(cmd, timeout=step_timeout)
+                if uses_shell:
+                    ok, err = _run_ffmpeg_shell_pipe(
+                        current,
+                        raw_args,
+                        auto_video_map + audio_map,
+                        raw_out,
+                        step_timeout,
+                    )
+                else:
+                    ok, err = _run_ffmpeg_raw(cmd, timeout=step_timeout)
                 if not ok:
                     return False, f"ffmpeg() pipe step failed: {err}"
                 current = raw_out
@@ -5658,7 +5713,13 @@ def _apply_pipe_effects(
                     if not ok:
                         return False, f"leftsplit: crop left failed: {err}"
                     # Step 2: Apply inner effects to left half
-                    ok, err = _apply_pipe_effects(left_raw, left_fx, inner_effects, _in_split=True)
+                    ok, err = _apply_pipe_effects(
+                        left_raw,
+                        left_fx,
+                        inner_effects,
+                        _in_split=True,
+                        allow_bash_functions=allow_bash_functions,
+                    )
                     if not ok:
                         return False, f"leftsplit: inner effects failed: {err}"
                     # Step 3: hstack left_fx (unchanged) + hflip(left_fx) to create mirror.
@@ -5727,7 +5788,13 @@ def _apply_pipe_effects(
                     if not ok:
                         return False, f"rightsplit: crop right failed: {err}"
                     # Step 3: Apply inner effects to right half
-                    ok, err = _apply_pipe_effects(right_raw, right_fx, inner_effects, _in_split=True)
+                    ok, err = _apply_pipe_effects(
+                        right_raw,
+                        right_fx,
+                        inner_effects,
+                        _in_split=True,
+                        allow_bash_functions=allow_bash_functions,
+                    )
                     if not ok:
                         return False, f"rightsplit: inner effects failed: {err}"
                     # Step 4: hstack left + right(affected)
@@ -6194,6 +6261,7 @@ def _run_ihtx_tagscript_workflow(
     pipe_effects_str: str,
     progress_callback=None,
     pipe_code_trace: list[str] | None = None,
+    allow_bash_functions: bool = False,
 ) -> tuple[bool, str]:
     """Run custom IHTX using the TagScript-style shell workflow with pipe effects.
 
@@ -6350,6 +6418,7 @@ def _run_ihtx_tagscript_workflow(
                     effects,
                     step_timeout=_per_rep_timeout,
                     lossless_audio=clean_audio_mode,
+                    allow_bash_functions=allow_bash_functions,
                 )
             finally:
                 _pass_trace = _PIPE_CODE_TRACE.get() or []
@@ -14555,6 +14624,17 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "heavy",
+        "name": "th/ihtx + Bash/Python worker (.txt)",
+        "value": (
+            "Owner-only script mode. Attach a video and a `.txt`, `.sh`, `.bash`, or `.py` worker; "
+            "the worker receives the video path in `FILE_1` and may write to `OUTPUT_FILE` or `./output/`.\n"
+            "**No FFmpeg code is required in the command:** `th/ihtx` or "
+            "`th/ihtx 1 5 - mp4 mp4`\n"
+            "Bash functions are supported. Python workers such as ICF+ are detected automatically."
+        ),
+    },
+    {
+        "cat": "heavy",
         "name": "Pipe effects (comma-separated)",
         "value": (
             "**Video:** `hflip` `vflip` `negate` `grayscale` `sepia` `rotate=<deg>` "
@@ -15225,10 +15305,15 @@ def _build_help_embed(
 
     embed = discord.Embed(title=title, color=color)
     for entry in page_entries:
-        copyable_value = f"`{entry['name']}`\n{entry['value']}"
+        # Help text is authored with the historical `th/` spelling, while the
+        # live bot prefix is configurable (the current deployment uses `th>`).
+        # Render the configured prefix so bothelp examples can be copied.
+        help_name = entry["name"].replace("th/", _BOT_PREFIX)
+        help_value = entry["value"].replace("th/", _BOT_PREFIX)
+        copyable_value = f"`{help_name}`\n{help_value}"
         if len(copyable_value) > 1024:
             copyable_value = copyable_value[:1020] + "…"
-        embed.add_field(name=entry["name"], value=copyable_value, inline=False)
+        embed.add_field(name=help_name, value=copyable_value, inline=False)
 
     # ── Preview image ─────────────────────────────────────────────────────────
     # When browsing (1 entry per page), attach the effect's preview image.
@@ -15258,7 +15343,7 @@ def _build_home_embed() -> discord.Embed:
     counts = {c: sum(1 for e in _HELP_ENTRIES if e["cat"] == c) for c in _HELP_CATS}
     embed = discord.Embed(
         title="IHTX Bot — Help",
-        description="Pick a category from the dropdown below, or run `th/ihtxhelp <query>` to search all commands.",
+        description=f"Pick a category from the dropdown below, or run `{_BOT_PREFIX}ihtxhelp <query>` to search all commands.",
         color=0x40E0D0,
     )
     embed.add_field(
@@ -19961,15 +20046,15 @@ def _clip_discord_text(text: str, limit: int = 1900) -> str:
 @bot.event
 async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.CommandNotFound):
-        await ctx.reply("❓ Unknown command. Use `th/bothelp` to see all available commands.")
+        await ctx.reply(f"❓ Unknown command. Use `{_BOT_PREFIX}bothelp` to see all available commands.")
         return
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.reply(f"❌ Missing argument: `{error.param.name}`. Use `th/ihtxhelp` for usage.")
+        await ctx.reply(f"❌ Missing argument: `{error.param.name}`. Use `{_BOT_PREFIX}ihtxhelp` for usage.")
         return
     if isinstance(error, commands.CheckFailure):
         return
     if isinstance(error, commands.BadArgument):
-        await ctx.reply(f"❌ Bad argument: {error}\nUse `th/ihtxhelp` for correct usage.")
+        await ctx.reply(f"❌ Bad argument: {error}\nUse `{_BOT_PREFIX}ihtxhelp` for correct usage.")
         return
     if isinstance(error, commands.CommandInvokeError):
         original = error.original

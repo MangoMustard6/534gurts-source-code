@@ -17,6 +17,7 @@ import math
 import os
 import random
 import re
+import shlex
 import shutil
 import tempfile
 import time
@@ -33,6 +34,9 @@ from discord.ext import commands
 _PENDING_IHTX_FILE = Path("output/pending_ihtx_jobs.json")
 _IHTX_BINARY_NAMES = {"multipitch", "fileaa", "fileaa_seg"}
 _IHTX_ASSET_EXTENSIONS = {".cube", ".bin"}
+_IHTX_SCRIPT_EXTENSIONS = {".txt", ".sh", ".bash", ".py"}
+_IHTX_SCRIPT_MAX_BYTES = 512 * 1024
+_IHTX_SCRIPT_OUTPUT_FORMATS = {"mp4", "mov", "mkv", "mxf", "avi", "webm"}
 
 
 def _is_ihtx_media_attachment(
@@ -55,6 +59,59 @@ def _is_ihtx_asset_attachment(
         or filename in _IHTX_BINARY_NAMES
         or stem in _IHTX_BINARY_NAMES
     )
+
+
+def _is_ihtx_script_attachment(attachment: discord.Attachment) -> bool:
+    """Return whether an attachment is an IHTX worker script."""
+    return Path(attachment.filename).suffix.lower() in _IHTX_SCRIPT_EXTENSIONS
+
+
+def _parse_ihtx_script_options(raw_args: str) -> tuple[str, str, str, str, str, list[str]] | None:
+    """Parse optional script-mode settings without requiring FFmpeg code.
+
+    Syntax:
+      th>ihtx [exports duration no_trim export_format output_format] [script args...]
+
+    With no settings, the worker receives a single empty argument. This keeps
+    older workers that check for ``len(args) > 5`` compatible while leaving
+    their FFmpeg-code argument empty.
+    """
+    tokens = shlex.split(raw_args) if raw_args.strip() else []
+    if tokens and tokens[0].lower() in {"bash", "script", "worker"}:
+        tokens = tokens[1:]
+    defaults = ("1", "vidlen", "-", "mp4", "mp4")
+    if not tokens:
+        return (*defaults, [""])
+    if len(tokens) < 5:
+        return None
+    try:
+        exports = int(tokens[0])
+    except ValueError:
+        return None
+    if exports == 0:
+        return None
+    no_trim = tokens[2].lower()
+    if no_trim not in {"true", "yes", "+", "1", "false", "no", "-", "0"}:
+        return None
+    export_fmt = tokens[3].lstrip(".").lower() or "mp4"
+    output_fmt = tokens[4].lstrip(".").lower() or export_fmt
+    if export_fmt not in _IHTX_SCRIPT_OUTPUT_FORMATS or output_fmt not in _IHTX_SCRIPT_OUTPUT_FORMATS:
+        return None
+    script_args = tokens[5:] or [""]
+    return (str(exports), tokens[1], no_trim, export_fmt, output_fmt, script_args)
+
+
+def _script_interpreter(script_text: str, filename: str) -> tuple[str, str]:
+    """Choose Python for the supplied ICF+ worker and Bash for shell scripts."""
+    first_line = script_text.lstrip().splitlines()[0] if script_text.strip() else ""
+    suffix = Path(filename).suffix.lower()
+    if (
+        "python" in first_line.lower()
+        or suffix == ".py"
+        or re.search(r"(?m)^\s*(?:import|from)\s+[A-Za-z_]", script_text)
+    ):
+        return "python3", "Python"
+    return "bash", "Bash"
 
 
 def _replace_ihtx_asset_references(
@@ -597,6 +654,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                 _parse_ihtx_custom_args,
                 _last_exports,
                 _clip_discord_text,
+                _is_owner_by_id,
             )
         except ImportError as exc:
             await ctx.reply(f"❌ Internal error importing IHTX pipeline: `{exc}`", ephemeral=True)
@@ -999,6 +1057,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                             pipe_effects,
                             _on_progress,
                             _pipe_code_trace,
+                            _is_owner_by_id(ctx.author.id),
                         ),
                         multipitch_binary_path,
                     )
@@ -1182,6 +1241,236 @@ class EconomyCog(commands.Cog, name="Economy"):
                         await ctx.send(f"🎬 MP4 render: {_cb2}")
             await _send_pipe_code()
 
+    async def _run_ihtx_script(
+        self,
+        ctx: commands.Context,
+        raw_args: str,
+        script_attachment: discord.Attachment,
+    ) -> None:
+        """Run an owner-provided Bash/Python worker attached to th>ihtx.
+
+        The worker receives the media path through FILE_1 and can write its
+        result to OUTPUT_FILE or ./output/. No FFmpeg expression is required
+        in the Discord command; script arguments after the five media options
+        are passed to the worker unchanged.
+        """
+        from bot.ihtx_bot import (
+            CATBOX_THRESHOLD,
+            MAX_FILE_SIZE,
+            SUPPORTED_EXTENSIONS,
+            VIDEO_EXTENSIONS,
+            _ffprobe_duration,
+            _is_owner_by_id,
+            _upload_to_catbox,
+        )
+
+        if not _is_owner_by_id(ctx.author.id):
+            await ctx.reply("❌ Attached IHTX scripts are restricted to the configured bot owner.")
+            return
+
+        options = _parse_ihtx_script_options(raw_args)
+        prefix = "th>"
+        try:
+            from bot.ihtx_bot import _BOT_PREFIX
+            prefix = _BOT_PREFIX
+        except Exception:
+            pass
+        if options is None:
+            await ctx.reply(
+                f"❌ Script mode usage: `{prefix}ihtx [exports duration no_trim export_format output_format]` "
+                "with a media file and `.txt`/`.sh` worker attached."
+            )
+            return
+        exports, duration, no_trim, export_fmt, output_fmt, worker_args = options
+
+        current_attachments = list(ctx.message.attachments) if ctx.message else []
+        media_attachment = next(
+            (
+                attachment for attachment in current_attachments
+                if attachment is not script_attachment
+                and Path(attachment.filename).suffix.lower() in SUPPORTED_EXTENSIONS
+            ),
+            None,
+        )
+        if media_attachment is None and ctx.message and ctx.message.reference:
+            try:
+                referenced = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+                media_attachment = next(
+                    (
+                        attachment for attachment in referenced.attachments
+                        if Path(attachment.filename).suffix.lower() in SUPPORTED_EXTENSIONS
+                    ),
+                    None,
+                )
+            except Exception:
+                media_attachment = None
+        if media_attachment is None:
+            await ctx.reply(
+                f"❌ Attach a video alongside `{script_attachment.filename}`, "
+                "or reply to a video with the script attached."
+            )
+            return
+
+        media_suffix = Path(media_attachment.filename).suffix.lower()
+        if media_attachment.size > MAX_FILE_SIZE:
+            await ctx.reply("❌ The media file exceeds the 25 MB limit.")
+            return
+        if script_attachment.size > _IHTX_SCRIPT_MAX_BYTES:
+            await ctx.reply("❌ The worker script exceeds the 512 KB limit.")
+            return
+        if media_suffix not in VIDEO_EXTENSIONS:
+            await ctx.reply("❌ Script mode requires a video input.")
+            return
+
+        status_msg = await ctx.reply(
+            f"⏳ Running `{script_attachment.filename}` with `{media_attachment.filename}`…",
+            mention_author=False,
+        )
+        try:
+            import aiohttp
+
+            with tempfile.TemporaryDirectory(prefix="ihtx-script-") as tmpdir:
+                script_path = os.path.join(tmpdir, Path(script_attachment.filename).name)
+                input_path = os.path.join(tmpdir, f"input{media_suffix}")
+                output_dir = os.path.join(tmpdir, "output")
+                os.makedirs(output_dir, exist_ok=True)
+
+                timeout = aiohttp.ClientTimeout(total=90)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(
+                        script_attachment.proxy_url or script_attachment.url
+                    ) as response:
+                        if response.status != 200:
+                            await status_msg.edit(
+                                content=f"❌ Could not download the worker (HTTP {response.status})."
+                            )
+                            return
+                        script_data = await response.read()
+                    if len(script_data) > _IHTX_SCRIPT_MAX_BYTES:
+                        await status_msg.edit(content="❌ The worker script exceeds the 512 KB limit.")
+                        return
+                    with open(script_path, "wb") as script_file:
+                        script_file.write(script_data)
+
+                    async with session.get(
+                        media_attachment.proxy_url or media_attachment.url
+                    ) as response:
+                        if response.status != 200:
+                            await status_msg.edit(
+                                content=f"❌ Could not download the media (HTTP {response.status})."
+                            )
+                            return
+                        media_data = await response.read()
+                    if len(media_data) > MAX_FILE_SIZE:
+                        await status_msg.edit(content="❌ The media file exceeds the 25 MB limit.")
+                        return
+                    with open(input_path, "wb") as media_file:
+                        media_file.write(media_data)
+
+                if duration.lower() in {"vidlen", "full", "auto"}:
+                    duration_value = _ffprobe_duration(input_path)
+                    if duration_value <= 0:
+                        await status_msg.edit(content="❌ Could not determine the input video duration.")
+                        return
+                    duration = f"{duration_value:.6f}"
+
+                script_text = script_data.decode("utf-8", errors="replace")
+                interpreter, interpreter_name = _script_interpreter(
+                    script_text, script_attachment.filename
+                )
+                output_file = os.path.join(output_dir, f"ihtx_script_output.{output_fmt}")
+                env = os.environ.copy()
+                env.update({
+                    "FILE_1": input_path,
+                    "INPUT_FILE": input_path,
+                    "OUTPUT_DIR": output_dir,
+                    "OUTPUT_FILE": output_file,
+                    "IHTX_EXPORTS": exports,
+                    "IHTX_DURATION": duration,
+                    "IHTX_NO_TRIM": no_trim,
+                    "IHTX_EXPORT_FORMAT": export_fmt,
+                    "IHTX_OUTPUT_FORMAT": output_fmt,
+                })
+
+                process = await asyncio.create_subprocess_exec(
+                    interpreter,
+                    script_path,
+                    *[exports, duration, no_trim, export_fmt, output_fmt, *worker_args],
+                    cwd=tmpdir,
+                    env=env,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                try:
+                    stdout, _ = await asyncio.wait_for(process.communicate(), timeout=300)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.communicate()
+                    await status_msg.edit(content="❌ Worker timed out after 300 seconds.")
+                    return
+
+                worker_output = stdout.decode("utf-8", errors="replace").strip()
+                if process.returncode != 0:
+                    detail = worker_output[-1200:] or "worker exited without diagnostics"
+                    await status_msg.edit(content=f"❌ {interpreter_name} worker failed:\n```text\n{detail}\n```")
+                    return
+
+                output_candidates = [
+                    path for path in Path(tmpdir).rglob("*")
+                    if path.is_file()
+                    and path != Path(script_path)
+                    and path != Path(input_path)
+                    and path.suffix.lower().lstrip(".") in _IHTX_SCRIPT_OUTPUT_FORMATS
+                    and path.stat().st_size > 0
+                ]
+                if not output_candidates:
+                    detail = worker_output[-1200:] or "no output file was found"
+                    await status_msg.edit(
+                        content=f"❌ Worker completed but produced no media output.\n```text\n{detail}\n```"
+                    )
+                    return
+                output_path = str(max(output_candidates, key=lambda path: path.stat().st_mtime))
+                output_suffix = Path(output_path).suffix.lower()
+                output_size = os.path.getsize(output_path)
+                output_name = f"534gurts_ihtx_script{output_suffix}"
+
+                if output_size > CATBOX_THRESHOLD:
+                    catbox_url = await _upload_to_catbox(output_path)
+                    if not catbox_url:
+                        await status_msg.edit(content="❌ Output was too large and Catbox upload failed.")
+                        return
+                    result = discord.Embed(
+                        title="✅ IHTX script completed",
+                        description=f"`{script_attachment.filename}` · `{interpreter_name}` worker",
+                        color=0x40E0D0,
+                    )
+                    result.add_field(name="Output", value=f"{output_size / 1024 / 1024:.2f} MB\n[Download]({catbox_url})")
+                    await status_msg.edit(content=None, embed=result)
+                    return
+
+                result = discord.Embed(
+                    title="✅ IHTX script completed",
+                    description=f"`{script_attachment.filename}` · `{interpreter_name}` worker",
+                    color=0x40E0D0,
+                )
+                result.add_field(
+                    name="Input",
+                    value=f"`{media_attachment.filename}` · `{duration}s` · `{output_fmt}`",
+                    inline=False,
+                )
+                result.add_field(
+                    name="Output",
+                    value=f"{output_size / 1024:.1f} KB",
+                    inline=False,
+                )
+                await status_msg.edit(
+                    content=None,
+                    embed=result,
+                    attachments=[discord.File(output_path, filename=output_name)],
+                )
+        except Exception as exc:
+            await status_msg.edit(content=f"❌ Script execution failed: `{str(exc)[:900]}`")
+
     # -----------------------------------------------------------------------
     # roxi ihtx / roxi effect / roxi destroy — prefix-only alias that consumes the
     # full rest of the message as one string, avoiding discord.py's per-token
@@ -1203,6 +1492,16 @@ class EconomyCog(commands.Cog, name="Economy"):
         if recoverable:
             _remember_ihtx_job(message_id, channel_id, author_id)
         try:
+            script_attachment = next(
+                (
+                    attachment for attachment in (ctx.message.attachments if ctx.message else [])
+                    if _is_ihtx_script_attachment(attachment)
+                ),
+                None,
+            )
+            if script_attachment is not None:
+                await self._run_ihtx_script(ctx, args, script_attachment)
+                return
             try:
                 from bot.ihtx_bot import _parse_ihtx_custom_args, PRESET_FILTERS
             except ImportError as exc:

@@ -1,0 +1,160 @@
+import os
+import sys
+import json
+import time
+import uuid
+import glob
+import subprocess
+
+# --- Helper Functions ---
+def run_command(cmd, shell=True, capture_output=True, text=True):
+    """Executes a command (allowing full bash pipelines and subshells)."""
+    return subprocess.run(
+        cmd,
+        shell=shell,
+        capture_output=capture_output,
+        text=text,
+        executable="/bin/bash"
+    )
+
+def get_ffprobe_val(cmd):
+    """Utility to run an ffprobe string and return clean output or 0."""
+    res = run_command(cmd)
+    return res.stdout.strip() if res.returncode == 0 else "0"
+
+# --- Context & Argument Parsing ---
+# Arguments array simulating TagScript inputs: args = sys.argv[1:]
+args = sys.argv[1:]
+
+# Minimum required args: exports, duration, no_trim, export_format, output_format, ...code
+if len(args) <= 5:
+    sys.exit(0)
+
+start_time = time.time()
+req_uuid = str(uuid.uuid4())
+
+# Parse Parameters
+exports = int(args[0])
+abs_exports = abs(exports)
+duration = float(args[1])
+no_trim_arg = str(args[2]).lower()
+is_no_trim = no_trim_arg in ["true", "yes", "+", "1"]
+
+input_file = os.environ.get("FILE_1", "input.mp4")
+
+# Format Detection
+orig_ext = os.path.splitext(input_file)[1].lstrip(".") or "mp4"
+export_fmt = orig_ext if args[3] == "default" else args[3]
+output_fmt = orig_ext if args[4] == "default" else args[4]
+
+# Custom Filter / Bash Subshell String (e.g. -vf "movie=$(magick...),[in]haldclut")
+ffmpeg_custom_code = " ".join(args[5:])
+
+log_file = f"err_{req_uuid[:8]}.log"
+os.makedirs("./output", exist_ok=True)
+output_path = f"./output/icfplus_{req_uuid}.{output_fmt}"
+
+# --- Setup Media File (0.mov) ---
+setup_cmd = (
+    f"ffmpeg -loglevel error -hide_banner -y -stream_loop -1 -i \"{input_file}\" "
+    f"-c:v utvideo -c:a alac -t {duration} -threads 0 -movflags +faststart 0.mov"
+)
+run_command(setup_cmd)
+
+# Gather Input Metadata
+sr = get_ffprobe_val("ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate -of default=nokey=1:noprint_wrappers=1 0.mov")
+fr = get_ffprobe_val("ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=nokey=1:noprint_wrappers=1 0.mov")
+w = get_ffprobe_val("ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 0.mov")
+h = get_ffprobe_val("ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 0.mov")
+
+# --- Render Exports ---
+# Executing through bash allows dynamic inline commands like $(magick ...) or echo ...
+for i in range(1, abs_exports + 1):
+    prev_file = "0.mov" if i == 1 else f"{i - 1}.{export_fmt}"
+    current_out = f"{i}.{export_fmt}"
+    
+    trim_flag = "" if is_no_trim else f"-stream_loop 1 -t {duration}"
+    redirect = f"2> {log_file}" if i == 1 else "2>/dev/null"
+    
+    cmd = f"ffmpeg -loglevel error -hide_banner -y {trim_flag} -i \"{prev_file}\" {ffmpeg_custom_code} -movflags +faststart \"{current_out}\" {redirect}"
+    run_command(cmd)
+
+# --- Generate Concat List ---
+export_range = range(abs_exports, 0, -1) if exports < 0 else range(1, abs_exports + 1)
+concat_list_path = f"concat_{req_uuid}.txt"
+
+with open(concat_list_path, "w") as f:
+    for i in export_range:
+        f.write(f"file '{i}.{export_fmt}'\n")
+
+# --- Final Render Pass ---
+format_codecs = {
+    "mkv": "-c:v mpeg2video -q:v 1 -c:a flac -pix_fmt yuv420p -bufsize 16M",
+    "mxf": "-c:v mpeg2video -qscale 1 -qmin 1 -c:a pcm_s16le -ar 48000 -pix_fmt yuv420p -bufsize 16M",
+    "mov": "-c:v libx264 -profile:v high -level:v 5 -tune film -q:v 1 -crf 30 -g 9 -bf 0 -preset superfast -c:a aac -b:a 256K -pix_fmt yuv420p -bufsize 16M",
+    "mp4": "-c:v libx264 -profile:v high -level:v 5 -tune film -q:v 1 -crf 30 -g 9 -bf 0 -preset superfast -c:a aac -b:a 256K -pix_fmt yuv420p -bufsize 16M",
+    "avi": "-c:v mpeg2video -c:a flac -pix_fmt yuv420p",
+    "webm": "-pix_fmt yuv420p"
+}
+codec_params = format_codecs.get(output_fmt, "-pix_fmt yuv420p -bufsize 16M")
+
+concat_cmd = (
+    f"ffmpeg -loglevel error -hide_banner -y -f concat -safe 0 -i \"{concat_list_path}\" "
+    f"{codec_params} -movflags +faststart -threads 0 \"{output_path}\" 2>/dev/null"
+)
+run_command(concat_cmd)
+
+# --- Final Stats Evaluation ---
+end_time = time.time()
+execution_time = end_time - start_time
+
+if os.path.exists(output_path):
+    out_w = get_ffprobe_val(f"ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 \"{output_path}\"")
+    out_h = get_ffprobe_val(f"ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 \"{output_path}\"")
+    out_fr = get_ffprobe_val(f"ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=nokey=1:noprint_wrappers=1 \"{output_path}\"")
+    out_d = get_ffprobe_val(f"ffprobe -i \"{output_path}\" -show_entries format=duration -v quiet -of csv=\"p=0\"")
+    
+    # Calculate FPS string
+    if "/" in out_fr:
+        num, den = map(float, out_fr.split("/"))
+        fps_str = f"{num / den:.2f}" if den != 0 else "0"
+    else:
+        fps_str = out_fr
+
+    has_video = get_ffprobe_val(f"ffprobe -v error -select_streams v:0 -show_entries stream=index -of default=nokey=1:noprint_wrappers=1 \"{output_path}\"") == "0"
+    file_size = os.path.getsize(output_path)
+
+    # Format filesize
+    if file_size >= 1048576:
+        fs_str = f"{file_size / 1048576:.2f} MB"
+    else:
+        fs_str = f"{file_size / 1024:.2f} KB"
+
+    file_info = fs_str
+    if has_video:
+        file_info += f", {out_w}x{out_h}, {fps_str} fps"
+
+    # Response Construct (plaintext)
+    response_text = (
+        "IHTX Custom FFmpeg+\n"
+        "Reminder: Make sure you use `.t sync+` or `.t sync+ alt` afterwards to make sure the video is synced to the audio\n"
+        f"Exports: {exports}\n"
+        f"Export Length: {duration}s\n"
+        f"Total Length: {out_d}s\n"
+        f"No Trim?: {'Yes' if is_no_trim else 'No'}\n"
+        f"File Info: {file_info}\n"
+        f"Debug: Took {execution_time:.3f}s to execute"
+    )
+    print(response_text)
+else:
+    if os.path.exists(log_file):
+        with open(log_file, "r") as log:
+            sys.stderr.write(log.read())
+
+# --- Cleanup Temporary Artifacts ---
+for temp_file in glob.glob(f"*.{export_fmt}") + [concat_list_path, log_file, "0.mov"]:
+    if os.path.exists(temp_file):
+        try:
+            os.remove(temp_file)
+        except OSError:
+            pass
