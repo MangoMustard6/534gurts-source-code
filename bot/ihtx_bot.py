@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-09-03: [Python] Limited startup restart notices to exactly the two newest update-log changes instead of summarizing the full history.
 - 2026-09-03: [Python] Fixed owner th>ihtx `ffmpeg(...)` Bash substitutions so quoted `$()`/backtick filter payloads keep commas intact and execute through Bash.
 - 2026-09-02: [Python] Added owner-only th>ihtx Bash/Python worker attachments with FILE_1/OUTPUT_FILE context and dynamic-prefix bothelp rendering.
 - 2026-09-02: [Python/Visualizer] Raised IHTX pipe/export quality defaults, added maximum-quality visualizer exports, and exposed pasted pipe-effect strings plus AVI/MXF output choices.
@@ -8765,8 +8766,8 @@ _STARTUP_NOTICE_IMAGE_PATH = (
 _startup_notice_sent = False
 
 
-def _restart_change_summary(max_chars: int = 1700) -> str:
-    """Return a Discord-safe bullet list of recent update-log entries."""
+def _restart_change_summary(max_chars: int = 1700, max_entries: int = 2) -> str:
+    """Return only the newest update-log entries for the restart notice."""
     entries: list[str] = []
     for line in (__doc__ or "").splitlines():
         line = line.strip()
@@ -8777,17 +8778,12 @@ def _restart_change_summary(max_chars: int = 1700) -> str:
 
     bullets: list[str] = []
     used = 0
-    for entry in entries:
+    for entry in entries[:max_entries]:
         bullet = f"• {entry}"
         if used + len(bullet) + (1 if bullets else 0) > max_chars:
             break
         bullets.append(bullet)
         used += len(bullet) + (1 if len(bullets) > 1 else 0)
-    remaining = len(entries) - len(bullets)
-    if remaining:
-        more = f"• … and {remaining} more update(s)."
-        if used + len(more) + 1 <= max_chars:
-            bullets.append(more)
     return "\n".join(bullets) or "• Routine restart."
 
 
