@@ -4008,20 +4008,46 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
 
 # ── Pipe-effect inline helpers ───────────────────────────────────────────────
 
-# Named IHTX video-filter passes use high-quality x264/PCM settings.
-# Raw `ffmpeg(...)` passes below use FFV1/PCM because their video codec is
-# user-controlled and may be stream-copied into another raw pass.
-_VF_CODEC = ["-c:v", "libx264", "-preset", "medium", "-crf", "18",
-             "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le"]
+# Pipe effects can run many sequential FFmpeg passes. Keep non-final passes
+# lossless so a long chain does not repeatedly recompress the filtered image.
+_PIPE_LOSSLESS_CODEC = [
+    "-c:v", "ffv1", "-level", "3", "-coder", "1",
+    "-context", "1", "-g", "1", "-pix_fmt", "yuv420p",
+    "-c:a", "pcm_s16le",
+]
+_PIPE_FINAL_CODEC = [
+    "-c:v", "libx264", "-preset", "slow", "-crf", "16",
+    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "320k",
+]
 _FF_BASE   = ["ffmpeg", "-loglevel", "error", "-hide_banner", "-y"]
 
+
+def _pipe_filter_codec(output_path: str) -> list[str]:
+    """Use lossless codecs for pipe intermediates and high quality for finals."""
+    if Path(output_path).suffix.lower() in {".mkv", ".nut"}:
+        return list(_PIPE_LOSSLESS_CODEC)
+    return list(_PIPE_FINAL_CODEC)
+
+
 def _ff_vf(inp: str, vf: str, out: str, timeout: int = 180) -> tuple[bool, str]:
-    """Run a -vf filter with standard x264/PCM settings."""
-    return _run_ffmpeg_raw(_FF_BASE + ["-i", inp, "-vf", vf, *_VF_CODEC, out], timeout=timeout)
+    """Run a -vf filter with lossless intermediate/high-quality final settings."""
+    return _run_ffmpeg_raw(
+        _FF_BASE + ["-i", inp, "-vf", vf, *_pipe_filter_codec(out), out],
+        timeout=timeout,
+    )
+
 
 def _ff_af(inp: str, af: str, out: str, timeout: int = 180) -> tuple[bool, str]:
-    """Run a -af filter keeping video stream unchanged."""
-    return _run_ffmpeg_raw(_FF_BASE + ["-i", inp, "-af", af, "-c:v", "copy", "-c:a", "pcm_s16le", out], timeout=timeout)
+    """Run an -af filter while keeping video unchanged and audio high quality."""
+    audio_codec = (
+        ["-c:a", "pcm_s16le"]
+        if Path(out).suffix.lower() in {".mkv", ".nut", ".mov"}
+        else ["-c:a", "aac", "-b:a", "320k"]
+    )
+    return _run_ffmpeg_raw(
+        _FF_BASE + ["-i", inp, "-af", af, "-c:v", "copy", *audio_codec, out],
+        timeout=timeout,
+    )
 
 
 def _normalize_raw_pipe_codecs(args: list[str]) -> list[str]:
