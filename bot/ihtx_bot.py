@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-09-13: [Python] Replaced preview1280 with the supplied TV-simulator/multipitch montage pipeline; its R3 toggle now passes `--rubberband-args -3` to multipitch.
 - 2026-09-06: [Python] Fixed blocked threads trapping owners by exempting configured owners from channel-block checks across prefix and slash commands, preserving the required BOT_OWNER_ID alongside saved owner IDs so accidental thread blocks can be removed.
 - 2026-09-06: [Python] Added owner-only timed `th>block`/`th>unblock` commands, enforced timed blocks across prefix and slash commands, and switched the bundled pitch engine to the renamed `multipitch` binary with expanded engine options.
 - 2026-09-03: [Python] Limited startup restart notices to exactly the two newest update-log changes instead of summarizing the full history.
@@ -8202,7 +8203,7 @@ def _expand_preview_args(args: tuple[str, ...]) -> list[str]:
     return expanded
 
 
-def _run_preview1280(
+def _run_preview1280_legacy(
     input_path: str,
     output_path: str,
     start_offset: float = 1.85,
@@ -8408,6 +8409,389 @@ def _run_preview1280(
             output_path
         ]
         return _run_ffmpeg_raw(cmd, timeout=180)
+
+
+def _run_preview1280(
+    input_path: str,
+    output_path: str,
+    start_offset: float = 1.85,
+    segment_dur: float = 0.85,
+    force_output_size: tuple[int, int] | None = None,
+    use_r3: bool = False,
+) -> tuple[bool, str]:
+    """Run the supplied TV-simulator preview1280 montage pipeline.
+
+    The montage uses the downloaded ``multipitch`` executable for every
+    pitched segment.  The existing optional R3 toggle is preserved:
+    ``use_r3=True`` passes ``--rubberband-args -3``; the default uses the
+    signalsmith backend.
+    """
+    import urllib.request
+
+    def _step(cmd: list[str], label: str, workdir: str, timeout: int = 300) -> tuple[bool, str]:
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return False, f"{label} timed out (>{timeout}s)."
+        except Exception as exc:
+            return False, f"{label} could not start: {exc}"
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            return False, f"{label} failed (exit {result.returncode}): {detail[-1800:]}"
+        return True, ""
+
+    def _download(url: str, destination: str) -> tuple[bool, str]:
+        try:
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 IHTX preview1280"},
+            )
+            with urllib.request.urlopen(request, timeout=120) as response:
+                with open(destination, "wb") as downloaded:
+                    shutil.copyfileobj(response, downloaded)
+            if not os.path.isfile(destination) or os.path.getsize(destination) == 0:
+                return False, f"Downloaded file is empty: {url}"
+            return True, ""
+        except Exception as exc:
+            return False, f"Download failed for {url}: {exc}"
+
+    with tempfile.TemporaryDirectory(prefix="preview1280_") as workdir:
+        input_dir = os.path.join(workdir, "input")
+        output_dir = os.path.join(workdir, "output")
+        os.makedirs(input_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+
+        tvsimulator = os.path.join(input_dir, "tvsimulator.mp4")
+        multipitch_bin = os.path.join(input_dir, "multipitch.exe")
+        ok, err = _download(
+            "https://file.garden/aX9mS1junENdw7e-/Project%20Name%205.mp4",
+            tvsimulator,
+        )
+        if not ok:
+            return False, err
+        ok, err = _download(
+            "https://file.garden/aTXso15ukD3mnuPI/multipitch",
+            multipitch_bin,
+        )
+        if not ok:
+            return False, err
+        try:
+            os.chmod(multipitch_bin, 0o755)
+        except OSError as exc:
+            return False, f"Could not make multipitch executable: {exc}"
+
+        duration_raw = _ffprobe(
+            input_path,
+            "-show_entries", "format=duration",
+            "-v", "quiet",
+            "-of", "csv=p=0",
+        )
+        try:
+            float(duration_raw)
+        except (TypeError, ValueError):
+            return False, f"Could not read input video duration: {duration_raw or '(empty)'}"
+
+        try:
+            start = float(start_offset)
+            duration = float(segment_dur)
+        except (TypeError, ValueError):
+            return False, "Start offset and segment duration must be numeric."
+        if start < 0 or duration <= 0:
+            return False, "Start offset must be non-negative and segment duration must be positive."
+
+        t = f"{duration:.4f}"
+        t2 = f"{duration / 2:.4f}"
+        t3 = f"{start + duration:.4f}"
+
+        clut_specs = [
+            ("hslhue_54.ppm", "100,100,%[fx:0.150*200+100]"),
+            ("hslhue_180.ppm", "100,100,%[fx:0.5*200+100]"),
+            ("hslhue_21_6.ppm", "100,100,%[fx:0.060*200+100]"),
+            ("hslhue_108_30.ppm", "100,130,%[fx:0.3*200+100]"),
+        ]
+        for filename, modulate in clut_specs:
+            ok, err = _step(
+                ["magick", "hald:4", "-modulate", modulate, filename],
+                f"Generating {filename}",
+                workdir,
+                timeout=60,
+            )
+            if not ok:
+                return False, err
+
+        ok, err = _step(
+            [
+                "ffmpeg", "-y", "-stream_loop", "-1", "-i", input_path,
+                "-vf", "scale=2160:2160,setsar=1:1",
+                "-ss", str(start), "-to", t3,
+                "-c:v", "ffv1", "-c:a", "pcm_s16le", "0.avi",
+            ],
+            "Creating base video",
+            workdir,
+            timeout=180,
+        )
+        if not ok:
+            return False, err
+        ok, err = _step(
+            [
+                "ffmpeg", "-y", "-stream_loop", "-1", "-i", input_path,
+                "-ss", str(start), "-to", t3,
+                "-c:a", "pcm_s16le", "0.wav",
+            ],
+            "Creating base audio",
+            workdir,
+            timeout=180,
+        )
+        if not ok:
+            return False, err
+        ok, err = _step(
+            ["ffmpeg", "-y", "-stream_loop", "-1", "-i", "0.wav",
+             "-t", t2, "-c:a", "pcm_s16le", "00.wav"],
+            "Creating short audio",
+            workdir,
+            timeout=120,
+        )
+        if not ok:
+            return False, err
+
+        sr = _ffprobe(
+            os.path.join(workdir, "0.wav"),
+            "-v", "error", "-select_streams", "a:0",
+            "-show_entries", "stream=sample_rate",
+            "-of", "default=nokey=1:noprint_wrappers=1",
+        ).strip()
+        fr = _ffprobe(
+            os.path.join(workdir, "0.avi"),
+            "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=r_frame_rate",
+            "-of", "default=nokey=1:noprint_wrappers=1",
+        ).strip()
+        w = _ffprobe(
+            os.path.join(workdir, "0.avi"),
+            "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width",
+            "-of", "default=nw=1:nk=1",
+        ).strip()
+        h = _ffprobe(
+            os.path.join(workdir, "0.avi"),
+            "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=height",
+            "-of", "default=nw=1:nk=1",
+        ).strip()
+        ww = _ffprobe(
+            input_path,
+            "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=width",
+            "-of", "default=nw=1:nk=1",
+        ).strip()
+        hh = _ffprobe(
+            input_path,
+            "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=height",
+            "-of", "default=nw=1:nk=1",
+        ).strip()
+        if not all((sr, fr, w, h, ww, hh)):
+            return False, "Could not read the required audio/video properties."
+
+        ok, err = _step(
+            ["ffmpeg", "-y", "-i", "0.wav",
+             "-af", f"asetrate={sr}/2", "temp_pitch.wav"],
+            "Creating pitch intermediate",
+            workdir,
+            timeout=120,
+        )
+        if not ok:
+            return False, err
+
+        pitch_engine_args = (
+            ["--rubberband-args", "-3"]
+            if use_r3
+            else ["--backend", "signalsmith"]
+        )
+
+        def _pitch(source: str, destination: str, pitch: int) -> tuple[bool, str]:
+            return _step(
+                [
+                    multipitch_bin, source, destination, str(pitch),
+                    *pitch_engine_args, "--no-normalize",
+                ],
+                f"Pitch shifting {source} by {pitch}",
+                workdir,
+                timeout=300,
+            )
+
+        for source, destination, pitch in [
+            ("0.wav", "1.wav", 1),
+            ("0.wav", "2.wav", -2),
+            ("00.wav", "3.wav", -2),
+            ("00.wav", "4.wav", 1),
+            ("00.wav", "5.wav", 2),
+            ("00.wav", "6.wav", 3),
+        ]:
+            ok, err = _pitch(source, destination, pitch)
+            if not ok:
+                return False, err
+
+        segment_commands = [
+            (
+                [
+                    "ffmpeg", "-y", "-i", "./input/tvsimulator.mp4",
+                    "-vf", "null", "tvsimulatormod.mov",
+                ],
+                "Creating TV simulator source",
+            ),
+            (
+                [
+                    "ffmpeg", "-y", "-i", "0.avi", "-vf", "null",
+                    "-c:v", "ffv1", "-c:a", "pcm_s16le",
+                    "-preset", "ultrafast", "modfps.avi",
+                ],
+                "Normalizing montage frame rate",
+            ),
+            (
+                [
+                    "ffmpeg", "-y", "-i", "modfps.avi", "-t", t,
+                    "-c:v", "ffv1", "-c:a", "pcm_s16le",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", "0.avi",
+                ],
+                "Rendering segment 0",
+            ),
+            (
+                [
+                    "ffmpeg", "-y", "-i", "modfps.avi", "-i", "1.wav",
+                    "-vf", "movie=hslhue_54.ppm,[in]haldclut,format=rgb48le",
+                    "-map", "0:v", "-map", "1:a",
+                    "-t", t, "-c:v", "ffv1", "-c:a", "pcm_s16le",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", "1.avi",
+                ],
+                "Rendering segment 1",
+            ),
+            (
+                [
+                    "ffmpeg", "-y", "-i", "modfps.avi",
+                    "-stream_loop", "-1", "-i", "tvsimulatormod.mov",
+                    "-i", "2.wav",
+                    "-filter_complex",
+                    (
+                        f"movie=hslhue_180.ppm[h];"
+                        f"[0][h]haldclut,hflip,crop=iw/2:ih:0:0,split[left][tmp];"
+                        f"[tmp]hflip[right];[left][right]hstack,format=yuv420p,"
+                        f"fps=29.97,format=bgr32[00];"
+                        f"[1]fps=29.97,crop=iw:ih/1:0:0,scale={w}:{h},"
+                        f"eq=contrast=(1-0.70)*5,format=bgr32,hue=b=-0.033[x];"
+                        f"nullsrc=1x1,geq=r=128:g=128:b=128,scale={w}:{h},"
+                        f"format=bgr32[y];"
+                        f"[00][x][y]displace=edge=wrap,fps={fr},"
+                        f"format=rgb48le[v]"
+                    ),
+                    "-map", "[v]", "-map", "2:a", "-pix_fmt", "yuv420p",
+                    "-t", t, "-c:v", "ffv1", "-c:a", "pcm_s16le",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", "2.avi",
+                ],
+                "Rendering segment 2",
+            ),
+            (
+                [
+                    "ffmpeg", "-y", "-i", "modfps.avi", "-i", "1.wav",
+                    "-vf", "movie=hslhue_54.ppm,[in]haldclut,format=rgb48le",
+                    "-map", "0:v", "-map", "1:a",
+                    "-t", t, "-c:v", "ffv1", "-c:a", "pcm_s16le",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", "3.avi",
+                ],
+                "Rendering segment 3",
+            ),
+            (
+                [
+                    "ffmpeg", "-y", "-i", "0.avi", "-t", t2,
+                    "-c:v", "ffv1", "-c:a", "pcm_s16le",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", "4.avi",
+                ],
+                "Rendering segment 4",
+            ),
+            (
+                [
+                    "ffmpeg", "-y", "-i", "0.avi", "-i", "5.wav",
+                    "-vf", "movie=hslhue_21_6.ppm,[in]haldclut,hflip,format=rgb48le",
+                    "-map", "0:v", "-map", "1:a",
+                    "-t", t2, "-c:v", "ffv1", "-c:a", "pcm_s16le",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", "5.avi",
+                ],
+                "Rendering segment 5",
+            ),
+            (
+                [
+                    "ffmpeg", "-y", "-i", "1.avi", "-t", t2,
+                    "-c:v", "ffv1", "-c:a", "pcm_s16le",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", "6.avi",
+                ],
+                "Rendering segment 6",
+            ),
+            (
+                [
+                    "ffmpeg", "-y", "-i", "0.avi", "-i", "6.wav",
+                    "-vf", "movie=hslhue_108_30.ppm,[in]haldclut,hflip,format=rgb48le",
+                    "-map", "0:v", "-map", "1:a",
+                    "-t", t2, "-c:v", "ffv1", "-c:a", "pcm_s16le",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", "7.avi",
+                ],
+                "Rendering segment 7",
+            ),
+            (
+                [
+                    "ffmpeg", "-y", "-i", "0.avi", "-i", "3.wav",
+                    "-vf", "movie=hslhue_180.ppm,[in]haldclut,format=rgb48le",
+                    "-map", "0:v", "-map", "1:a",
+                    "-t", t2, "-c:v", "ffv1", "-c:a", "pcm_s16le",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", "8.avi",
+                ],
+                "Rendering segment 8",
+            ),
+            (
+                [
+                    "ffmpeg", "-y", "-i", "0.avi", "-vf", "hflip",
+                    "-t", t2, "-c:v", "ffv1", "-c:a", "pcm_s16le",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", "9.avi",
+                ],
+                "Rendering segment 9",
+            ),
+            (
+                [
+                    "ffmpeg", "-y", "-i", "1.avi", "-t", t2,
+                    "-c:v", "ffv1", "-c:a", "pcm_s16le",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", "10.avi",
+                ],
+                "Rendering segment 10",
+            ),
+            (
+                [
+                    "ffmpeg", "-y", "-i", "7.avi", "-t", t2,
+                    "-c:v", "ffv1", "-c:a", "pcm_s16le",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", "11.avi",
+                ],
+                "Rendering segment 11",
+            ),
+        ]
+        for command, label in segment_commands:
+            ok, err = _step(command, label, workdir, timeout=300)
+            if not ok:
+                return False, err
+
+        output_w, output_h = force_output_size or (ww, hh)
+        concat_inputs = "|".join(f"{index}.avi" for index in range(12))
+        final_command = [
+            "ffmpeg", "-y", "-i", f"concat:{concat_inputs}",
+            "-vf", f"scale={output_w}:{output_h},setsar=1",
+            "-af", f"asetrate={sr},bass=g=PI:f=23.1:transform=5",
+            "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
+            output_path,
+        ]
+        return _step(final_command, "Creating final preview1280 output", workdir, timeout=300)
 
 
 def _generate_opposite_hald_cluts(workdir: str) -> list[str]:
@@ -9691,6 +10075,9 @@ async def preview1280_command(ctx: commands.Context, *args: str):
 
     Usage: th/preview1280 [start_offset] [segment_duration] [r3=true|false]
     Default: start=1.85, duration=0.85
+
+    The optional R3 toggle selects the multipitch Rubber Band arguments:
+    ``true`` passes ``--rubberband-args -3``; ``false`` uses signalsmith.
     """
     start = 1.85
     duration = 0.85
@@ -9739,9 +10126,9 @@ async def preview1280_command(ctx: commands.Context, *args: str):
     duration = max(0.1, min(duration, 10.0))
 
     status_msg = await ctx.reply(
-        f"🔧 Executing preview1280 FFmpeg montage code "
+        f"🔧 Executing preview1280 TV-simulator montage "
         f"(start={start}s, dur={duration}s, "
-        f"pitch engine={'native R3' if use_r3 else 'FFmpeg Rubber Band'})…"
+        f"pitch engine={'Rubber Band R3' if use_r3 else 'signalsmith'})…"
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -9752,13 +10139,6 @@ async def preview1280_command(ctx: commands.Context, *args: str):
             await download_attachment(source, input_path)
         except Exception as e:
             await status_msg.edit(content=f"❌ Failed to download your file: {e}")
-            return
-
-        # Ensure displacement map is available
-        try:
-            disp_path = await _ensure_displacement_map(tmpdir)
-        except FileNotFoundError as e:
-            await status_msg.edit(content=f"❌ {e}")
             return
 
         loop = asyncio.get_event_loop()
@@ -9786,7 +10166,7 @@ async def preview1280_command(ctx: commands.Context, *args: str):
             embed_p1280 = discord.Embed(
                 title="Preview 1280 - FFmpeg command originally made by `MWTVE7691` then transported to typescript:",
                 description=(
-                    f"Pitch engine: **{'R3 enabled' if use_r3 else 'R3 disabled'}**\n"
+                    f"Pitch engine: **{'Rubber Band R3 (`--rubberband-args -3`)' if use_r3 else 'signalsmith'}**\n"
                     "use whatever sync to audio tag you want, I highly recommend notsobot's tag system (.t sync+)"
                 ),
                 color=11578404,

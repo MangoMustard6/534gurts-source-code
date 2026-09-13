@@ -11,6 +11,8 @@ The preview1280 family keeps FFmpeg Rubber Band as the default pitch renderer. A
 
 Native R3 tempo output is normalized to each rendered video segment by looping short audio and trimming long audio before remux.
 
+The imported preview1280 multipitch pipeline selects R3 by passing `--rubberband-args -3`; its non-R3 path uses `--backend signalsmith`.
+
 Both standalone and pipe YTPMV use the classic FFmpeg Rubber Band path; their timing behavior remains mode-specific.
 
 YTPMV scan source segments retain `volume=4`; its composed audio keeps the existing SoX reverb stage without an added FFmpeg echo.
