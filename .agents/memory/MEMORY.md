@@ -33,3 +33,4 @@
 - [Raw FFmpeg pipe codecs](raw-ffmpeg-pipe-codecs.md) — raw IHTX passes use FFV1/PCM for filter-safe lossless intermediates; FFV1/PCM cannot be written to MP4.
 - [Custom pitch pipe](custom-pitch-pipe.md) — use mpcustom with ::-separated fileaa flags when the stock multipitch mode is not enough.
 - [Clean audio pitch route](clean-audio-pitch-route.md) — custom pitch exports keep PCM audio, avoid audio timestamp resets, and use preview-compatible H.264 video.
+- [Dependency file rewrite](dependency-file-rewrite.md) — package installation can rewrite requirements.txt; apply source cleanup after installing dependencies.
