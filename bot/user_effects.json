@@ -232,5 +232,13 @@
     "guild_id": "1496091892067209307",
     "guild_name": "534Video Server",
     "submitted_at": "2026-09-07T10:31:15.137150+00:00"
+  },
+  "1216_effect": {
+    "effects": "ffmpeg(-af asetrate=$sr/2 -c:a pcm_s16le -preset ultrafast),mpcustom=-57;-47.5;-38;-28.5;-19;-9.5;9.5;19;28.5;38;47.5;57::--backend signalsmith::--no-normalize,ffmpeg(-vf \"movie=$(magick hald:6 -define modulate:colorspace=hsl -modulate 100,500,%[fx:0.85*200+100] -color-matrix \"0 0 1 0 1 0 1 0 0\" -colorspace yuv -fx \"angle=330*pi/180; channel(u,.5+(u.g-.5)*cos(angle)-(u.b-.5)*sin(angle),.5+(u.g-.5)*sin(angle)+(u.b-.5)*cos(angle))\" -colorspace srgb -modulate 100,100,0 -negate movie.ppm; echo movie.ppm),[in]haldclut\",format=yuv444p16le,reverse,\"crop=iw/2:ih:0:0,split[left][tmp];[tmp]hflip[right];[left][right]hstack\" -af asetrate=$sr,bass=g=PI*2.75:f=23.1:transform=5,areverse -c:v ffv1 -c:a pcm_s16le -preset ultrafast -qp 1 -tune fastdecode),areverse",
+    "author_id": "1355759019330895973",
+    "author_name": "meatloaf_fan534",
+    "guild_id": "1124758333883158638",
+    "guild_name": "VideoEditBot Collection 1.0",
+    "submitted_at": "2026-09-14T10:49:29.130004+00:00"
   }
 }

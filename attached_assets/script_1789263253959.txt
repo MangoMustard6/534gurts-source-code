@@ -1,0 +1,162 @@
+import os
+import subprocess
+import urllib.request
+import sys
+
+def run_cmd(cmd):
+    """Executes shell commands and handles errors."""
+    process = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    if process.returncode != 0:
+        print(f"Error executing command: {cmd}\n{process.stderr}")
+        sys.exit(1)
+    return process.stdout.strip()
+
+def download_file(url, output_path):
+    """Downloads a file from a URL to a specified output path."""
+    print(f"Downloading {url} -> {output_path}...")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    urllib.request.urlretrieve(url, output_path)
+
+def process_video(file_1, arg0=1.85, arg1=0.85, arg2=3.4, arg3=0):
+    # Setup working directories
+    os.makedirs("./input", exist_ok=True)
+    os.makedirs("./output", exist_ok=True)
+
+    # Recognizing and downloading required external URLs
+    download_file("https://file.garden/aX9mS1junENdw7e-/Project%20Name%205.mp4", "./input/tvsim.mp4")
+    download_file("https://file.garden/aTXso15ukD3mnuPI/multipitch", "./input/multipitch.exe")
+
+    # Set execution permission for binary on POSIX systems
+    if os.name != 'nt':
+        os.chmod("./input/multipitch.exe", 0o755)
+
+    # Probe duration
+    vidlen = float(run_cmd(f'ffprobe -i "{file_1}" -show_entries format=duration -v quiet -of csv="p=0"'))
+
+    s = float(arg0)
+    e = float(arg1)
+    custom_t28 = float(arg2)
+    use_pre = int(arg3)
+
+    t = f"{e:.4f}"
+    t2 = f"{(e / 2):.4f}"
+    t3 = f"{(s + e):.4f}"
+    t28_val = custom_t28 if custom_t28 > 0 else (e / 2)
+    t28 = f"{t28_val:.4f}"
+    t28_end = f"{(s + t28_val):.4f}"
+
+    # Generate ImageMagick HALD CLUT files
+    run_cmd("magick hald:4 -modulate 100,100,%[fx:54/1.8+100] hslhue_54.ppm")
+    run_cmd("magick hald:4 -modulate 100,100,%[fx:-54/1.8+100] hslhue_-54.ppm")
+    run_cmd("magick hald:4 -modulate 100,100,%[fx:180/1.8+100] hslhue_180.ppm")
+    run_cmd("magick hald:4 -modulate 100,100,%[fx:21.6/1.8+100] hslhue_21_6.ppm")
+    run_cmd("magick hald:4 -modulate 100,130,%[fx:108/1.8+100] hslhue_108_30.ppm")
+
+    if use_pre == 1:
+        run_cmd(f'ffmpeg -y -stream_loop -1 -i "{file_1}" -vf scale=640:360,setsar=1:1,fps=29.97 -ss 0 -to {s} -c:v ffv1 -c:a pcm_s16le pre.avi')
+        run_cmd(f'ffmpeg -y -stream_loop -1 -i "{file_1}" -ss 0 -to {s} -c:a pcm_s16le pre.wav')
+
+    run_cmd(f'ffmpeg -y -stream_loop -1 -i "{file_1}" -vf scale=640:360,setsar=1:1,fps=29.97 -ss {s} -to {t3} -c:v ffv1 -c:a pcm_s16le 0.avi')
+    run_cmd(f'ffmpeg -y -stream_loop -1 -i "{file_1}" -vf scale=640:360,setsar=1:1,fps=29.97 -ss {s} -to {t28_end} -c:v ffv1 -c:a pcm_s16le 0_long.avi')
+    run_cmd(f'ffmpeg -y -stream_loop -1 -i "{file_1}" -ss {s} -to {t28_end} -c:a pcm_s16le 0_long.wav')
+
+    run_cmd(f'ffmpeg -y -stream_loop -1 -i "{file_1}" -ss {s} -to {t3} -c:a pcm_s16le 0.wav')
+    run_cmd(f'ffmpeg -y -stream_loop -1 -i 0.wav -t {t} -c:a pcm_s16le 0_t.wav')
+    run_cmd(f'ffmpeg -y -stream_loop -1 -i 0.wav -t {t2} -c:a pcm_s16le 0_t2.wav')
+    run_cmd(f'ffmpeg -y -i 0_long.wav -t {t28} -c:a pcm_s16le 0_t28.wav')
+
+    multipitch_bin = "./input/multipitch.exe"
+
+    # Pitch processing steps
+    pitch_configs = [
+        ("0_t.wav", "a2.wav", 1), ("0_t.wav", "a3.wav", -2), ("0_t.wav", "a4.wav", 1),
+        ("0_t2.wav", "a6.wav", 2), ("0_t2.wav", "a7.wav", 1), ("0_t2.wav", "a8.wav", 3),
+        ("0_t2.wav", "a9.wav", -2), ("0_t2.wav", "a11.wav", 1), ("0_t2.wav", "a12.wav", 3),
+        ("0_t2.wav", "a13.wav", -2), ("0_t2.wav", "a15.wav", -1), ("0_t2.wav", "a16.wav", 1),
+        ("0_t2.wav", "a17.wav", -4), ("0_t2.wav", "a18.wav", -2), ("0_t2.wav", "a19.wav", -1),
+        ("0_t2.wav", "a20.wav", 1), ("0_t2.wav", "a22.wav", 7), ("0_t2.wav", "a23.wav", 1),
+        ("0_t2.wav", "a24.wav", 8), ("0_t2.wav", "a25.wav", -2), ("0_t2.wav", "a27.wav", 1),
+        ("0_t28.wav", "a28.wav", 3)
+    ]
+
+    for src_audio, out_audio, pitch_shift in pitch_configs:
+        run_cmd(f'{multipitch_bin} {src_audio} {out_audio} {pitch_shift} --backend signalsmith --no-normalize')
+
+    # Audio concatenation & processing
+    if use_pre == 1:
+        audio_inputs = "-i pre.wav -i 0_t.wav -i a2.wav -i a3.wav -i a4.wav -i 0_t2.wav -i a6.wav -i a7.wav -i a8.wav -i a9.wav -i 0_t2.wav -i a11.wav -i a12.wav -i a13.wav -i 0_t2.wav -i a15.wav -i a16.wav -i a17.wav -i a18.wav -i a19.wav -i a20.wav -i 0_t2.wav -i a22.wav -i a23.wav -i a24.wav -i a25.wav -i 0_t2.wav -i a27.wav -i a28.wav"
+        filter_str = "[0:a][1:a][2:a][3:a][4:a][5:a][6:a][7:a][8:a][9:a][10:a][11:a][12:a][13:a][14:a][15:a][16:a][17:a][18:a][19:a][20:a][21:a][22:a][23:a][24:a][25:a][26:a][27:a][28:a]concat=n=29:v=0:a=1,bass=g=PI:f=23.1:transform=5[a]"
+    else:
+        audio_inputs = "-i 0_t.wav -i a2.wav -i a3.wav -i a4.wav -i 0_t2.wav -i a6.wav -i a7.wav -i a8.wav -i a9.wav -i 0_t2.wav -i a11.wav -i a12.wav -i a13.wav -i 0_t2.wav -i a15.wav -i a16.wav -i a17.wav -i a18.wav -i a19.wav -i a20.wav -i 0_t2.wav -i a22.wav -i a23.wav -i a24.wav -i a25.wav -i 0_t2.wav -i a27.wav -i a28.wav"
+        filter_str = "[0:a][1:a][2:a][3:a][4:a][5:a][6:a][7:a][8:a][9:a][10:a][11:a][12:a][13:a][14:a][15:a][16:a][17:a][18:a][19:a][20:a][21:a][22:a][23:a][24:a][25:a][26:a][27:a]concat=n=28:v=0:a=1,bass=g=PI:f=23.1:transform=5[a]"
+
+    run_cmd(f'ffmpeg -y {audio_inputs} -filter_complex "{filter_str}" -map "[a]" audio.wav')
+
+    # Dimensions probing
+    w = run_cmd('ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 0.avi')
+    h = run_cmd('ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 0.avi')
+    ww = run_cmd(f'ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 "{file_1}"')
+    hh = run_cmd(f'ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 "{file_1}"')
+
+    # Generate TV simulator background asset
+    run_cmd('ffmpeg -y -i ./input/tvsim.mp4 -vf fps=29.97 tvsimulator.mov')
+
+    # Video segment processing
+    displace_filter = (
+        f'"movie=hslhue_180.ppm[h];[0][h]haldclut,hflip,crop=iw/2:ih:0:0,split[left][tmp];'
+        f'[tmp]hflip[right];[left][right]hstack,format=yuv420p,format=bgr32[00];'
+        f'[1]crop=iw:ih/1:0:0,scale={w}:{h},eq=contrast=0.375,format=bgr32,hue=b=-0.033[x];'
+        f'nullsrc=1x1,geq=r=128:g=128:b=128,scale={w}:{h},format=bgr32[y];'
+        f'[00][x][y]displace=edge=wrap,format=yuv420p[v]"'
+    )
+    
+    geq_filter = (
+        f'"movie=hslhue_108_30.ppm,[in]haldclut,format=yuv444p,scale=640:640,'
+        f'geq=\'p(X-((sin((T*5*0+(0*15))+(Y/H)*(PI*0)))*(-15*0)),Y-((sin((T*5*0+((2.692/15)*15))+(X/W)*(PI*6.09)))*(-15*(0.018*40))))\','
+        f'scale={w}:{h},format=yuv420p"'
+    )
+
+    run_cmd(f'ffmpeg -y -i 0.avi -t {t} -an -c:v ffv1 1.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "movie=hslhue_54.ppm,[in]haldclut,format=yuv420p" -t {t} -an -c:v ffv1 2.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -stream_loop -1 -i tvsimulator.mov -filter_complex {displace_filter} -map "[v]" -t {t} -an -c:v ffv1 3.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "movie=hslhue_54.ppm,[in]haldclut,format=yuv420p" -t {t} -an -c:v ffv1 4.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -t {t2} -an -c:v ffv1 5.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "movie=hslhue_21_6.ppm,[in]haldclut,hflip,format=yuv420p" -t {t2} -an -c:v ffv1 6.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "movie=hslhue_54.ppm,[in]haldclut,format=yuv420p" -t {t2} -an -c:v ffv1 7.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf {geq_filter} -t {t2} -an -c:v ffv1 8.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -stream_loop -1 -i tvsimulator.mov -filter_complex {displace_filter} -map "[v]" -t {t2} -an -c:v ffv1 9.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "colorchannelmixer=0:0:1:0:0:1:0:0:1:0:0:0:0:0:0:1,format=yuv420p" -t {t2} -an -c:v ffv1 10.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "movie=hslhue_54.ppm,[in]haldclut,format=yuv420p" -t {t2} -an -c:v ffv1 11.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf {geq_filter} -t {t2} -an -c:v ffv1 12.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -stream_loop -1 -i tvsimulator.mov -filter_complex {displace_filter} -map "[v]" -t {t2} -an -c:v ffv1 13.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "colorchannelmixer=0:0:1:0:0:1:0:0:1:0:0:0:0:0:0:1,format=yuv420p" -t {t2} -an -c:v ffv1 14.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "movie=hslhue_-54.ppm,[in]haldclut,format=yuv420p" -t {t2} -an -c:v ffv1 15.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "movie=hslhue_54.ppm,[in]haldclut,format=yuv420p" -t {t2} -an -c:v ffv1 16.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "movie=hslhue_180.ppm,[in]haldclut,negate,format=yuv420p" -t {t2} -an -c:v ffv1 17.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -stream_loop -1 -i tvsimulator.mov -filter_complex {displace_filter} -map "[v]" -t {t2} -an -c:v ffv1 18.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "movie=hslhue_-54.ppm,[in]haldclut,format=yuv420p" -t {t2} -an -c:v ffv1 19.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "movie=hslhue_54.ppm,[in]haldclut,format=yuv420p" -t {t2} -an -c:v ffv1 20.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -t {t2} -an -c:v ffv1 21.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "negate,hflip,format=yuv420p" -t {t2} -an -c:v ffv1 22.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "movie=hslhue_54.ppm,[in]haldclut,format=yuv420p" -t {t2} -an -c:v ffv1 23.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "movie=hslhue_54.ppm,[in]haldclut,hflip,negate,format=yuv420p" -t {t2} -an -c:v ffv1 24.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -stream_loop -1 -i tvsimulator.mov -filter_complex {displace_filter} -map "[v]" -t {t2} -an -c:v ffv1 25.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "colorchannelmixer=0:0:1:0:0:1:0:0:1:0:0:0:0:0:0:1,format=yuv420p" -t {t2} -an -c:v ffv1 26.avi')
+    run_cmd(f'ffmpeg -y -i 0.avi -vf "movie=hslhue_54.ppm,[in]haldclut,format=yuv420p" -t {t2} -an -c:v ffv1 27.avi')
+    run_cmd(f'ffmpeg -y -i 0_long.avi -vf {geq_filter} -t {t28} -an -c:v ffv1 28.avi')
+
+    # Video concatenation
+    if use_pre == 1:
+        concat_files = "concat:pre.avi|1.avi|2.avi|3.avi|4.avi|5.avi|6.avi|7.avi|8.avi|9.avi|10.avi|11.avi|12.avi|13.avi|14.avi|15.avi|16.avi|17.avi|18.avi|19.avi|20.avi|21.avi|22.avi|23.avi|24.avi|25.avi|26.avi|27.avi|28.avi"
+    else:
+        concat_files = "concat:1.avi|2.avi|3.avi|4.avi|5.avi|6.avi|7.avi|8.avi|9.avi|10.avi|11.avi|12.avi|13.avi|14.avi|15.avi|16.avi|17.avi|18.avi|19.avi|20.avi|21.avi|22.avi|23.avi|24.avi|25.avi|26.avi|27.avi|28.avi"
+
+    run_cmd(f'ffmpeg -y -i "{concat_files}" -vf scale={ww}:{hh},setsar=1 video.mov')
+    run_cmd('ffmpeg -y -i video.mov -i audio.wav -map 0:v -map 1:a ./output/p1280.mp4')
+
+    print("Processing complete! Output saved to ./output/p1280.mp4")
+
+if __name__ == "__main__":
+    # Example execution (replace 'input_video.mp4' with your actual input file path)
+    INPUT_FILE = "input_video.mp4"
+    process_video(INPUT_FILE, arg0=1.85, arg1=0.85, arg2=3.4, arg3=0)
