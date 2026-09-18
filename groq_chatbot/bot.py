@@ -39,9 +39,9 @@ load_dotenv()
 DISCORD_TOKEN: str = os.environ["DISCORD_TOKEN"]
 GROQ_API_KEY:  str = os.environ["GROQ_API_KEY"]
 
-GROQ_MODEL          = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-MAX_HISTORY         = int(os.getenv("MAX_HISTORY", "14"))     # messages kept per channel
-MAX_RESPONSE_TOKENS = int(os.getenv("MAX_RESPONSE_TOKENS", "1024"))
+GROQ_MODEL          = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+MAX_HISTORY         = int(os.getenv("MAX_HISTORY", "15"))     # messages kept per channel
+MAX_RESPONSE_TOKENS = int(os.getenv("MAX_RESPONSE_TOKENS", "512"))
 PROFILES_PATH       = Path(os.getenv("PROFILES_PATH", "user_profiles.json"))
 
 # ---------------------------------------------------------------------------
@@ -202,7 +202,7 @@ async def _ask_groq(
         model=GROQ_MODEL,
         messages=messages,
         max_tokens=MAX_RESPONSE_TOKENS,
-        temperature=0.85,
+        temperature=0.7,
     )
     return resp.choices[0].message.content.strip()
 
