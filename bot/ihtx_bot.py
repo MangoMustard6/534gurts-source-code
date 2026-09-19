@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-09-19: [Python] Added Groq vision handling for autoreply2 attachments: images are sent directly and videos are sampled into representative frames before AI replies.
 - 2026-09-13: [Python] Replaced preview1280what with the attached 28-segment script pipeline, including optional pre-roll, configurable long-segment duration, downloaded TV source, and separate audio/video concatenation.
 - 2026-09-13: [Python] Replaced preview1280 with the supplied TV-simulator/multipitch montage pipeline; its R3 toggle now passes `--rubberband-args -3` to multipitch.
 - 2026-09-06: [Python] Fixed blocked threads trapping owners by exempting configured owners from channel-block checks across prefix and slash commands, preserving the required BOT_OWNER_ID alongside saved owner IDs so accidental thread blocks can be removed.
@@ -254,6 +255,7 @@ import subprocess
 import aiohttp
 import sys
 import time
+import mimetypes
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TypedDict
@@ -310,6 +312,128 @@ try:
 except Exception as _groq_init_err:
     _groq_client = None
     print(f"[groq] Failed to initialize Groq client: {_groq_init_err}")
+
+_GROQ_VISION_MODEL = os.environ.get(
+    "GROQ_VISION_MODEL",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+)
+_GROQ_MEDIA_MAX_BYTES = 8 * 1024 * 1024
+_GROQ_VIDEO_FRAME_COUNT = 4
+
+
+def _groq_data_url(raw: bytes, mime: str) -> str:
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def _groq_prepare_image(raw: bytes, mime: str) -> tuple[bytes, str]:
+    """Keep image requests within a predictable size while preserving detail."""
+    if len(raw) <= _GROQ_MEDIA_MAX_BYTES:
+        return raw, mime or "image/jpeg"
+    if _PIL_Image is None:
+        return raw[:_GROQ_MEDIA_MAX_BYTES], mime or "image/jpeg"
+
+    from io import BytesIO
+
+    with _PIL_Image.open(BytesIO(raw)) as image:
+        image = image.convert("RGB")
+        image.thumbnail((1536, 1536))
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=85, optimize=True)
+        return output.getvalue(), "image/jpeg"
+
+
+def _groq_extract_video_frames(path: str) -> list[bytes]:
+    """Extract a few evenly spaced JPEG frames from a video for vision input."""
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", path,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    try:
+        duration = max(float(probe.stdout.strip()), 0.1)
+    except (ValueError, TypeError):
+        duration = float(_GROQ_VIDEO_FRAME_COUNT)
+
+    timestamps = [
+        duration * index / (_GROQ_VIDEO_FRAME_COUNT - 1)
+        for index in range(_GROQ_VIDEO_FRAME_COUNT)
+    ]
+    frames: list[bytes] = []
+    with tempfile.TemporaryDirectory(prefix="groq_frames_") as frame_dir:
+        for index, timestamp in enumerate(timestamps):
+            frame_path = os.path.join(frame_dir, f"frame_{index}.jpg")
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-ss", f"{timestamp:.3f}", "-i", path,
+                    "-frames:v", "1", "-vf", "scale=1024:-2",
+                    "-q:v", "4", frame_path,
+                ],
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode == 0 and os.path.exists(frame_path):
+                with open(frame_path, "rb") as frame_file:
+                    frames.append(frame_file.read())
+    return frames
+
+
+async def _groq_media_content(message: discord.Message) -> tuple[list[dict], bool]:
+    """Turn Discord image/video attachments into Groq vision message content."""
+    parts: list[dict] = []
+    has_media = False
+    for attachment in message.attachments[:4]:
+        mime = (
+            attachment.content_type
+            or mimetypes.guess_type(attachment.filename or "")[0]
+            or ""
+        ).lower()
+        try:
+            raw = await attachment.read()
+        except Exception as exc:
+            print(f"[groq/media] download failed for {attachment.filename}: {exc}")
+            continue
+
+        if mime.startswith("image/"):
+            image, image_mime = _groq_prepare_image(raw, mime)
+            parts.append({
+                "type": "image_url",
+                "image_url": {"url": _groq_data_url(image, image_mime)},
+            })
+            has_media = True
+            continue
+
+        if mime.startswith("video/") or (not mime and attachment.filename.lower().endswith(
+            (".mp4", ".mov", ".mkv", ".webm", ".avi", ".gif")
+        )):
+            with tempfile.NamedTemporaryFile(
+                suffix=os.path.splitext(attachment.filename or ".mp4")[1] or ".mp4",
+                delete=False,
+            ) as video_file:
+                video_file.write(raw)
+                video_path = video_file.name
+            try:
+                frames = await asyncio.to_thread(_groq_extract_video_frames, video_path)
+            except Exception as exc:
+                print(f"[groq/media] frame extraction failed for {attachment.filename}: {exc}")
+                frames = []
+            finally:
+                try:
+                    os.unlink(video_path)
+                except OSError:
+                    pass
+            for frame in frames:
+                parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": _groq_data_url(frame, "image/jpeg")},
+                })
+            has_media = has_media or bool(frames)
+
+    return parts, has_media
 
 
 
@@ -19918,25 +20042,49 @@ async def on_message(message: discord.Message):
                 uid2 = message.author.id
                 no_ping = uid2 in autoreply2_no_mention
                 has_attachments = bool(message.attachments)
+                media_parts, has_media = (
+                    await _groq_media_content(message)
+                    if has_attachments
+                    else ([], False)
+                )
                 system2 = _build_autoreply2_system_prompt(uid2)
                 if message.content:
                     system2 += await _logo_wiki_context(message.content)
                 reply2_text = None
-                if not has_attachments:
+                if not has_attachments or has_media:
                     if time.time() < _ar2_rate_limited_until:
                         reply2_text = _autoreply2_quota_fallback(uid2)
                     else:
                         try:
                             groq_hist2 = _ar2_groq_histories.setdefault(uid2, [])
-                            groq_hist2.append({"role": "user", "content": message.content or "[empty]"})
+                            history_text = message.content or "[attached media]"
+                            groq_hist2.append({"role": "user", "content": history_text})
                             if len(groq_hist2) > _CHAT_MAX_HISTORY:
                                 groq_hist2[:] = groq_hist2[-_CHAT_MAX_HISTORY:]
+                            request_history = list(groq_hist2)
+                            if has_media:
+                                request_history[-1] = {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": message.content
+                                            or "Describe the attached image or video.",
+                                        },
+                                        *media_parts,
+                                    ],
+                                }
                             loop2 = asyncio.get_event_loop()
                             groq_resp2 = await loop2.run_in_executor(
                                 None,
                                 lambda: _groq_client.chat.completions.create(
-                                    model="llama-3.3-70b-versatile",
-                                    messages=[{"role": "system", "content": system2}] + groq_hist2,
+                                    model=(
+                                        _GROQ_VISION_MODEL
+                                        if has_media
+                                        else "llama-3.3-70b-versatile"
+                                    ),
+                                    messages=[{"role": "system", "content": system2}]
+                                    + request_history,
                                     temperature=0.8,
                                     max_tokens=512,
                                 ),
@@ -19982,6 +20130,11 @@ async def on_message(message: discord.Message):
                 uid2 = message.author.id
                 no_ping = uid2 in autoreply2_no_mention
                 has_attachments = bool(message.attachments)
+                media_parts, has_media = (
+                    await _groq_media_content(message)
+                    if has_attachments
+                    else ([], False)
+                )
 
                 # System prompt: personality + command reference
                 system2 = _build_autoreply2_system_prompt(uid2)
@@ -19992,22 +20145,41 @@ async def on_message(message: discord.Message):
 
                 reply2_text = None
 
-                # ── Groq (text-only messages) ─────────────────────────────────
-                if not has_attachments:
+                # ── Groq text and vision messages ─────────────────────────────
+                if not has_attachments or has_media:
                     if time.time() < _ar2_rate_limited_until:
                         reply2_text = _autoreply2_quota_fallback(uid2)
                     else:
                         try:
                             groq_hist2 = _ar2_groq_histories.setdefault(uid2, [])
-                            groq_hist2.append({"role": "user", "content": message.content or "[empty]"})
+                            history_text = message.content or "[attached media]"
+                            groq_hist2.append({"role": "user", "content": history_text})
                             if len(groq_hist2) > _CHAT_MAX_HISTORY:
                                 groq_hist2[:] = groq_hist2[-_CHAT_MAX_HISTORY:]
+                            request_history = list(groq_hist2)
+                            if has_media:
+                                request_history[-1] = {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": message.content
+                                            or "Describe the attached image or video.",
+                                        },
+                                        *media_parts,
+                                    ],
+                                }
                             loop2 = asyncio.get_event_loop()
                             groq_resp2 = await loop2.run_in_executor(
                                 None,
                                 lambda: _groq_client.chat.completions.create(
-                                    model="llama-3.3-70b-versatile",
-                                    messages=[{"role": "system", "content": system2}] + groq_hist2,
+                                    model=(
+                                        _GROQ_VISION_MODEL
+                                        if has_media
+                                        else "llama-3.3-70b-versatile"
+                                    ),
+                                    messages=[{"role": "system", "content": system2}]
+                                    + request_history,
                                     temperature=0.8,
                                     max_tokens=512,
                                 ),

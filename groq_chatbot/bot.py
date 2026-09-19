@@ -6,10 +6,14 @@ Personalizes every reply using per-user profiles persisted to JSON.
 """
 
 import asyncio
+import base64
 import json
 import logging
+import mimetypes
 import os
 import re
+import subprocess
+import tempfile
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -40,9 +44,15 @@ DISCORD_TOKEN: str = os.environ["DISCORD_TOKEN"]
 GROQ_API_KEY:  str = os.environ["GROQ_API_KEY"]
 
 GROQ_MODEL          = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_VISION_MODEL   = os.getenv(
+    "GROQ_VISION_MODEL",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+)
 MAX_HISTORY         = int(os.getenv("MAX_HISTORY", "15"))     # messages kept per channel
 MAX_RESPONSE_TOKENS = int(os.getenv("MAX_RESPONSE_TOKENS", "512"))
 PROFILES_PATH       = Path(os.getenv("PROFILES_PATH", "user_profiles.json"))
+MAX_MEDIA_BYTES     = 8 * 1024 * 1024
+VIDEO_FRAME_COUNT   = 4
 
 # ---------------------------------------------------------------------------
 # Personality — system prompt core
@@ -167,10 +177,10 @@ def _maybe_extract_name(text: str, profile: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 # channel_id -> deque[dict]
-_history: dict[int, deque[dict[str, str]]] = {}
+_history: dict[int, deque[dict[str, Any]]] = {}
 
 
-def _get_history(channel_id: int) -> deque[dict[str, str]]:
+def _get_history(channel_id: int) -> deque[dict[str, Any]]:
     if channel_id not in _history:
         _history[channel_id] = deque(maxlen=MAX_HISTORY)
     return _history[channel_id]
@@ -185,21 +195,31 @@ _groq = AsyncGroq(api_key=GROQ_API_KEY)
 
 async def _ask_groq(
     system_prompt: str,
-    history: list[dict[str, str]],
+    history: list[dict[str, Any]],
     user_message: str,
+    media_parts: list[dict[str, Any]] | None = None,
 ) -> str:
     """
     Send a request to Groq and return the assistant's reply text.
     Raises on unrecoverable errors so the caller can inform the user.
     """
-    messages: list[dict[str, str]] = (
+    content: str | list[dict[str, Any]] = user_message
+    if media_parts:
+        content = [
+            {
+                "type": "text",
+                "text": user_message or "Describe the attached image or video.",
+            },
+            *media_parts,
+        ]
+    messages: list[dict[str, Any]] = (
         [{"role": "system", "content": system_prompt}]
         + list(history)
-        + [{"role": "user", "content": user_message}]
+        + [{"role": "user", "content": content}]
     )
 
     resp = await _groq.chat.completions.create(
-        model=GROQ_MODEL,
+        model=GROQ_VISION_MODEL if media_parts else GROQ_MODEL,
         messages=messages,
         max_tokens=MAX_RESPONSE_TOKENS,
         temperature=0.7,
@@ -230,6 +250,105 @@ def _chunk(text: str, limit: int = 1990) -> list[str]:
 def _strip_mention(text: str, bot_id: int) -> str:
     """Remove the leading @mention of the bot from the message text."""
     return re.sub(rf"<@!?{bot_id}>", "", text).strip()
+
+
+def _data_url(raw: bytes, mime: str) -> str:
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def _extract_video_frames(path: str) -> list[bytes]:
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", path,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    try:
+        duration = max(float(probe.stdout.strip()), 0.1)
+    except (ValueError, TypeError):
+        duration = float(VIDEO_FRAME_COUNT)
+
+    timestamps = [
+        duration * index / (VIDEO_FRAME_COUNT - 1)
+        for index in range(VIDEO_FRAME_COUNT)
+    ]
+    frames: list[bytes] = []
+    with tempfile.TemporaryDirectory(prefix="groq_frames_") as frame_dir:
+        for index, timestamp in enumerate(timestamps):
+            frame_path = Path(frame_dir) / f"frame_{index}.jpg"
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-ss", f"{timestamp:.3f}", "-i", path,
+                    "-frames:v", "1", "-vf", "scale=1024:-2",
+                    "-q:v", "4", str(frame_path),
+                ],
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode == 0 and frame_path.exists():
+                frames.append(frame_path.read_bytes())
+    return frames
+
+
+async def _attachment_media_parts(
+    attachments: list[discord.Attachment],
+) -> list[dict[str, Any]]:
+    """Download Discord media and convert images/videos to Groq vision parts."""
+    parts: list[dict[str, Any]] = []
+    for attachment in attachments[:4]:
+        mime = (
+            attachment.content_type
+            or mimetypes.guess_type(attachment.filename or "")[0]
+            or ""
+        ).lower()
+        try:
+            raw = await attachment.read()
+        except Exception as exc:
+            log.warning("Could not download %s: %s", attachment.filename, exc)
+            continue
+
+        if mime.startswith("image/") and len(raw) <= MAX_MEDIA_BYTES:
+            parts.append({
+                "type": "image_url",
+                "image_url": {"url": _data_url(raw, mime)},
+            })
+            continue
+
+        is_video = mime.startswith("video/") or (
+            not mime
+            and (attachment.filename or "").lower().endswith(
+                (".mp4", ".mov", ".mkv", ".webm", ".avi", ".gif")
+            )
+        )
+        if not is_video:
+            continue
+
+        suffix = Path(attachment.filename or "video.mp4").suffix or ".mp4"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as video_file:
+            video_file.write(raw)
+            video_path = video_file.name
+        try:
+            frames = await asyncio.to_thread(_extract_video_frames, video_path)
+        except Exception as exc:
+            log.warning("Could not extract frames from %s: %s", attachment.filename, exc)
+            frames = []
+        finally:
+            try:
+                os.unlink(video_path)
+            except OSError:
+                pass
+        parts.extend(
+            {
+                "type": "image_url",
+                "image_url": {"url": _data_url(frame, "image/jpeg")},
+            }
+            for frame in frames
+        )
+    return parts
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +383,8 @@ async def on_message(message: discord.Message) -> None:
 
     # Strip the @mention to get the clean user text.
     user_text = _strip_mention(message.content, bot.user.id)
-    if not user_text:
+    media_parts = await _attachment_media_parts(message.attachments)
+    if not user_text and not media_parts:
         await message.reply("Yeah? 👀", mention_author=False)
         return
 
@@ -284,7 +404,12 @@ async def on_message(message: discord.Message) -> None:
     # Show typing indicator while awaiting the API.
     async with message.channel.typing():
         try:
-            reply_text = await _ask_groq(system_prompt, list(history), user_text)
+            reply_text = await _ask_groq(
+                system_prompt,
+                list(history),
+                user_text,
+                media_parts,
+            )
 
         except RateLimitError:
             log.warning("Groq rate limit hit for user %s", user_id)
@@ -320,7 +445,10 @@ async def on_message(message: discord.Message) -> None:
 
     # Persist the exchange to rolling history BEFORE sending (so a crash mid-send
     # doesn't leave an orphaned user turn in the history).
-    history.append({"role": "user",      "content": user_text})
+    history.append({
+        "role": "user",
+        "content": user_text or "[attached media]",
+    })
     history.append({"role": "assistant", "content": reply_text})
 
     # Send — split into chunks if the reply exceeds Discord's 2 000-char limit.
