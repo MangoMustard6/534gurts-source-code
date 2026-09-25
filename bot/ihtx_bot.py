@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-09-19: [Python] Fixed Groq chat after the retired text model was removed: th/chat now uses the current configurable model and accepts image/video vision input with clear media failure messages.
 - 2026-09-19: [Python] Added Groq vision handling for autoreply2 attachments: images are sent directly and videos are sampled into representative frames before AI replies.
 - 2026-09-13: [Python] Replaced preview1280what with the attached 28-segment script pipeline, including optional pre-roll, configurable long-segment duration, downloaded TV source, and separate audio/video concatenation.
 - 2026-09-13: [Python] Replaced preview1280 with the supplied TV-simulator/multipitch montage pipeline; its R3 toggle now passes `--rubberband-args -3` to multipitch.
@@ -316,6 +317,10 @@ except Exception as _groq_init_err:
 _GROQ_VISION_MODEL = os.environ.get(
     "GROQ_VISION_MODEL",
     "meta-llama/llama-4-scout-17b-16e-instruct",
+)
+_GROQ_TEXT_MODEL = os.environ.get(
+    "GROQ_TEXT_MODEL",
+    os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant"),
 )
 _GROQ_MEDIA_MAX_BYTES = 8 * 1024 * 1024
 _GROQ_VIDEO_FRAME_COUNT = 4
@@ -18616,6 +18621,11 @@ async def chat(ctx: commands.Context, *, question: str = ""):
 
     attachments = ctx.message.attachments if ctx.message else []
     has_attachments = bool(attachments)
+    media_parts, has_media = (
+        await _groq_media_content(ctx.message)
+        if has_attachments and ctx.message
+        else ([], False)
+    )
 
     # Detect -debug flag and strip it from the prompt sent to the model
     use_debug_file = "-debug" in question.split()
@@ -18632,11 +18642,10 @@ async def chat(ctx: commands.Context, *, question: str = ""):
 
     # Profile: increment counter, detect name, build personalised system prompt
     profile = _increment_chat_profile(user_id)
+    system_identity = _build_chat_system_prompt(profile, username, current_prefix)
     if question:
         _extract_chat_name(question, profile)
-        system_identity = _build_chat_system_prompt(profile, username, current_prefix)
-        if question:
-            system_identity += await _logo_wiki_context(question)
+        system_identity += await _logo_wiki_context(question)
 
     # Per-channel rolling history (shared across all users in the channel)
     channel_hist = _get_chat_channel_history(channel_id)
@@ -18644,21 +18653,36 @@ async def chat(ctx: commands.Context, *, question: str = ""):
     bot_response: str | None = None
 
     async with ctx.typing():
-        # ── Groq: text-only (with rolling channel history) ───────────────────
-        if has_attachments:
-            bot_response = "bradar i can't read attachments rn, text only 😭"
+        # ── Groq: text and vision input (with rolling channel history) ────────
+        if has_attachments and not has_media:
+            bot_response = (
+                "bradar I couldn't read that attachment. "
+                "Please send an image or a playable video file under Discord's size limit 😭"
+            )
         elif _groq_client is not None:
             try:
+                user_content = (
+                    [
+                        {
+                            "type": "text",
+                            "text": question
+                            or "Describe the attached image or video.",
+                        },
+                        *media_parts,
+                    ]
+                    if has_media
+                    else question
+                )
                 messages = (
                     [{"role": "system", "content": system_identity}]
                     + list(channel_hist)
-                    + [{"role": "user", "content": question}]
+                    + [{"role": "user", "content": user_content}]
                 )
                 loop = asyncio.get_event_loop()
                 groq_resp = await loop.run_in_executor(
                     None,
                     lambda: _groq_client.chat.completions.create(
-                        model="llama-3.3-70b-versatile",
+                        model=_GROQ_VISION_MODEL if has_media else _GROQ_TEXT_MODEL,
                         messages=messages,
                         temperature=0.85,
                         max_tokens=1024,
@@ -18667,11 +18691,24 @@ async def chat(ctx: commands.Context, *, question: str = ""):
                 bot_response = groq_resp.choices[0].message.content
             except Exception as exc:
                 print(f"[groq] error: {type(exc).__name__}: {exc}")
+                if has_media:
+                    bot_response = (
+                        "bradar I couldn't analyze that media right now. "
+                        "Try a smaller image or a short playable video 😭"
+                    )
+                else:
+                    bot_response = (
+                        "bradar the AI service is unavailable right now. "
+                        "Try again in a moment 😭"
+                    )
 
     if bot_response:
         # Save this exchange to the rolling channel history
-        if question:
-            channel_hist.append({"role": "user", "content": question})
+        if question or has_media:
+            channel_hist.append({
+                "role": "user",
+                "content": question or "[attached media]",
+            })
             channel_hist.append({"role": "assistant", "content": bot_response})
 
         # Send as .txt when -debug is set OR the reply is too long for Discord
@@ -18691,7 +18728,7 @@ async def chat(ctx: commands.Context, *, question: str = ""):
             await ctx.send(bot_response)
     else:
         print(f"[chat] empty/blocked response for: {question[:80]!r}")
-        await ctx.send("bradar something went wrong on my end — try again")
+        await ctx.send("bradar I couldn't generate a response this time — try again")
 
 
 @bot.command(name="clearchat", aliases=["resetai", "chatclear"])
@@ -20081,7 +20118,7 @@ async def on_message(message: discord.Message):
                                     model=(
                                         _GROQ_VISION_MODEL
                                         if has_media
-                                        else "llama-3.3-70b-versatile"
+                                        else _GROQ_TEXT_MODEL
                                     ),
                                     messages=[{"role": "system", "content": system2}]
                                     + request_history,
@@ -20176,7 +20213,7 @@ async def on_message(message: discord.Message):
                                     model=(
                                         _GROQ_VISION_MODEL
                                         if has_media
-                                        else "llama-3.3-70b-versatile"
+                                        else _GROQ_TEXT_MODEL
                                     ),
                                     messages=[{"role": "system", "content": system2}]
                                     + request_history,
