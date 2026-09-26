@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-09-26: [Python] Extended raw ffmpeg() pipe steps to run owner-only multi-command Bash pipelines with multipitch, per-export $i/$iN variables, and implicit PI/E multiplication normalization.
 - 2026-09-26: [Python] Combined contiguous native pipe video/audio effects into one FFmpeg pass, stabilized vibrato output, and preserved explicit boundaries for complex graphs and external processors.
 - 2026-09-19: [Python] Fixed Groq chat after the retired text model was removed: th/chat now uses the current configurable model and accepts image/video vision input with clear media failure messages.
 - 2026-09-19: [Python] Added Groq vision handling for autoreply2 attachments: images are sent directly and videos are sampled into representative frames before AI replies.
@@ -602,6 +603,10 @@ def _preprocess_math_expr(
             expr = expr.replace('$w', str(media_vars['w']))
         if 'h' in media_vars:
             expr = expr.replace('$h', str(media_vars['h']))
+    # FFmpeg's expression evaluator requires an explicit operator.  Imported
+    # shell pipelines sometimes write constants as `PI0.33`; interpret that
+    # unambiguously as `PI*0.33` before FFmpeg sees it.
+    expr = re.sub(r'\b(PI|E)(?=(?:\d|\.\d))', r'\1*', expr)
     expr = _expand_lerp(expr)
     if not _FFMPEG_EXPR_RE.search(expr) and _PURE_MATH_RE.match(expr):
         try:
@@ -1551,6 +1556,7 @@ def _run_ffmpeg_shell_pipe(
     extra_args: list[str],
     output: str,
     timeout: int,
+    export_index: int | None = None,
 ) -> tuple[bool, str]:
     """Run an owner-approved raw FFmpeg step through Bash.
 
@@ -1562,8 +1568,9 @@ def _run_ffmpeg_shell_pipe(
     command = (
         "set -o pipefail\n"
         "ffmpeg() { command ffmpeg -hide_banner -loglevel error -y \"$@\"; }\n"
-        f"ffmpeg -i {shlex.quote(current)} {raw_args} "
-        f"{shlex.join(extra_args)} {shlex.quote(output)}\n"
+        + _export_shell_vars(export_index)
+        + f"ffmpeg -i {shlex.quote(current)} {raw_args} "
+        + f"{shlex.join(extra_args)} {shlex.quote(output)}\n"
     )
     try:
         result = subprocess.run(
@@ -1579,6 +1586,169 @@ def _run_ffmpeg_shell_pipe(
         return False, str(exc)
     if result.returncode != 0:
         return False, (result.stderr or result.stdout)[-2000:]
+    return True, ""
+
+
+def _split_ffmpeg_shell_pipeline(raw_args: str) -> tuple[str, list[str]]:
+    """Split an owner-only raw FFmpeg pipeline at command boundaries.
+
+    The normal ``ffmpeg(...)`` syntax contains only arguments for one
+    invocation.  Imported Bash pipelines additionally place commands such as
+    ``ffmpeg -i a$i.mp4`` and ``multipitch ...`` after the first invocation.
+    Those command names are boundaries even when the imported text omitted
+    explicit semicolons between them.  Quotes are respected so command-like
+    text inside a filter expression remains untouched.
+
+    Returns the initial argument fragment (the part appended to the injected
+    ``ffmpeg -i <current>``) and every subsequent complete command.
+    """
+    command_start = re.compile(
+        r"(?<![A-Za-z0-9_./-])"
+        r"(?:ffmpeg(?=\s+-i(?:\s|$))|"
+        r"(?:\./)?(?:[A-Za-z0-9_.-]+/)*multipitch(?=\s))",
+        re.IGNORECASE,
+    )
+    starts: list[int] = []
+    quote: str | None = None
+    escaped = False
+    for match in command_start.finditer(raw_args):
+        # A regex match is only a command boundary when it is outside a
+        # quoted filter value.  Backslash handling mirrors shell quoting
+        # enough for the imported filter payloads.
+        in_quote = None
+        escaped = False
+        for ch in raw_args[:match.start()]:
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\" and in_quote is not None:
+                escaped = True
+                continue
+            if ch in ("'", '"'):
+                if in_quote == ch:
+                    in_quote = None
+                elif in_quote is None:
+                    in_quote = ch
+        quote = in_quote
+        if quote is None:
+            starts.append(match.start())
+
+    if not starts:
+        return raw_args.strip(), []
+
+    fragments: list[str] = []
+    first_end = starts[0]
+    initial = raw_args[:first_end].strip()
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(raw_args)
+        fragments.append(raw_args[start:end].strip())
+    return initial, fragments
+
+
+def _export_shell_vars(export_index: int | None) -> str:
+    """Build safe Bash exports for the per-export ``$i`` filename variables."""
+    if export_index is None:
+        return ""
+    # ``$i`` is the current export number.  ``$i5`` is also supported as a
+    # convenient explicit reference to export 5; setting the numbered names
+    # avoids Bash interpreting it as the variable ``i`` followed by ``5``.
+    lines = [f"export i={int(export_index)}"]
+    lines.extend(f"export i{number}={number}" for number in range(1, 101))
+    return "\n".join(lines) + "\n"
+
+
+def _expand_export_path_token(token: str, export_index: int) -> str:
+    """Resolve the filename token emitted by the final pipeline command."""
+    token = token.strip()
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+        token = token[1:-1]
+    token = re.sub(r"\$\{i(\d+)\}", lambda m: m.group(1), token)
+    token = re.sub(r"\$i(\d+)", lambda m: m.group(1), token)
+    token = re.sub(r"\$\{i\}|\$i", str(export_index), token)
+    return token
+
+
+def _run_ffmpeg_shell_pipeline(
+    current: str,
+    raw_args: str,
+    output: str,
+    timeout: int,
+    export_index: int,
+) -> tuple[bool, str]:
+    """Run a multi-command owner Bash/FFmpeg pipeline for one export.
+
+    The first command receives the current IHTX media as its input.  Later
+    FFmpeg commands and the multipitch executable are run exactly in the
+    temporary export directory, allowing imported scripts to use names such
+    as ``a$i.mp4``, ``h$i.wav``, ``out$i.wav``, and ``$i.mov``.
+    """
+    initial, commands = _split_ffmpeg_shell_pipeline(raw_args)
+    if not initial or not commands:
+        return False, "ffmpeg() multi-command pipeline needs an initial FFmpeg argument block and later commands."
+    if not any(re.match(r"^ffmpeg\s+-i(?:\s|$)", command, re.IGNORECASE) for command in commands):
+        return False, "ffmpeg() multi-command pipeline must include a later `ffmpeg -i ...` command."
+
+    workdir = os.path.dirname(output) or os.getcwd()
+    os.makedirs(os.path.join(workdir, "input"), exist_ok=True)
+    multipitch_bin = _active_multipitch_bin()
+    multipitch_link = os.path.join(workdir, "input", "multipitch")
+    if os.path.isfile(multipitch_bin) and not os.path.lexists(multipitch_link):
+        try:
+            os.symlink(multipitch_bin, multipitch_link)
+        except OSError:
+            pass
+
+    # The final token of the last FFmpeg command is the imported pipeline's
+    # output (normally ``$i.mov``).  We copy it to IHTX's managed output path
+    # after all commands succeed.
+    final_command = commands[-1]
+    try:
+        final_tokens = shlex.split(final_command)
+    except ValueError as exc:
+        return False, f"ffmpeg() multi-command pipeline — invalid args: {exc}"
+    if len(final_tokens) < 3 or final_tokens[0].lower() != "ffmpeg":
+        return False, "ffmpeg() multi-command pipeline must end with an FFmpeg command."
+    final_token = final_tokens[-1]
+    final_name = _expand_export_path_token(final_token, export_index)
+    if not final_name or final_name in {"-", "/dev/null"} or final_name.startswith("-"):
+        return False, "ffmpeg() multi-command pipeline needs a file output on its final FFmpeg command."
+    final_path = final_name if os.path.isabs(final_name) else os.path.join(workdir, final_name)
+
+    # The raw pipeline is owner-only already, so preserve its shell semantics
+    # while keeping the bot-controlled input/output paths quoted.
+    command = (
+        "set -o pipefail\n"
+        "ffmpeg() { command ffmpeg -hide_banner -loglevel error -y \"$@\"; }\n"
+        + _export_shell_vars(export_index)
+        + (
+            f"export PATH={shlex.quote(os.path.dirname(multipitch_bin))}:\"$PATH\"\n"
+            if os.path.isfile(multipitch_bin) else ""
+        )
+        + f"ffmpeg -i {shlex.quote(current)} {initial}\n"
+        + "\n".join(commands)
+        + "\n"
+    )
+    try:
+        result = subprocess.run(
+            ["bash", "-lc", command],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=workdir,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"FFmpeg Bash pipeline timed out (>{timeout}s)"
+    except Exception as exc:
+        return False, str(exc)
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout)[-2000:]
+    if not os.path.isfile(final_path) or os.path.getsize(final_path) == 0:
+        return False, f"FFmpeg Bash pipeline completed without creating `{os.path.basename(final_path)}`."
+    try:
+        if os.path.abspath(final_path) != os.path.abspath(output):
+            shutil.copyfile(final_path, output)
+    except OSError as exc:
+        return False, f"Could not collect FFmpeg Bash pipeline output: {exc}"
     return True, ""
 
 
@@ -4676,6 +4846,8 @@ def _apply_pipe_effects(
     step_timeout: int = 180,
     lossless_audio: bool = False,
     allow_bash_functions: bool = False,
+    export_index: int | None = None,
+    export_count: int | None = None,
 ) -> tuple[bool, str]:
     """Apply pipe effects, batching compatible native filters into one pass.
 
@@ -5065,6 +5237,41 @@ def _apply_pipe_effects(
                         "ffmpeg() Bash substitutions are restricted to the bot owner. "
                         "Use a named pipe effect or an owner account."
                     )
+                pipeline_initial, pipeline_commands = _split_ffmpeg_shell_pipeline(raw_args)
+                is_multi_command_pipeline = bool(
+                    pipeline_commands
+                    and any(
+                        re.match(r"^ffmpeg\s+-i(?:\s|$)", command, re.IGNORECASE)
+                        for command in pipeline_commands
+                    )
+                )
+                if is_multi_command_pipeline:
+                    if not allow_bash_functions:
+                        return False, (
+                            "ffmpeg() multi-command Bash pipelines are restricted "
+                            "to the bot owner."
+                        )
+                    if export_index is None:
+                        return False, (
+                            "ffmpeg() multi-command pipelines require an IHTX "
+                            "export index for `$i` filenames."
+                        )
+                    raw_out = (
+                        out
+                        if is_last
+                        else os.path.join(tmpdir, f"pipe_{i}.mkv")
+                    )
+                    ok, err = _run_ffmpeg_shell_pipeline(
+                        current,
+                        raw_args,
+                        raw_out,
+                        step_timeout,
+                        export_index,
+                    )
+                    if not ok:
+                        return False, f"ffmpeg() multi-command pipeline failed: {err}"
+                    current = raw_out
+                    continue
                 try:
                     user_args = shlex.split(raw_args)
                 except ValueError as e:
@@ -5124,6 +5331,7 @@ def _apply_pipe_effects(
                         auto_video_map + audio_map,
                         raw_out,
                         step_timeout,
+                        export_index=export_index,
                     )
                 else:
                     ok, err = _run_ffmpeg_raw(cmd, timeout=step_timeout)
@@ -6818,6 +7026,8 @@ def _run_ihtx_tagscript_workflow(
                     step_timeout=_per_rep_timeout,
                     lossless_audio=clean_audio_mode,
                     allow_bash_functions=allow_bash_functions,
+                    export_index=i,
+                    export_count=total_exports,
                 )
             finally:
                 _pass_trace = _PIPE_CODE_TRACE.get() or []
@@ -15848,7 +16058,10 @@ _HELP_ENTRIES: list[dict] = [
         "value": (
             "Custom effect chain (comma-delimited). Each effect may have `=` params.\n"
             "**Example:** `th/ihtx 10 0.483 - mp4 huehsv=0.5,negate,multipitch=25|5|8.5`\n"
-            "**Raw FFmpeg step:** `th/ihtx 1 10 false mp4 ffmpeg(-vf hue=h=50),speed=1.5`"
+            "**Raw FFmpeg step:** `th/ihtx 1 10 false mp4 ffmpeg(-vf hue=h=50),speed=1.5`\n"
+            "Owner-only `ffmpeg(...)` steps may contain multiple Bash commands, including "
+            "`ffmpeg -i ...`, `multipitch ...`, and export filenames such as `a$i.mp4` or `$i.mov`; "
+            "on export 5, `$i` is `5` and `$i5` resolves to `5`."
         ),
     },
     {
@@ -15907,7 +16120,8 @@ _HELP_ENTRIES: list[dict] = [
         "value": (
             "Run raw FFmpeg on an attachment. Args go between `-i input` and `output`.\n"
             "Example: `th/ffmpeg -vf negate` · `th/ffmpeg -af volume=2.0`\n"
-            "Shows error log and elapsed time in the reply."
+            "Shows error log and elapsed time in the reply. For multi-command FFmpeg/Bash "
+            "pipelines inside IHTX, use the owner-only `ffmpeg(...)` pipe step."
         ),
     },
     {
