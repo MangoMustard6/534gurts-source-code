@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-09-26: [Python] Combined contiguous native pipe video/audio effects into one FFmpeg pass, stabilized vibrato output, and preserved explicit boundaries for complex graphs and external processors.
 - 2026-09-19: [Python] Fixed Groq chat after the retired text model was removed: th/chat now uses the current configurable model and accepts image/video vision input with clear media failure messages.
 - 2026-09-19: [Python] Added Groq vision handling for autoreply2 attachments: images are sent directly and videos are sampled into representative frames before AI replies.
 - 2026-09-13: [Python] Replaced preview1280what with the attached 28-segment script pipeline, including optional pre-roll, configurable long-segment duration, downloaded TV source, and separate audio/video concatenation.
@@ -4147,7 +4148,10 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
     if name == "vibrato":
         freq = params[0] if len(params) > 0 else "5"
         depth = params[1] if len(params) > 1 else "0.5"
-        return f"vibrato=f={freq}:d={depth}"
+        # FFmpeg's vibrato can emit non-finite tail samples on short lossy
+        # inputs; limiting after it keeps the result safe inside a combined
+        # audio batch, including when another effect changes its gain.
+        return f"vibrato=f={freq}:d={depth},alimiter=limit=0.99"
     if name == "areverse":
         return "areverse,asetpts=PTS-STARTPTS"
     if name == "alimiter":
@@ -4295,6 +4299,33 @@ def _pipe_filter_codec(output_path: str) -> list[str]:
     if Path(output_path).suffix.lower() in {".mkv", ".nut"}:
         return list(_PIPE_LOSSLESS_CODEC)
     return list(_PIPE_FINAL_CODEC)
+
+
+_PIPE_AUDIO_EFFECTS = {
+    "volume", "vibrato", "areverse", "alimiter",
+    "acontrast", "adestroy", "audioequalizer", "4ormulator",
+}
+
+
+def _build_pipe_batch_filter(
+    name: str,
+    params: list[str],
+) -> tuple[str, str] | None:
+    """Return a safe native filter for the combined pipe pass.
+
+    A pipe chain should not pay for a new encode after every simple effect.
+    This helper deliberately accepts only ordinary one-input filters. Complex
+    graphs (labels, semicolons, overlays, or effects with external processing)
+    return ``None`` and are left to the dedicated handlers below.
+    """
+    if name in _PIPE_AUDIO_EFFECTS:
+        af = _build_ffmpeg_pipe_vf(name, params)
+        return ("af", af) if af and ";" not in af and "[" not in af else None
+
+    vf = _build_ffmpeg_pipe_vf(name, params)
+    if not vf or ";" in vf or "[" in vf or "]" in vf:
+        return None
+    return ("vf", vf)
 
 
 def _ff_vf(inp: str, vf: str, out: str, timeout: int = 180) -> tuple[bool, str]:
@@ -4646,8 +4677,12 @@ def _apply_pipe_effects(
     lossless_audio: bool = False,
     allow_bash_functions: bool = False,
 ) -> tuple[bool, str]:
-    """Apply pipe effects sequentially — each effect is rendered individually
-    before the next begins (no filter batching).
+    """Apply pipe effects, batching compatible native filters into one pass.
+
+    Native one-input video/audio filters are accumulated until a complex or
+    external effect is reached.  The accumulated filters are then emitted as
+    one FFmpeg invocation, while effects such as ImageMagick, overlays,
+    Rubber Band, split graphs, and custom FFmpeg remain explicit stages.
     """
     if not effects:
         ok, err = _run_ffmpeg_raw(["ffmpeg", "-y", "-i", input_path, "-c", "copy", output_path], timeout=60)
@@ -4719,6 +4754,53 @@ def _apply_pipe_effects(
 
     with tempfile.TemporaryDirectory() as tmpdir:
         current = input_path
+        pending_vf: list[str] = []
+        pending_af: list[str] = []
+        pending_names: list[str] = []
+
+        def _flush_native_batch(next_index: int) -> tuple[bool, str]:
+            """Render the pending native filters as one FFmpeg pass."""
+            nonlocal current
+            if not pending_vf and not pending_af:
+                return True, ""
+
+            is_final_batch = next_index >= len(effects)
+            batch_out = output_path if is_final_batch else os.path.join(
+                tmpdir,
+                f"pipe_{next_index - 1}.mkv" if lossless_audio else f"pipe_{next_index - 1}.mp4",
+            )
+            batch_cmd = _FF_BASE + ["-i", current]
+            if pending_vf:
+                batch_cmd += ["-vf", ",".join(pending_vf)]
+            if pending_af:
+                batch_cmd += ["-af", ",".join(pending_af)]
+
+            # Video filters require a real encode; audio-only batches can
+            # stream-copy video.  Match the existing intermediate/final
+            # container rules so PCM is never written into MP4.
+            if pending_vf:
+                batch_cmd += _pipe_filter_codec(batch_out)
+            else:
+                batch_cmd += ["-c:v", "copy"]
+                batch_ext = Path(batch_out).suffix.lower()
+                pcm_exts = {".mkv", ".wav", ".avi", ".mka", ".nut", ".mov"}
+                if pending_af and batch_ext in pcm_exts:
+                    batch_cmd += ["-c:a", "pcm_s16le"]
+                elif pending_af:
+                    batch_cmd += ["-c:a", "aac", "-b:a", "320k"]
+                else:
+                    batch_cmd += ["-c:a", "copy"]
+
+            batch_cmd.append(batch_out)
+            ok, err = _run_ffmpeg_raw(batch_cmd, timeout=step_timeout)
+            if not ok:
+                labels = ", ".join(pending_names)
+                return False, f"Combined pipe filters ({labels}) failed: {err}"
+            current = batch_out
+            pending_vf.clear()
+            pending_af.clear()
+            pending_names.clear()
+            return True, ""
 
         for i, (name, params) in enumerate(effects):
             is_last = (i == len(effects) - 1)
@@ -4726,6 +4808,25 @@ def _apply_pipe_effects(
                 tmpdir,
                 f"pipe_{i}.mkv" if lossless_audio else f"pipe_{i}.mp4",
             )
+
+            # Collect ordinary filters.  Video and audio are independent
+            # streams, so a mixed chain such as hflip,volume,negate is still
+            # safely represented by one FFmpeg command with -vf and -af.
+            batch_filter = _build_pipe_batch_filter(name, params)
+            if batch_filter is not None:
+                filter_kind, filter_text = batch_filter
+                if filter_kind == "vf":
+                    pending_vf.append(filter_text)
+                else:
+                    pending_af.append(filter_text)
+                pending_names.append(name)
+                continue
+
+            # A complex/external step is a hard boundary.  Flush the native
+            # filters before running it so effect ordering remains intact.
+            ok, err = _flush_native_batch(i)
+            if not ok:
+                return False, err
 
             # ccshue — ImageMagick haldclut with hue/sat/gamma/gain/offset
             if name == "ccshue":
@@ -6349,6 +6450,9 @@ def _apply_pipe_effects(
                 continue
             return False, f"Unknown pipe effect: {name}"
 
+        ok, err = _flush_native_batch(len(effects))
+        if not ok:
+            return False, err
         if current != output_path:
             shutil.copyfile(current, output_path)
 
