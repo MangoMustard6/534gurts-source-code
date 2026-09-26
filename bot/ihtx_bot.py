@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-09-26: [Python] Made multi-command ffmpeg() Bash pipelines stop at the first failed command and report the failing shell command instead of masking it with a later FFmpeg error.
 - 2026-09-26: [Python] Extended raw ffmpeg() pipe steps to run owner-only multi-command Bash pipelines with multipitch, per-export $i/$iN variables, and implicit PI/E multiplication normalization.
 - 2026-09-26: [Python] Combined contiguous native pipe video/audio effects into one FFmpeg pass, stabilized vibrato output, and preserved explicit boundaries for complex graphs and external processors.
 - 2026-09-19: [Python] Fixed Groq chat after the retired text model was removed: th/chat now uses the current configurable model and accepts image/video vision input with clear media failure messages.
@@ -1717,7 +1718,8 @@ def _run_ffmpeg_shell_pipeline(
     # The raw pipeline is owner-only already, so preserve its shell semantics
     # while keeping the bot-controlled input/output paths quoted.
     command = (
-        "set -o pipefail\n"
+        "set -euo pipefail\n"
+        "trap 'printf \"ffmpeg() pipeline failed near: %s\\n\" \"$BASH_COMMAND\" >&2' ERR\n"
         "ffmpeg() { command ffmpeg -hide_banner -loglevel error -y \"$@\"; }\n"
         + _export_shell_vars(export_index)
         + (
