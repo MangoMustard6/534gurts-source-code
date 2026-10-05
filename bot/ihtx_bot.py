@@ -8,6 +8,8 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-09-26: [Python] Updated invlum to use the supplied Photo Curves 33³ LUT and apply `hue=b=-.225` immediately after each LUT pass.
+- 2026-09-26: [Python] Added attachment forwarding to th>sendmsg/msgsend, including optional text, multiple current-message attachments, and attachments from a replied-to message.
 - 2026-09-26: [Python] Made multi-command ffmpeg() Bash pipelines stop at the first failed command and report the failing shell command instead of masking it with a later FFmpeg error.
 - 2026-09-26: [Python] Extended raw ffmpeg() pipe steps to run owner-only multi-command Bash pipelines with multipitch, per-export $i/$iN variables, and implicit PI/E multiplication normalization.
 - 2026-09-26: [Python] Combined contiguous native pipe video/audio effects into one FFmpeg pass, stabilized vibrato output, and preserved explicit boundaries for complex graphs and external processors.
@@ -654,7 +656,16 @@ HEAVY_LIMIT_OWNER = 5340
 LIMITS_FILE = Path("bot/limits.json")
 USAGE_FILE = Path("bot/usage.json")
 PENDING_RESETS_FILE = Path("bot/pending_resets.json")
-INVLUM_LUT_FILE = Path(__file__).with_name("InvertLuminosity.cube")
+_SUPPLIED_INVLUM_LUT_FILE = (
+    Path(__file__).resolve().parents[1]
+    / "attached_assets"
+    / "LUT_1790477876892.cube"
+)
+INVLUM_LUT_FILE = (
+    _SUPPLIED_INVLUM_LUT_FILE
+    if _SUPPLIED_INVLUM_LUT_FILE.is_file()
+    else Path(__file__).with_name("InvertLuminosity.cube")
+)
 heavy_limits: dict[int, int] = {}
 heavy_usage: dict[int, list[float]] = {}
 
@@ -4313,7 +4324,7 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
         b_curve = "0/1 1/0" if b_inv == "1" else "0/0 1/1"
         return f"curves=r='{r_curve}':g='{g_curve}':b='{b_curve}'"
     if name in ("invlum", "il"):
-        return f"lut3d=file={INVLUM_LUT_FILE}"
+        return f"lut3d=file={INVLUM_LUT_FILE},hue=b=-.225"
     if name == "volume":
         val = params[0] if params else "1"
         return f"volume={val}"
@@ -10622,7 +10633,7 @@ async def invlum_command(ctx: commands.Context, *, args: str = "1"):
             None,
             lambda: _run_ihtxcustom_workflow(
                 input_path, output_path, powers, duration,
-                f"lut3d={lut_path}", "",
+                f"lut3d={lut_path},hue=b=-.225", "",
             ),
         )
 
@@ -16623,8 +16634,8 @@ _HELP_ENTRIES: list[dict] = [
     },
     {
         "cat": "owner",
-        "name": "th/sendmsg <channel_id> <message>  (aliases: msgsend)",
-        "value": "Send a message to any channel by ID. Available to owners and bot moderators.",
+        "name": "th/sendmsg <channel_id> [message]  (aliases: msgsend)",
+        "value": "Send text and/or forward attached files to any channel by ID. Attach files to the command or reply to a message containing them. Available to owners and bot moderators.",
     },
     {
         "cat": "owner",
@@ -18074,12 +18085,16 @@ async def setactivity(ctx: commands.Context, activity_type: str, *, text: str):
 
 @bot.command(name="sendmsg", aliases=["msgsend"])
 @commands.check(_is_bot_mod)
-async def sendmsg(ctx: commands.Context, channel_id: str, *, text: str):
+async def sendmsg(ctx: commands.Context, channel_id: str, *, text: str = ""):
     """Owner-only: send a message to any channel the bot can access, by channel ID.
 
     Usage:
-      th/sendmsg <channel_id> <message>
+      th/sendmsg <channel_id> [message]
       th/sendmsg 123456789012345678 Hello from the both/
+
+    Attachments on the command message are forwarded. If the command is a
+    reply to another message, attachments from that replied-to message are
+    forwarded when the command itself has none.
     """
     try:
         cid = int(channel_id.strip("<#>"))
@@ -18102,8 +18117,51 @@ async def sendmsg(ctx: commands.Context, channel_id: str, *, text: str):
         await ctx.reply("❌ That channel type doesn't support text messages.")
         return
 
+    attachments: list[discord.Attachment] = list(
+        ctx.message.attachments if ctx.message else []
+    )
+    if not attachments and ctx.message and ctx.message.reference:
+        try:
+            referenced = await ctx.channel.fetch_message(
+                ctx.message.reference.message_id
+            )
+            attachments = list(referenced.attachments)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            # Text-only forwarding should still work when the referenced
+            # message cannot be fetched.
+            attachments = []
+
+    if not text.strip() and not attachments:
+        await ctx.reply(
+            "❌ Provide a message, attach a file, or reply to a message with an attachment.\n"
+            "Usage: `th/sendmsg <channel_id> [message]`"
+        )
+        return
+
     try:
-        await channel.send(text)
+        if len(attachments) > 10:
+            await ctx.reply("❌ Discord allows at most 10 attachments per forwarded message.")
+            return
+
+        with tempfile.TemporaryDirectory(prefix="sendmsg_") as tmpdir:
+            files: list[discord.File] = []
+            for index, attachment in enumerate(attachments, 1):
+                original_name = Path(attachment.filename or "").name
+                filename = original_name or f"attachment_{index}"
+                local_path = os.path.join(tmpdir, f"{index}_{filename}")
+                try:
+                    await download_attachment(attachment, local_path)
+                except Exception as exc:
+                    await ctx.reply(
+                        f"❌ Failed to download attachment `{filename}`: `{exc}`"
+                    )
+                    return
+                files.append(discord.File(local_path, filename=filename))
+
+            await channel.send(
+                content=text.strip() or None,
+                files=files or [],
+            )
         if ctx.message:
             await ctx.message.add_reaction("✅")
     except discord.Forbidden:
