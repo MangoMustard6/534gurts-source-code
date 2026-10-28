@@ -37,14 +37,14 @@
       },
       "test": {
         "name": "test",
-        "content": "{iscript:load {iv} f\ndeepfry f}",
+        "content": "{iscript:load {iv} i\nblur 10\n}",
         "owner_id": 1355759019330895973,
         "created_at": "2026-06-20T01:58:18.303600+00:00",
-        "uses": 4,
+        "uses": 6,
         "aliases": [],
         "allowed_roles": [],
         "denied_users": [],
-        "edited_at": "2026-06-25T09:53:19.391093+00:00",
+        "edited_at": "2026-10-28T02:58:28.319888+00:00",
         "guild_origin": "1496091892067209307"
       },
       "braxtons_gm105oldp": {
