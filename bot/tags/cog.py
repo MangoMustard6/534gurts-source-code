@@ -112,6 +112,7 @@ class TagCog(commands.Cog, name="Tags"):
                 )
 
         tag_ctx = build_context(ctx, args)
+        tag_ctx["tag_owner_id"] = tag["owner_id"]
         text, engine_blocks = parse(tag["content"], tag_ctx)
 
         files: list[discord.File] = []
@@ -352,6 +353,7 @@ class TagCog(commands.Cog, name="Tags"):
         chosen = random.choice(tags)
         name = chosen["name"]
         tag_ctx = build_context(ctx, "")
+        tag_ctx["tag_owner_id"] = chosen["owner_id"]
         text, engine_blocks = parse(chosen["content"], tag_ctx)
 
         files: list[discord.File] = []
@@ -744,7 +746,11 @@ class TagCog(commands.Cog, name="Tags"):
         )
         embed.add_field(
             name="{bash:…}  /  {sh:…}  *(owner only)*",
-            value="Run a shell command and return stdout. 5 s timeout, 4 000 char output limit.",
+            value=(
+                "Run shell code using binaries available on the bot's PATH, and return stdout. "
+                "Only the bot owner can run it, and only from a tag authored by a bot owner. "
+                "Example: `{sh:command -v ffmpeg}`. 300 s timeout, 4 000 character output limit."
+            ),
             inline=False,
         )
         embed.add_field(

@@ -7,12 +7,10 @@ A Discord bot that applies destructive visual and audio effects to videos and im
 - Start the Python bot and Pipeline Visualizer via the **Run** button:
   - `IHTX Discord Bot` — Python bot (`python3 main.py`)
   - `Pipeline Visualizer` — effect builder (`PORT=8099 node public/serve.mjs`)
-- Start `IHTX Discord Bot (TypeScript)` manually from the Workflows panel when its separate Discord application token is configured.
+- `IHTX Discord Bot (TypeScript)` is optional and is not part of the default run workflow.
 - Required secrets (set via Replit Secrets):
   - `DISCORD_TOKEN` — Python bot token
   - `BOT_OWNER_ID` — your Discord user ID
-- Required only for the manually started TypeScript bot:
-  - `DISCORD_TOKEN_TS` — TypeScript bot token from a separate Discord application
 - Optional secrets: `GROQ_API_KEY` (AI chat on Python bot), `GEMINI_API_KEY` (AI chat on TS bot), `CATBOX_USERHASH` (links Catbox uploads to your account)
 
 ## Setup verification
@@ -24,8 +22,8 @@ The imported workspace is ready to run with the existing workflows:
 - `Pipeline Visualizer` — `PORT=8099 node public/serve.mjs`
 
 The default `Project` workflow starts the Python bot and Pipeline Visualizer.
-The TypeScript bot is intentionally not part of that parallel startup because it
-requires a separate Discord application token.
+The TypeScript bot is intentionally not part of that parallel startup; the
+Python bot and visualizer do not depend on its separate Discord application token.
 
 After installing dependencies, verify the workspace with:
 
@@ -34,9 +32,9 @@ python3 -m compileall -q main.py bot AutotuneBot groq_chatbot videoEditBot
 pnpm run typecheck
 ```
 
-The Python bot requires `DISCORD_TOKEN` and `BOT_OWNER_ID` before startup. The
-TypeScript bot additionally requires `DISCORD_TOKEN_TS` when started manually;
-the visualizer serves its preview on port `8099`.
+The Python bot requires `DISCORD_TOKEN` and `BOT_OWNER_ID` before startup; Groq
+chat is enabled when `GROQ_API_KEY` is present. The visualizer serves on port
+`8099`.
 
 ## Stack
 
@@ -55,6 +53,7 @@ the visualizer serves its preview on port `8099`.
 ## Architecture decisions
 
 - Bot token read from `DISCORD_TOKEN` env var at startup; exits cleanly if missing
+- Groq defaults use `openai/gpt-oss-20b` for text and `qwen/qwen3.8-27b` for vision
 - Discord login HTTP 429 responses stop the Python launcher without retries; restart it manually after Discord clears the temporary block
 - All AI integrations (Gemini, Anthropic, fal, replicate) are optional — gracefully degrade if keys not set
 - System tools (ffmpeg, sox, imagemagick, rubberband) provided via Nix `stable-25_05` channel
@@ -66,4 +65,5 @@ the visualizer serves its preview on port `8099`.
 ## Gotchas
 
 - `DISCORD_TOKEN` must be set in Replit Secrets before the bot will start
+- `{sh:...}` / `{bash:...}` tag blocks run only for the bot owner from tags authored by a bot owner; installed Nix binaries are available on the shell `PATH`
 - yt-dlp version must be recent (>=2026.3.17) to avoid YouTube API breakage

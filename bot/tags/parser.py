@@ -87,7 +87,7 @@ _ENGINE_PRIORITY: dict[str, int] = {name: i for i, name in enumerate(_ENGINE_ORD
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
-_VAR_RE = re.compile(r"\{([a-z_][a-z0-9_]*(?:\.[a-z0-9_]+)?)\}", re.IGNORECASE)
+_VAR_RE = re.compile(r"(?<!\$)\{([a-z_][a-z0-9_]*(?:\.[a-z0-9_]+)?)\}", re.IGNORECASE)
 
 # Matches {name:content} — content may contain ONE level of nested {}.
 _BLOCK_RE = re.compile(

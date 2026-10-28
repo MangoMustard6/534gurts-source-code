@@ -36,6 +36,19 @@ On **Replit**, set these via the Secrets panel and run the `IHTX Discord Bot` wo
 
 ---
 
+## Tag system
+
+Create and run reusable tags with `t!tag create <name> <content>` and
+`t!tag <name> [args]`. Tags support variables, inline functions, loops, and
+script blocks; run `t!tag help` in Discord for the full reference.
+
+Use `{sh:...}` or `{bash:...}` for shell code. For example:
+`{sh:command -v ffmpeg}`. Commands use the binaries installed on the bot's
+`PATH`. Shell code runs only when the bot owner invokes a tag authored by a bot
+owner; community-authored tags cannot run shell code.
+
+---
+
 ## Core Interface — ihtxgen / th/ihtx
 
 The main effect command. Available as a slash command (`/ihtxgen`) and as a prefix command (`th/ihtx`, `th/effect`, `th/destroy`).
@@ -195,7 +208,6 @@ th/ihtx 2 3 - mov mp4 swirl=180;0.4,huehsv=0.3,multipitch=-4;0;4
 | `miui` | `miui` | MIUI-style watermark overlay | `overlay` |
 | `reddit` | `reddit` | Reddit-style watermark overlay | `overlay` |
 | `caption` | `caption=<text>` | Text at top-centre | `drawtext` |
-| `frei0r` | `frei0r=<plugin>[;p1][;p2]…` | Any frei0r plugin with colon-separated params | `frei0r=plugin:p1:p2` |
 | `ffmpeg(…)` | `ffmpeg(-vf hue=h=90)` | Raw FFmpeg args injected into the pipeline | Passed verbatim via `shlex.split` |
 | `🥸🥸` | `🥸🥸` | Hue shift by π radians | `hue=h=3.14159265` |
 | `﷽` | `﷽` | Equirectangular → ball → fisheye chain | `v360=e:ball,v360=fisheye:22:7` |

@@ -3,7 +3,7 @@ bash: engine — execute a shell command and return stdout.
 
 Aliases: bash, sh
 
-SECURITY: Restricted to bot owners only.
+SECURITY: Only bot owners can run shell blocks from bot-owner-authored tags.
 
 Limits:
   Timeout : 300 seconds
@@ -18,7 +18,7 @@ Usage (prefix syntax):
     date +"%Y-%m-%d"
 
 Usage (brace syntax):
-    {bash:echo Hello World}
+    {sh:echo Hello World}
 """
 
 import asyncio
@@ -50,10 +50,19 @@ class BashEngine(BaseEngine):
             from bot.ihtx_bot import owner_ids
             is_owner = ctx.author.id in owner_ids
         except Exception:
+            owner_ids = set()
             is_owner = False
 
         if not is_owner:
             return EngineResult(error="bash: restricted to bot owners")
+
+        # Tags are shared and can be invoked by other people. Do not let an
+        # owner accidentally execute shell code saved by an untrusted author.
+        tag_owner_id = tag_ctx.get("tag_owner_id")
+        if tag_owner_id not in owner_ids:
+            return EngineResult(
+                error="bash: only bot-owner-authored tags may run shell code"
+            )
 
         cmd = content.strip()
         if not cmd:
