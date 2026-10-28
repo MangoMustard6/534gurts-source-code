@@ -43,10 +43,10 @@ load_dotenv()
 DISCORD_TOKEN: str = os.environ["DISCORD_TOKEN"]
 GROQ_API_KEY:  str = os.environ["GROQ_API_KEY"]
 
-GROQ_MODEL          = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_MODEL          = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 GROQ_VISION_MODEL   = os.getenv(
     "GROQ_VISION_MODEL",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "qwen/qwen3.8-27b",
 )
 MAX_HISTORY         = int(os.getenv("MAX_HISTORY", "15"))     # messages kept per channel
 MAX_RESPONSE_TOKENS = int(os.getenv("MAX_RESPONSE_TOKENS", "512"))

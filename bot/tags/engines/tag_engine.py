@@ -40,6 +40,7 @@ class TagRunEngine(BaseEngine):
 
         sub_ctx = dict(tag_ctx)
         sub_ctx["_tag_depth"] = depth + 1
+        sub_ctx["tag_owner_id"] = tag["owner_id"]
 
         text, engine_blocks = parse(tag["content"], sub_ctx)
 

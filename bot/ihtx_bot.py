@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-10-28: [Python] Migrated Groq text and vision defaults to current supported models, protected Bash parameter expansion in tags, restricted shell tags to bot-owner-authored content, and removed frei0r from the pipe-effect interface.
 - 2026-09-26: [Python] Updated invlum to use the supplied Photo Curves 33³ LUT and apply `hue=b=-.225` immediately after each LUT pass.
 - 2026-09-26: [Python] Added attachment forwarding to th>sendmsg/msgsend, including optional text, multiple current-message attachments, and attachments from a replied-to message.
 - 2026-09-26: [Python] Made multi-command ffmpeg() Bash pipelines stop at the first failed command and report the failing shell command instead of masking it with a later FFmpeg error.
@@ -321,11 +322,11 @@ except Exception as _groq_init_err:
 
 _GROQ_VISION_MODEL = os.environ.get(
     "GROQ_VISION_MODEL",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "qwen/qwen3.8-27b",
 )
 _GROQ_TEXT_MODEL = os.environ.get(
     "GROQ_TEXT_MODEL",
-    os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant"),
+    os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b"),
 )
 _GROQ_MEDIA_MAX_BYTES = 8 * 1024 * 1024
 _GROQ_VIDEO_FRAME_COUNT = 4
@@ -3666,7 +3667,7 @@ PIPE_EFFECT_NAMES = {
     "invertrgb", "invlum", "volume", "vibrato", "areverse", "vreverse",
     "channelblend", "huehsv", "multipitch", "mp", "multi",
     "multipitchcustom", "mpcustom", "fileaa", "lut",
-    "syncaudio", "speed", "ffmpeg", "frei0r",
+    "syncaudio", "speed", "ffmpeg",
     "wave",
     "tvsim", "tv",
     "swirl",
@@ -4158,13 +4159,6 @@ def _build_ffmpeg_pipe_vf(name: str, params: list[str]) -> str | None:
     if name in ("nepeta", "watermark", "ring", "miui", "reddit"):
         # Overlay effects — handled in _apply_pipe_effects (need second input via -i)
         return None
-    if name == "frei0r":
-        # frei0r=plugin:p1:p2:…  (colon-separated params)
-        plugin = params[0] if params else ""
-        if not plugin:
-            return None
-        rest = ":".join(params[1:]) if len(params) > 1 else ""
-        return f"frei0r={plugin}:{rest}" if rest else f"frei0r={plugin}"
     if name == "brightness":
         # params: brightness|contrast|saturation|gamma  (all via eq filter, 100=unchanged)
         b = _expr_param(params[0] if params else None, 0.0)
@@ -16105,12 +16099,12 @@ _HELP_ENTRIES: list[dict] = [
             "**Aesthetics:** `folkvalley` / `fv` — music replacement + brightness + overlay\n"
             "**Color:** `labadjust=l;a;b` (negate Lab channels; each 0 or 1)\n"
             "**Overlay:** `nepeta[=url]` (cat-ear PNG or custom image scaled to video) `watermark=<url>` `ring[=url]` `miui` `reddit` `caption=<text>`\n"
-            "**Raw / FX:** `ffmpeg(<args>)` `frei0r=plugin:params` `lut=<url>` `speed=<factor>`"
+            "**Raw / FX:** `ffmpeg(<args>)` `lut=<url>` `speed=<factor>`"
         ),
     },
     {
         "cat": "heavy",
-        "name": "Newer filters & plugins (scgv, gradientmap, frei0r…)",
+        "name": "Newer filters (scgv, gradientmap…)",
         "value": (
             "Newer IHTX effects are still used as comma-separated pipe effects; put each effect in the chain where it should run.\n"
             "**Vocoder:** `scgv=<carrier_url>[;bands;ratio;threshold;release;attack;makeup;knee;detection;range;volume;pitch]` "
@@ -16122,8 +16116,6 @@ _HELP_ENTRIES: list[dict] = [
             "example: `labadjust=1;0;1`.\n"
             "**Wave distortion:** `wave=hSpeed|hFreq|hAmp|hPhase|vSpeed|vFreq|vAmp|vPhase[|separate|noclip]` "
             "— example: `wave=1|1|2|0|1|1|2|0|1|1`.\n"
-            "**Installed frei0r plugins:** `frei0r=plugin:param:param` — example: "
-            "`frei0r=distort0r:*T`. Plugin names depend on the bot host; an unavailable plugin returns an FFmpeg error.\n"
             "**Full example:** `th/ihtx 3 1.0 - mp4 gradientmap=0,0,0,0,0;255,80,20,255,1,wave=1|1|2|0|1|1|2|0`"
         ),
     },
@@ -16149,17 +16141,6 @@ _HELP_ENTRIES: list[dict] = [
             "• **gain** — RGB gain/multiply (default 1.0)\n"
             "• **offset** — add to all channels −1…1 (default 0)\n"
             "Example: `th/ihtx 1 5 - mp4 ccshue=90|1.5|1.2|1|0`"
-        ),
-    },
-    {
-        "cat": "heavy",
-        "name": "frei0r pipe effect  (frei0r=plugin:params)",
-        "value": (
-            "Apply any installed frei0r video effect plugin via FFmpeg.\n"
-            "Params are colon-separated floats/strings per the plugin spec.\n"
-            "Common plugins: `distort0r` `cartoon` `edgeglow` `pixelize` `plasma` `sobel` `threshold0r`\n"
-            "Example: `th/ihtx 1 5 - mp4 frei0r=distort0r:0.5:0.1`\n"
-            "Also available in tags: `{frei0r:distort0r:0.5}` or `frei0r:\\ndistort0r:0.5` prefix block"
         ),
     },
     {
