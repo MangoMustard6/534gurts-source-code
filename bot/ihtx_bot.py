@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-10-28: [Python] Made `th/chat` and autoreply2 generate and attach sanitized PNG illustrations for direct image requests instead of returning text-only claims.
 - 2026-10-28: [Python] Migrated Groq text and vision defaults to current supported models, protected Bash parameter expansion in tags, restricted shell tags to bot-owner-authored content, and removed frei0r from the pipe-effect interface.
 - 2026-09-26: [Python] Updated invlum to use the supplied Photo Curves 33³ LUT and apply `hue=b=-.225` immediately after each LUT pass.
 - 2026-09-26: [Python] Added attachment forwarding to th>sendmsg/msgsend, including optional text, multiple current-message attachments, and attachments from a replied-to message.
@@ -247,8 +248,11 @@ _UPDATELOG (newest first):
 import discord
 from discord.ext import commands, tasks
 from bot.tags.cog import TagCog
+from bot.ai_image import generate_image_png as _generate_image_png
+from bot.ai_image import is_image_generation_request as _is_image_generation_request
 import asyncio
 from contextvars import ContextVar
+import io
 import json
 import math
 import os
@@ -18463,6 +18467,7 @@ AI:
 Important:
 - ONLY mention or reference bot commands when the user is explicitly asking about the bot, its commands, or its features. For all other topics, ignore the command reference entirely and just answer naturally.
 - When the user IS asking about commands, answer accurately using the reference above. Do not invent commands or effects that do not exist.
+- When the user directly asks for an image, the bot can attach a generated SVG-based PNG illustration. Let the image handler do that instead of claiming an image exists in text, and do not promise photorealism.
 - Stay concise and helpful. No roleplay, no lore, no fictional backstory.
 - If a query is NSFW, refuse calmly.
 - Detect the user's language and reply in it. Default to English if ambiguous."""
@@ -18484,6 +18489,69 @@ def _autoreply2_quota_fallback(user_id: int) -> str:
         "534gurts is here, but my AI provider temporarily ran out of tokens. "
         "I’m not ignoring you—please try again after the quota resets!"
     )
+
+
+async def _reply_autoreply2_image(
+    message: discord.Message,
+    user_id: int,
+    no_ping: bool,
+) -> None:
+    """Generate and attach an image, or report clearly when generation fails."""
+    global _ar2_rate_limited_until
+
+    mention_author = not no_ping and not message.author.bot
+    if time.time() < _ar2_rate_limited_until:
+        await message.reply(
+            "I can’t create an image right now because the AI service is rate-limited. Please try again later.",
+            mention_author=mention_author,
+        )
+        return
+
+    try:
+        async with message.channel.typing():
+            png_bytes = await asyncio.to_thread(
+                _generate_image_png,
+                _groq_client,
+                _GROQ_TEXT_MODEL,
+                message.content,
+            )
+    except Exception as exc:
+        print(f"[groq/image] generation failed: {type(exc).__name__}: {exc}")
+        error_text = "I couldn’t generate that image this time. Please try a shorter description."
+        if "429" in str(exc) or "rate_limit" in str(exc).lower():
+            _ar2_rate_limited_until = time.time() + 300
+            error_text = (
+                "I can’t create an image right now because the AI service is rate-limited. "
+                "Please try again later."
+            )
+        await message.reply(error_text, mention_author=mention_author)
+        return
+
+    try:
+        await message.reply(
+            "Here’s your image.",
+            file=discord.File(io.BytesIO(png_bytes), filename="534gurts_generated.png"),
+            mention_author=mention_author,
+        )
+    except discord.HTTPException as exc:
+        print(f"[groq/image] Discord upload failed: {type(exc).__name__}: {exc}")
+        await message.reply(
+            "I generated the image, but Discord couldn’t upload it. Please try again.",
+            mention_author=mention_author,
+        )
+        return
+
+    history = _ar2_groq_histories.setdefault(user_id, [])
+    history.extend(
+        [
+            {"role": "user", "content": message.content},
+            {"role": "assistant", "content": "[generated image attached]"},
+        ]
+    )
+    if len(history) > _CHAT_MAX_HISTORY:
+        del history[:-_CHAT_MAX_HISTORY]
+
+
 _CHAT_MAX_HISTORY = 20
 
 # ── Per-channel rolling context + user profiles for th/chat ──────────────────
@@ -19010,10 +19078,26 @@ async def chat(ctx: commands.Context, *, question: str = ""):
     channel_hist = _get_chat_channel_history(channel_id)
 
     bot_response: str | None = None
+    generated_image: bytes | None = None
 
     async with ctx.typing():
+        if not has_attachments and _is_image_generation_request(question):
+            try:
+                generated_image = await asyncio.to_thread(
+                    _generate_image_png,
+                    _groq_client,
+                    _GROQ_TEXT_MODEL,
+                    question,
+                )
+                bot_response = "Here’s your image."
+            except Exception as exc:
+                print(f"[groq/image] th/chat generation failed: {type(exc).__name__}: {exc}")
+                bot_response = (
+                    "bradar I couldn’t generate that image this time. "
+                    "Try a shorter description 😭"
+                )
         # ── Groq: text and vision input (with rolling channel history) ────────
-        if has_attachments and not has_media:
+        elif has_attachments and not has_media:
             bot_response = (
                 "bradar I couldn't read that attachment. "
                 "Please send an image or a playable video file under Discord's size limit 😭"
@@ -19068,12 +19152,24 @@ async def chat(ctx: commands.Context, *, question: str = ""):
                 "role": "user",
                 "content": question or "[attached media]",
             })
-            channel_hist.append({"role": "assistant", "content": bot_response})
+            channel_hist.append({
+                "role": "assistant",
+                "content": "[generated image attached]" if generated_image else bot_response,
+            })
+
+        if generated_image:
+            await ctx.send(
+                bot_response,
+                file=discord.File(
+                    io.BytesIO(generated_image),
+                    filename="534gurts_generated.png",
+                ),
+            )
+            return
 
         # Send as .txt when -debug is set OR the reply is too long for Discord
         send_as_file = use_debug_file or len(bot_response) > 1800
         if send_as_file:
-            import io
             txt_bytes = bot_response.encode("utf-8")
             if len(txt_bytes) > 25 * 1024 * 1024:
                 await ctx.send("Response is >25 MB even as text — too large to upload.")
@@ -20447,7 +20543,11 @@ async def on_message(message: discord.Message):
                 if message.content:
                     system2 += await _logo_wiki_context(message.content)
                 reply2_text = None
-                if not has_attachments or has_media:
+                reply2_image_handled = False
+                if not has_attachments and _is_image_generation_request(message.content):
+                    await _reply_autoreply2_image(message, uid2, no_ping)
+                    reply2_image_handled = True
+                elif not has_attachments or has_media:
                     if time.time() < _ar2_rate_limited_until:
                         reply2_text = _autoreply2_quota_fallback(uid2)
                     else:
@@ -20493,7 +20593,8 @@ async def on_message(message: discord.Message):
                                 _ar2_rate_limited_until = time.time() + 300
                                 reply2_text = _autoreply2_quota_fallback(uid2)
                 if not reply2_text:
-                    reply2_text = "I couldn't render an AI response this time—please try that wiki question again."
+                    if not reply2_image_handled:
+                        reply2_text = "I couldn't render an AI response this time—please try that wiki question again."
                 if reply2_text:
                     await asyncio.sleep(random.uniform(5, 7.5))
                     chunks2 = [reply2_text[i:i+1900] for i in range(0, len(reply2_text), 1900)]
@@ -20540,9 +20641,13 @@ async def on_message(message: discord.Message):
                     system2 += "\n\nYou are speaking with a trusted bot collaborator. Be warm and encouraging."
 
                 reply2_text = None
+                reply2_image_handled = False
 
                 # ── Groq text and vision messages ─────────────────────────────
-                if not has_attachments or has_media:
+                if not has_attachments and _is_image_generation_request(message.content):
+                    await _reply_autoreply2_image(message, uid2, no_ping)
+                    reply2_image_handled = True
+                elif not has_attachments or has_media:
                     if time.time() < _ar2_rate_limited_until:
                         reply2_text = _autoreply2_quota_fallback(uid2)
                     else:
@@ -20588,7 +20693,7 @@ async def on_message(message: discord.Message):
                                 _ar2_rate_limited_until = time.time() + 300
                                 reply2_text = _autoreply2_quota_fallback(uid2)
 
-                if not reply2_text:
+                if not reply2_text and not reply2_image_handled:
                     reply2_text = "I couldn't render an AI response this time—please try that wiki question again."
                 if reply2_text:
                     await asyncio.sleep(random.uniform(5, 7.5))

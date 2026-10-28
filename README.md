@@ -516,10 +516,11 @@ Guess which effect was applied to a randomly selected clip. Shows a scrambled na
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `th/chat <question>` | `th/ask`, `th/ai` | Chat with the AI (Groq — Llama 3.3 70B Versatile). Text only. |
+| `th/chat <question>` | `th/ask`, `th/ai` | Chat with the AI (Groq); direct image requests return an attached PNG illustration. |
 | `th/clearchat` | `th/resetai`, `th/chatclear` | Clear your personal AI chat history |
 
 AI auto-reply can be enabled per-channel via `th/autoreply2`. Requires `GROQ_API_KEY`.
+Direct image requests create an SVG-based illustration, rendered locally as a PNG.
 
 > **Heavy command:** `th/chat` counts toward the daily heavy-command limit.
 
@@ -647,7 +648,7 @@ A farming mini-game. All commands are hybrid (slash + `th/` prefix):
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DISCORD_TOKEN` | **Yes** | Discord bot token |
-| `GROQ_API_KEY` | **Yes** | Groq API key — enables `th/chat` and AI auto-reply (Llama 3.3 70B) |
+| `GROQ_API_KEY` | No | Groq API key — enables `th/chat`, AI auto-reply, and generated PNG illustrations |
 | `CATBOX_USERHASH` | No | Catbox user hash — links uploads to your account; omit for anonymous uploads |
 
 ### Data Files (auto-created in `bot/`)
