@@ -231,16 +231,16 @@ EFFECTS = [
     ("static",     "static.gif",        "preset",
         f"{_BASE_NOISE},curves=vintage,eq=contrast=1.2"),
     ("melt",       "melt.gif",          "preset",
-        f"perspective=x0=0:y0=0:x1=iw:y1=20*sin(t*3)"
-        f":x2=0:y2=ih:x3=iw:y3=ih-20*sin(t*3),"
+        "perspective=x0=0:y0=0:x1=W:y1=20:x2=0:y2=H:x3=W:y3=H-20,"
+        "rotate=a='0.03*sin(t*3)':fillcolor=black,"
         + _BASE_NOISE),
     ("corrupt",    "corrupt.gif",       "preset",
         f"drawgrid=x=0:y=0:w=iw:h=5:t=1:color=white@0.1,{_BASE_NOISE},"
         f"eq=gamma=1.5:saturation=0.3:contrast=2"),
     ("rainbow",    "rainbow.gif",       "preset_complex",
         "[0:v]split=3[r][g][b];"
-        "[r]lutrgb=r=val:g=0:b=0,pad=iw+6:ih:3:0[ro];"
-        "[g]lutrgb=r=0:g=val:b=0[go];"
+        "[r]lutrgb=r=val:g=0:b=0,pad=iw+6:ih:6:0[ro];"
+        "[g]lutrgb=r=0:g=val:b=0,pad=iw+6:ih:3:0[go];"
         "[b]lutrgb=r=0:g=0:b=val,pad=iw+6:ih:0:0[bo];"
         "[ro][go]blend=all_mode=addition[rg];"
         "[rg][bo]blend=all_mode=addition"),
