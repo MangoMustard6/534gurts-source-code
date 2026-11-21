@@ -1196,8 +1196,8 @@ PRESET_FILTERS: dict[str, dict] = {
         "vf": None,
         "complex": (
             "[0:v]split=3[r][g][b];"
-            "[r]lutrgb=r=val:g=0:b=0,pad=iw+6:ih:3:0[ro];"
-            "[g]lutrgb=r=0:g=val:b=0[go];"
+            "[r]lutrgb=r=val:g=0:b=0,pad=iw+6:ih:6:0[ro];"
+            "[g]lutrgb=r=0:g=val:b=0,pad=iw+6:ih:3:0[go];"
             "[b]lutrgb=r=0:g=0:b=val,pad=iw+6:ih:0:0[bo];"
             "[ro][go]blend=all_mode=addition[rg];"
             "[rg][bo]blend=all_mode=addition"
@@ -1209,8 +1209,10 @@ PRESET_FILTERS: dict[str, dict] = {
     },
     "melt": {
         "vf": (
-            "perspective=x0=0:y0=0:x1=iw:y1=20*sin(t*3)"
-            ":x2=0:y2=ih:x3=iw:y3=ih-20*sin(t*3),"
+            # perspective only exposes W/H (no iw/ih, no t/n), so the droop is
+            # static and the time-based wobble comes from rotate.
+            "perspective=x0=0:y0=0:x1=W:y1=20:x2=0:y2=H:x3=W:y3=H-20,"
+            "rotate=a='0.03*sin(t*3)':fillcolor=black,"
             + _BASE_NOISE
         ),
         "complex": None,
