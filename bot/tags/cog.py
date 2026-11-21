@@ -19,6 +19,7 @@ from discord.ext import commands
 from .storage import TagStorage
 from .parser import parse, build_context, detect_engines, ENGINE_DISPLAY_NAMES
 from . import engines
+from bot.ui_v2 import embed_payload
 
 log = logging.getLogger(__name__)
 
@@ -102,13 +103,13 @@ class TagCog(commands.Cog, name="Tags"):
         tag = await storage.get(ctx.guild.id, name.lower())
         if tag is None:
             return await ctx.reply(
-                embed=discord.Embed(description=f"❌ Tag `{name}` not found.", color=discord.Color.red())
+                **embed_payload(discord.Embed(description=f"❌ Tag `{name}` not found.", color=discord.Color.red()))
             )
 
         if isinstance(ctx.author, discord.Member):
             if not _can_use(tag, ctx.author) and not self._owner(ctx):
                 return await ctx.reply(
-                    embed=discord.Embed(description="❌ You don't have permission to use this tag.", color=discord.Color.red())
+                    **embed_payload(discord.Embed(description="❌ You don't have permission to use this tag.", color=discord.Color.red()))
                 )
 
         tag_ctx = build_context(ctx, args)
@@ -167,13 +168,13 @@ class TagCog(commands.Cog, name="Tags"):
 
         name = name.lower().strip()
         if len(name) > MAX_TAG_NAME:
-            return await ctx.reply(embed=discord.Embed(description=f"❌ Name too long (max {MAX_TAG_NAME} chars).", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description=f"❌ Name too long (max {MAX_TAG_NAME} chars).", color=discord.Color.red())))
         if not _valid_name(name):
-            return await ctx.reply(embed=discord.Embed(description="❌ Tag name may only contain letters, numbers, hyphens, and underscores.", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description="❌ Tag name may only contain letters, numbers, hyphens, and underscores.", color=discord.Color.red())))
         if name in _RESERVED:
-            return await ctx.reply(embed=discord.Embed(description=f"❌ `{name}` is a reserved subcommand name.", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description=f"❌ `{name}` is a reserved subcommand name.", color=discord.Color.red())))
         if len(content) > MAX_TAG_CONTENT:
-            return await ctx.reply(embed=discord.Embed(description=f"❌ Content too long (max {MAX_TAG_CONTENT} chars).", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description=f"❌ Content too long (max {MAX_TAG_CONTENT} chars).", color=discord.Color.red())))
 
         ok = await storage.create(ctx.guild.id, name, content, ctx.author.id)
         if not ok:
@@ -182,9 +183,9 @@ class TagCog(commands.Cog, name="Tags"):
             if existing and (existing["owner_id"] == ctx.author.id or self._owner(ctx)):
                 result = await storage.edit(ctx.guild.id, name, content, ctx.author.id, self._owner(ctx))
                 if result == "ok":
-                    return await ctx.reply(embed=discord.Embed(description=f"✅ Tag `{name}` updated.", color=discord.Color.green()))
-            return await ctx.reply(embed=discord.Embed(description=f"❌ Tag `{name}` already exists.", color=discord.Color.red()))
-        await ctx.reply(embed=discord.Embed(description=f"✅ Tag `{name}` created.", color=discord.Color.green()))
+                    return await ctx.reply(**embed_payload(discord.Embed(description=f"✅ Tag `{name}` updated.", color=discord.Color.green())))
+            return await ctx.reply(**embed_payload(discord.Embed(description=f"❌ Tag `{name}` already exists.", color=discord.Color.red())))
+        await ctx.reply(**embed_payload(discord.Embed(description=f"✅ Tag `{name}` created.", color=discord.Color.green())))
 
     # ── Force-remove (owner only) ──────────────────────────────────────────
 
@@ -192,7 +193,7 @@ class TagCog(commands.Cog, name="Tags"):
     async def tag_forceremove(self, ctx: commands.Context, name: str):
         """Force-delete any tag (bot owner only)."""
         if not self._owner(ctx):
-            return await ctx.reply(embed=discord.Embed(description="❌ Bot owner only.", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description="❌ Bot owner only.", color=discord.Color.red())))
         if ctx.guild is None:
             return await ctx.reply("Tags can only be used in servers.")
 
@@ -206,7 +207,7 @@ class TagCog(commands.Cog, name="Tags"):
             "not_found": (f"❌ Tag `{name}` not found.", discord.Color.red()),
         }
         txt, color = msgs.get(result, (f"❌ {result}", discord.Color.red()))
-        await ctx.reply(embed=discord.Embed(description=txt, color=color))
+        await ctx.reply(**embed_payload(discord.Embed(description=txt, color=color)))
 
     # ── Edit ───────────────────────────────────────────────────────────────
 
@@ -216,7 +217,7 @@ class TagCog(commands.Cog, name="Tags"):
         if ctx.guild is None:
             return await ctx.reply("Tags can only be edited in servers.")
         if len(content) > MAX_TAG_CONTENT:
-            return await ctx.reply(embed=discord.Embed(description=f"❌ Content too long (max {MAX_TAG_CONTENT} chars).", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description=f"❌ Content too long (max {MAX_TAG_CONTENT} chars).", color=discord.Color.red())))
 
         tag = await storage.get(ctx.guild.id, name.lower())
         is_owner = self._owner(ctx)
@@ -231,7 +232,7 @@ class TagCog(commands.Cog, name="Tags"):
             "not_owner": ("❌ You don't own this tag.", discord.Color.red()),
         }
         txt, color = msgs.get(result, (f"❌ {result}", discord.Color.red()))
-        await ctx.reply(embed=discord.Embed(description=txt, color=color))
+        await ctx.reply(**embed_payload(discord.Embed(description=txt, color=color)))
 
     # ── Delete ─────────────────────────────────────────────────────────────
 
@@ -254,7 +255,7 @@ class TagCog(commands.Cog, name="Tags"):
             "not_owner": ("❌ You don't own this tag.", discord.Color.red()),
         }
         txt, color = msgs.get(result, (f"❌ {result}", discord.Color.red()))
-        await ctx.reply(embed=discord.Embed(description=txt, color=color))
+        await ctx.reply(**embed_payload(discord.Embed(description=txt, color=color)))
 
     # ── Info ───────────────────────────────────────────────────────────────
 
@@ -266,7 +267,7 @@ class TagCog(commands.Cog, name="Tags"):
 
         tag = await storage.get(ctx.guild.id, name.lower())
         if tag is None:
-            return await ctx.reply(embed=discord.Embed(description=f"❌ Tag `{name}` not found.", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description=f"❌ Tag `{name}` not found.", color=discord.Color.red())))
 
         owner = self.bot.get_user(tag["owner_id"])
         owner_str = owner.mention if owner else f"<@{tag['owner_id']}>"
@@ -312,7 +313,7 @@ class TagCog(commands.Cog, name="Tags"):
         if len(preview) > 120:
             preview = preview[:120] + "…"
         embed.add_field(name="Content preview", value=f"```\n{preview}\n```", inline=False)
-        await ctx.reply(embed=embed)
+        await ctx.reply(**embed_payload(embed))
 
     # ── List ───────────────────────────────────────────────────────────────
 
@@ -336,7 +337,7 @@ class TagCog(commands.Cog, name="Tags"):
             color=0x5865F2,
         )
         embed.set_footer(text=f"Page {page}/{total} · {len(tags)} total tags (all guilds)")
-        await ctx.reply(embed=embed)
+        await ctx.reply(**embed_payload(embed))
 
     # ── Random ─────────────────────────────────────────────────────────────
 
@@ -412,7 +413,7 @@ class TagCog(commands.Cog, name="Tags"):
             color=0x5865F2,
         )
         embed.set_footer(text=f"{len(results)} result(s)")
-        await ctx.reply(embed=embed)
+        await ctx.reply(**embed_payload(embed))
 
     # ── Raw ────────────────────────────────────────────────────────────────
 
@@ -424,7 +425,7 @@ class TagCog(commands.Cog, name="Tags"):
 
         tag = await storage.get(ctx.guild.id, name.lower())
         if tag is None:
-            return await ctx.reply(embed=discord.Embed(description=f"❌ Tag `{name}` not found.", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description=f"❌ Tag `{name}` not found.", color=discord.Color.red())))
 
         content = tag["content"]
         embed = discord.Embed(title="📄 Raw Tag Source", color=0x5865F2)
@@ -434,7 +435,7 @@ class TagCog(commands.Cog, name="Tags"):
         if len(content) <= 3900:
             block = content.replace("```", "`\u200b`\u200b`")  # break any backtick runs
             embed.description = f"```\n{block}\n```"
-            return await ctx.reply(embed=embed)
+            return await ctx.reply(**embed_payload(embed))
 
         # Too long — upload as a .txt file
         embed.description = "Content too long to display inline — see attached file."
@@ -456,7 +457,7 @@ class TagCog(commands.Cog, name="Tags"):
 
         new_alias = new_alias.lower().strip()
         if not _valid_name(new_alias):
-            return await ctx.reply(embed=discord.Embed(description="❌ Alias may only contain letters, numbers, hyphens, and underscores.", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description="❌ Alias may only contain letters, numbers, hyphens, and underscores.", color=discord.Color.red())))
 
         result = await storage.add_alias(ctx.guild.id, existing_name.lower(), new_alias, ctx.author.id, self._owner(ctx))
         msgs = {
@@ -466,7 +467,7 @@ class TagCog(commands.Cog, name="Tags"):
             "conflict":  (f"❌ `{new_alias}` is already a tag or alias.", discord.Color.red()),
         }
         txt, color = msgs.get(result, (f"❌ {result}", discord.Color.red()))
-        await ctx.reply(embed=discord.Embed(description=txt, color=color))
+        await ctx.reply(**embed_payload(discord.Embed(description=txt, color=color)))
 
     @tag.command(name="unalias")
     async def tag_unalias(self, ctx: commands.Context, alias: str):
@@ -481,7 +482,7 @@ class TagCog(commands.Cog, name="Tags"):
             "not_owner": ("❌ You don't own the tag this alias belongs to.", discord.Color.red()),
         }
         txt, color = msgs.get(result, (f"❌ {result}", discord.Color.red()))
-        await ctx.reply(embed=discord.Embed(description=txt, color=color))
+        await ctx.reply(**embed_payload(discord.Embed(description=txt, color=color)))
 
     # ── Transfer ───────────────────────────────────────────────────────────
 
@@ -498,7 +499,7 @@ class TagCog(commands.Cog, name="Tags"):
             "not_owner": ("❌ You don't own this tag.", discord.Color.red()),
         }
         txt, color = msgs.get(result, (f"❌ {result}", discord.Color.red()))
-        await ctx.reply(embed=discord.Embed(description=txt, color=color))
+        await ctx.reply(**embed_payload(discord.Embed(description=txt, color=color)))
 
     # ── Rename ─────────────────────────────────────────────────────────────
 
@@ -510,11 +511,11 @@ class TagCog(commands.Cog, name="Tags"):
 
         new_name = new_name.lower().strip()
         if not _valid_name(new_name):
-            return await ctx.reply(embed=discord.Embed(description="❌ Tag name may only contain letters, numbers, hyphens, and underscores.", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description="❌ Tag name may only contain letters, numbers, hyphens, and underscores.", color=discord.Color.red())))
         if len(new_name) > MAX_TAG_NAME:
-            return await ctx.reply(embed=discord.Embed(description=f"❌ Name too long (max {MAX_TAG_NAME} chars).", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description=f"❌ Name too long (max {MAX_TAG_NAME} chars).", color=discord.Color.red())))
         if new_name in _RESERVED:
-            return await ctx.reply(embed=discord.Embed(description=f"❌ `{new_name}` is a reserved subcommand name.", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description=f"❌ `{new_name}` is a reserved subcommand name.", color=discord.Color.red())))
 
         tag = await storage.get(ctx.guild.id, old_name.lower())
         is_owner = self._owner(ctx)
@@ -529,7 +530,7 @@ class TagCog(commands.Cog, name="Tags"):
             "conflict":  (f"❌ `{new_name}` already exists.", discord.Color.red()),
         }
         txt, color = msgs.get(result, (f"❌ {result}", discord.Color.red()))
-        await ctx.reply(embed=discord.Embed(description=txt, color=color))
+        await ctx.reply(**embed_payload(discord.Embed(description=txt, color=color)))
 
     # ── Stats ──────────────────────────────────────────────────────────────
 
@@ -549,7 +550,7 @@ class TagCog(commands.Cog, name="Tags"):
             top = "\n".join(f"`{t['name']}` — {t.get('uses', 0)} uses" for t in s["top_tags"])
             embed.add_field(name="Top tags", value=top, inline=False)
 
-        await ctx.reply(embed=embed)
+        await ctx.reply(**embed_payload(embed))
 
     # ── Perms ──────────────────────────────────────────────────────────────
 
@@ -569,7 +570,7 @@ class TagCog(commands.Cog, name="Tags"):
 
         tag = await storage.get(ctx.guild.id, name.lower())
         if tag is None:
-            return await ctx.reply(embed=discord.Embed(description=f"❌ Tag `{name}` not found.", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description=f"❌ Tag `{name}` not found.", color=discord.Color.red())))
 
         if not options:
             allowed = tag.get("allowed_roles", [])
@@ -578,10 +579,10 @@ class TagCog(commands.Cog, name="Tags"):
             embed.add_field(name="Allowed roles", value=" ".join(f"<@&{r}>" for r in allowed) or "Everyone", inline=False)
             if denied:
                 embed.add_field(name="Denied users", value=" ".join(f"<@{u}>" for u in denied), inline=False)
-            return await ctx.reply(embed=embed)
+            return await ctx.reply(**embed_payload(embed))
 
         if not self._owner(ctx) and tag["owner_id"] != ctx.author.id:
-            return await ctx.reply(embed=discord.Embed(description="❌ You don't own this tag.", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description="❌ You don't own this tag.", color=discord.Color.red())))
 
         parts = options.strip().split(None, 1)
         mode = parts[0].lower()
@@ -593,24 +594,24 @@ class TagCog(commands.Cog, name="Tags"):
         elif mode == "allow":
             role_ids = [r.id for r in ctx.message.role_mentions]
             if not role_ids:
-                return await ctx.reply(embed=discord.Embed(description="❌ Mention at least one @Role.", color=discord.Color.red()))
+                return await ctx.reply(**embed_payload(discord.Embed(description="❌ Mention at least one @Role.", color=discord.Color.red())))
             allowed_roles = role_ids
         elif mode == "deny":
             user_ids = [u.id for u in ctx.message.mentions]
             if not user_ids:
-                return await ctx.reply(embed=discord.Embed(description="❌ Mention at least one @User.", color=discord.Color.red()))
+                return await ctx.reply(**embed_payload(discord.Embed(description="❌ Mention at least one @User.", color=discord.Color.red())))
             denied_users = list(set(denied_users) | set(user_ids))
         elif mode == "undeny":
             user_ids = {u.id for u in ctx.message.mentions}
             denied_users = [u for u in denied_users if u not in user_ids]
         else:
-            return await ctx.reply(embed=discord.Embed(description="❌ Unknown mode. Use `allow @Role`, `everyone`, `deny @User`, or `undeny @User`.", color=discord.Color.red()))
+            return await ctx.reply(**embed_payload(discord.Embed(description="❌ Unknown mode. Use `allow @Role`, `everyone`, `deny @User`, or `undeny @User`.", color=discord.Color.red())))
 
         result = await storage.set_perms(ctx.guild.id, name.lower(), allowed_roles, denied_users, ctx.author.id, self._owner(ctx))
         if result == "ok":
-            await ctx.reply(embed=discord.Embed(description=f"✅ Permissions updated for tag `{name}`.", color=discord.Color.green()))
+            await ctx.reply(**embed_payload(discord.Embed(description=f"✅ Permissions updated for tag `{name}`.", color=discord.Color.green())))
         else:
-            await ctx.reply(embed=discord.Embed(description=f"❌ {result}", color=discord.Color.red()))
+            await ctx.reply(**embed_payload(discord.Embed(description=f"❌ {result}", color=discord.Color.red())))
 
     # ── t! shorthand ───────────────────────────────────────────────────────
 
@@ -829,4 +830,4 @@ class TagCog(commands.Cog, name="Tags"):
             """),
             inline=False,
         )
-        await ctx.reply(embed=embed)
+        await ctx.reply(**embed_payload(embed))

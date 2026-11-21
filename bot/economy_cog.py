@@ -27,6 +27,7 @@ from typing import Any, Optional
 import discord
 from discord import app_commands
 from discord.ext import commands
+from bot.ui_v2 import embed_payload
 
 
 # Prefix th/ihtx jobs are recorded before processing starts so a bot restart
@@ -1589,7 +1590,7 @@ class EconomyCog(commands.Cog, name="Economy"):
         parts = args.strip().split(None, 1)
         if len(parts) < 2:
             await ctx.reply(
-                embed=discord.Embed(
+                **embed_payload(discord.Embed(
                     title="❌ Usage",
                     description=(
                         "**`roxi nparisonffmpeg <grid> <ffmpeg args>`**\n\n"
@@ -1597,7 +1598,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                         "Attach a video or reply to a message containing one."
                     ),
                     color=0xED4245,
-                ),
+                )),
                 mention_author=False,
             )
             return
@@ -1611,30 +1612,30 @@ class EconomyCog(commands.Cog, name="Economy"):
             gridy = int(gp[1])
         except (IndexError, ValueError):
             await ctx.reply(
-                embed=discord.Embed(
+                **embed_payload(discord.Embed(
                     description=f"❌ Invalid grid `{grid_str}` — use `NxM` format, e.g. `2x2`.",
                     color=0xED4245,
-                ),
+                )),
                 mention_author=False,
             )
             return
 
         if gridx < 1 or gridy < 1 or gridx * gridy < 2:
             await ctx.reply(
-                embed=discord.Embed(
+                **embed_payload(discord.Embed(
                     description="❌ Grid must have at least 2 cells (e.g. `1x2`, `2x2`).",
                     color=0xED4245,
-                ),
+                )),
                 mention_author=False,
             )
             return
 
         if gridx * gridy > 16:
             await ctx.reply(
-                embed=discord.Embed(
+                **embed_payload(discord.Embed(
                     description=f"❌ Grid too large ({gridx * gridy} cells) — max 16 (e.g. `4x4`).",
                     color=0xED4245,
-                ),
+                )),
                 mention_author=False,
             )
             return
@@ -1643,10 +1644,10 @@ class EconomyCog(commands.Cog, name="Economy"):
             user_args = _shlex.split(ffmpeg_args_str)
         except ValueError as exc:
             await ctx.reply(
-                embed=discord.Embed(
+                **embed_payload(discord.Embed(
                     description=f"❌ Invalid FFmpeg args: `{exc}`",
                     color=0xED4245,
-                ),
+                )),
                 mention_author=False,
             )
             return
@@ -1670,10 +1671,10 @@ class EconomyCog(commands.Cog, name="Economy"):
 
         if not media_url:
             await ctx.reply(
-                embed=discord.Embed(
+                **embed_payload(discord.Embed(
                     description="❌ Attach a video or reply to a message containing one.",
                     color=0xED4245,
-                ),
+                )),
                 mention_author=False,
             )
             return
@@ -1829,7 +1830,7 @@ class EconomyCog(commands.Cog, name="Economy"):
                 description=f"{bar} **WebSocket:** {ws_ms} ms",
                 color=color,
             )
-            await ctx.reply(embed=embed, mention_author=False)
+            await ctx.reply(**embed_payload(embed), mention_author=False)
         else:
             now = datetime.datetime.now(datetime.timezone.utc)
             receive_ms = (now - ctx.message.created_at).total_seconds() * 1000
@@ -1882,7 +1883,7 @@ class EconomyCog(commands.Cog, name="Economy"):
             text=f"Requested by {ctx.author.display_name}",
             icon_url=ctx.author.display_avatar.url,
         )
-        await ctx.reply(embed=embed, mention_author=False)
+        await ctx.reply(**embed_payload(embed), mention_author=False)
 
     # -----------------------------------------------------------------------
     # /slot — Slot machine with 1-hour cooldown and 777 jackpot
@@ -1911,7 +1912,7 @@ class EconomyCog(commands.Cog, name="Economy"):
             win=win,
             jackpot=is_jackpot,
         )
-        await ctx.reply(embed=embed, mention_author=False)
+        await ctx.reply(**embed_payload(embed), mention_author=False)
 
     @jackpot.error
     async def jackpot_error(

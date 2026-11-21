@@ -30,6 +30,7 @@ from typing import Any, Optional
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+from bot.ui_v2 import embed_payload
 
 # ── Crop catalogue ─────────────────────────────────────────────────────────────
 
@@ -479,7 +480,7 @@ async def _send(
         if ping_msg:
             await ctx.send(content=ping_msg, embed=embed)
         else:
-            await ctx.send(embed=embed)
+            await ctx.send(**embed_payload(embed))
     else:
         content = f"**{title}**\n{body}"
         if ping_msg:
