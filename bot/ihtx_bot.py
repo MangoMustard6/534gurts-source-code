@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-11-22: [Python] Added a Components V2 helper (bot/ui_v2.py) and switched single-send embed replies to it, falling back to classic embeds when the text would exceed V2's 4000-character limit; added a "prefix commands shut down in January 2027" notice (bot/prefix_notice.py) on the first reply of every prefix command and in the help home; and gave every prefix-only command a slash version through bot/slash_bridge.py (/effects, /library, /edit, /sound, /files, /fun, /games, /bot, /blocks, /autoreply, /owner, /tag, plus /misc for any future command) that runs the same command code.
 - 2026-10-28: [Python] Made `th/chat` and autoreply2 generate and attach sanitized PNG illustrations for direct image requests instead of returning text-only claims.
 - 2026-10-28: [Python] Migrated Groq text and vision defaults to current supported models, protected Bash parameter expansion in tags, restricted shell tags to bot-owner-authored content, and removed frei0r from the pipe-effect interface.
 - 2026-09-26: [Python] Updated invlum to use the supplied Photo Curves 33³ LUT and apply `hue=b=-.225` immediately after each LUT pass.
@@ -1110,6 +1111,14 @@ intents = discord.Intents.default()
 intents.message_content = True
 _BOT_PREFIXES = [_BOT_PREFIX]
 bot = commands.Bot(command_prefix=_BOT_PREFIXES, intents=intents, help_command=None)
+
+# Prefix commands shut down in January 2027: the first reply to every prefix
+# invocation carries a notice pointing at the slash command (bot/prefix_notice.py).
+from bot.prefix_notice import SHUTDOWN as _PREFIX_SHUTDOWN, install as _install_prefix_notice
+_install_prefix_notice(bot)
+
+# Components V2 rendering for embeds (bot/ui_v2.py).
+from bot.ui_v2 import embed_payload, embed_view
 
 
 @bot.before_invoke
@@ -10435,6 +10444,13 @@ async def on_ready():
             print("AdminCog loaded.")
         except Exception as _admin_exc:
             print(f"Warning: AdminCog failed to load — {_admin_exc}")
+    # Give every prefix-only command a slash version (prefix commands shut down
+    # in January 2027). Must run after the cogs above and before the sync below.
+    try:
+        from bot.slash_bridge import register as _register_slash_bridge
+        _register_slash_bridge(bot)
+    except Exception as _bridge_exc:
+        print(f"Warning: slash bridge failed to register — {_bridge_exc}")
     # Auto-sync slash commands in a background task so exceptions surface in
     # the console and don't silently fail inside on_ready's exception handler.
     async def _auto_sync_slash():
@@ -10846,7 +10862,7 @@ async def submiteffect_command(ctx: commands.Context, name: str = "", *, effects
         embed.add_field(name="Guild", value=f"{ctx.guild.name} (`{ctx.guild.id}`)", inline=True)
     embed.add_field(name="Pipeline", value=f"```{effects[:900]}```", inline=False)
     embed.set_footer(text=f"Global effect — use it anywhere: th/ihtx 1 5 - mp4 {name}")
-    await ctx.reply(embed=embed)
+    await ctx.reply(**embed_payload(embed))
 
 
 _EFFECTLIST_PAGE_SIZE = 10
@@ -16007,7 +16023,7 @@ async def presets_command(ctx: commands.Context):
         inline=False,
     )
     embed.set_footer(text="I Hate The X — FFmpeg logo destruction bot")
-    await ctx.reply(embed=embed)
+    await ctx.reply(**embed_payload(embed))
 
 
 # ── Help preview images ───────────────────────────────────────────────────────
@@ -16786,7 +16802,11 @@ def _build_home_embed() -> discord.Embed:
     counts = {c: sum(1 for e in _HELP_ENTRIES if e["cat"] == c) for c in _HELP_CATS}
     embed = discord.Embed(
         title="IHTX Bot — Help",
-        description=f"Pick a category from the dropdown below, or run `{_BOT_PREFIX}ihtxhelp <query>` to search all commands.",
+        description=(
+            f"Pick a category from the dropdown below, or run `{_BOT_PREFIX}ihtxhelp <query>` to search all commands.\n\n"
+            f"⚠️ **Prefix commands shut down in {_PREFIX_SHUTDOWN}.** Every command also has a slash version — "
+            "type `/` and browse `/effects`, `/edit`, `/sound`, `/files`, `/fun`, `/games`, `/bot`, `/tag` and more."
+        ),
         color=0x40E0D0,
     )
     embed.add_field(
@@ -16966,7 +16986,7 @@ async def invite_command(ctx: commands.Context):
         description=f"[Click here to add me]({_INVITE_URL})",
         color=0x40E0D0,
     )
-    await ctx.reply(embed=embed)
+    await ctx.reply(**embed_payload(embed))
 
 
 _KLASKYCSUPO_URL = (
@@ -16996,7 +17016,7 @@ async def klaskycsupo_command(ctx: commands.Context):
             await ctx.reply(embed=embed, file=discord.File(dest, filename="534gurts_thklaskycsupo.mp4"))
         except Exception:
             embed.description += f"\n{_KLASKYCSUPO_URL}"
-            await ctx.reply(embed=embed)
+            await ctx.reply(**embed_payload(embed))
 
 
 @bot.command(name="klaskysource", aliases=["klasky"])
@@ -17031,17 +17051,17 @@ async def help_command(ctx: commands.Context, *, query: str = ""):
         ]
         if not results:
             return await ctx.reply(
-                embed=discord.Embed(
+                **embed_payload(discord.Embed(
                     description=f"🔍 No commands matched `{query}`. Try a shorter keyword.",
                     color=0x40E0D0,
-                )
+                ))
             )
         embed, _, total = _build_help_embed(None, results)
         footer = f"{len(results)} result(s) for '{query}'"
         if total > 1:
             footer += f" · Page 1/{total}"
         embed.set_footer(text=footer)
-        return await ctx.reply(embed=embed)
+        return await ctx.reply(**embed_payload(embed))
 
     # ── Browse mode ────────────────────────────────────────────────────────
     embed = _build_home_embed()
@@ -17756,7 +17776,7 @@ async def sayembed(ctx: commands.Context, *, content: str):
             title = ""
             desc = content
         emb = discord.Embed(title=title or None, description=desc or None, color=discord.Color.dark_red())
-        await ctx.send(embed=emb)
+        await ctx.send(**embed_payload(emb))
         if ctx.message:
             await ctx.message.add_reaction("✅")
     except Exception as e:
@@ -18018,7 +18038,7 @@ async def uptime_cmd(ctx: commands.Context):
     embed.add_field(name="Renders in progress", value=str(_renders_in_progress), inline=True)
     embed.add_field(name="Servers", value=str(len(bot.guilds)), inline=True)
     embed.set_footer(text=f"Online since {start_fmt}")
-    await ctx.reply(embed=embed)
+    await ctx.reply(**embed_payload(embed))
 
 
 @bot.command(name="setactivity", aliases=["activity", "presence"])
@@ -19225,7 +19245,7 @@ async def usage(ctx: commands.Context):
         embed.add_field(name="Oldest resets", value=f"<t:{resets_at}:R>", inline=False)
 
     embed.set_footer(text=f"Window: rolling 24h · Heavy commands: {', '.join(sorted(HEAVY_COMMANDS))}")
-    await ctx.reply(embed=embed)
+    await ctx.reply(**embed_payload(embed))
 
 
 @bot.command(name="syncslash", aliases=["synccmds", "synctree", "slashsync"])
@@ -19296,7 +19316,7 @@ async def setlimit(ctx: commands.Context, user: discord.User, limit: int):
         color=discord.Color.green(),
     )
     embed.set_footer(text=f"Set by {ctx.author}")
-    await ctx.reply(embed=embed)
+    await ctx.reply(**embed_payload(embed))
 
 
 @setlimit.error
@@ -19321,7 +19341,7 @@ async def resetlimit(ctx: commands.Context, user: discord.User):
         color=discord.Color.green(),
     )
     embed.set_footer(text=f"Reset by {ctx.author} · Their 24h window is now clear")
-    await ctx.reply(embed=embed)
+    await ctx.reply(**embed_payload(embed))
 
 
 @resetlimit.error
@@ -19359,7 +19379,7 @@ async def funfact(ctx: commands.Context):
         color=0x40E0D0,
     )
     embed.set_footer(text="534gurts · th/funfact")
-    await ctx.reply(embed=embed)
+    await ctx.reply(**embed_payload(embed))
 
 
 _8BALL_RESPONSES = [
@@ -19380,7 +19400,7 @@ async def eightball(ctx: commands.Context, *, question: str):
         color=discord.Color.dark_blue()
     )
     embed.set_footer(text=f'"{question}"')
-    await ctx.reply(embed=embed)
+    await ctx.reply(**embed_payload(embed))
 
 
 
@@ -19430,7 +19450,7 @@ async def rps(ctx: commands.Context, choice: str):
         description=f"{icons[choice]} **{choice.capitalize()}** vs **{bot_choice.capitalize()}** {icons[bot_choice]}\n\n{result}",
         color=color
     )
-    await ctx.reply(embed=embed)
+    await ctx.reply(**embed_payload(embed))
 
 
 @bot.command(name="choose", aliases=["pick"])
@@ -20120,7 +20140,7 @@ async def level_cmd(ctx: commands.Context, member: discord.Member = None):
             ),
             color=0x40E0D0
         )
-    await ctx.reply(embed=embed)
+    await ctx.reply(**embed_payload(embed))
 
 
 @bot.command(name="leaderboard", aliases=["lb", "top"])
@@ -20146,7 +20166,7 @@ async def leaderboard(ctx: commands.Context):
         description="\n".join(lines),
         color=discord.Color.gold()
     )
-    await ctx.reply(embed=embed)
+    await ctx.reply(**embed_payload(embed))
 
 
 # ---------- Music trivia ----------
@@ -20503,7 +20523,7 @@ async def randomlist_command(ctx: commands.Context):
         )
     if len(_random_pool) > 25:
         embed.set_footer(text=f"Showing first 25 of {len(_random_pool)} entries.")
-    await ctx.reply(embed=embed)
+    await ctx.reply(**embed_payload(embed))
 
 
 # ---------- Message filtering ----------
@@ -21544,7 +21564,7 @@ async def guesseffect(ctx: commands.Context):
     embed.add_field(name="🔀 Scrambled Name", value=f"```{scrambled}```", inline=False)
     embed.add_field(name="📝 Pipeline Clue", value=effect["description"], inline=False)
     embed.set_footer(text="⏱  You have 20 seconds — type the effect name!")
-    await ctx.send(embed=embed)
+    await ctx.send(**embed_payload(embed))
 
     accept_set = {a.lower() for a in effect["accept"]}
 
@@ -21566,7 +21586,7 @@ async def guesseffect(ctx: commands.Context):
             ),
             color=0x40E0D0,
         )
-        await ctx.send(embed=result_embed)
+        await ctx.send(**embed_payload(result_embed))
     except asyncio.TimeoutError:
         timeout_embed = discord.Embed(
             title="⏰ Time's Up!",
@@ -21577,7 +21597,7 @@ async def guesseffect(ctx: commands.Context):
             ),
             color=0x40E0D0,
         )
-        await ctx.send(embed=timeout_embed)
+        await ctx.send(**embed_payload(timeout_embed))
 
 
 # ---------- th/convert — convert video to video fmt + audio fmt + image fmt ----------
