@@ -8,6 +8,7 @@ Dependencies required at runtime: ffmpeg, aiohttp, discord.py, optionally yt-dlp
 ImageMagick/sox/etc. depending on advanced effects.
 
 _UPDATELOG (newest first):
+- 2026-11-23: [Python] Fixed the slash (/) block/thread check never running: `@bot.tree.interaction_check` was used as a decorator, but it is an overridable method, so nothing was installed. Blocked users, timed blocks and blocked channels are now actually refused on slash commands, as the 2026-07-13 entry intended.
 - 2026-11-22: [Python] Added a Components V2 helper (bot/ui_v2.py) and switched single-send embed replies to it, falling back to classic embeds when the text would exceed V2's 4000-character limit; added a "prefix commands shut down in January 2027" notice (bot/prefix_notice.py) on the first reply of every prefix command and in the help home; and gave every prefix-only command a slash version through bot/slash_bridge.py (/effects, /library, /edit, /sound, /files, /fun, /games, /bot, /blocks, /autoreply, /owner, /tag, plus /misc for any future command) that runs the same command code.
 - 2026-10-28: [Python] Made `th/chat` and autoreply2 generate and attach sanitized PNG illustrations for direct image requests instead of returning text-only claims.
 - 2026-10-28: [Python] Migrated Groq text and vision defaults to current supported models, protected Bash parameter expansion in tags, restricted shell tags to bot-owner-authored content, and removed frei0r from the pipe-effect interface.
@@ -1126,7 +1127,6 @@ async def _ensure_prefix_thread_access(ctx: commands.Context) -> None:
     await _ensure_thread_membership(ctx.channel)
 
 
-@bot.tree.interaction_check
 async def _slash_global_check(interaction: discord.Interaction) -> bool:
     """Mirror the prefix command global checks for slash (/) commands."""
     await _ensure_thread_membership(interaction.channel)
@@ -1148,6 +1148,12 @@ async def _slash_global_check(interaction: discord.Interaction) -> bool:
     if _is_channel_blocked_for_user(interaction.channel, interaction.user):
         return False
     return True
+
+
+# CommandTree.interaction_check is an overridable method, not a decorator:
+# ``@bot.tree.interaction_check`` called it with the function as its argument and
+# installed nothing, so this check never ran. Assign it on the tree instead.
+bot.tree.interaction_check = _slash_global_check  # type: ignore[method-assign]
 
 
 # Maps user message id → list of bot reply message ids.
